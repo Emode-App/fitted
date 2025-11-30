@@ -1,0 +1,7 @@
+{
+  "name": "Fitted",
+  "description": "AI-powered outfit styling and social fashion app using Nano Banana Pro (Gemini) models.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
