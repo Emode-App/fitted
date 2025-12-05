@@ -1,9 +1,11 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { BadgeCheck, CheckCircle2, Search, ShieldCheck, ArrowLeft, Send } from 'lucide-react';
+import { BadgeCheck, CheckCircle2, Search, ShieldCheck, ArrowLeft, Send, DollarSign, Loader2, Check, Download, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { Modal, Button, TimeAgo } from './Shared';
-import { getConversations, getMessages, sendMessage, subscribe, markConversationAsRead, findOrCreateConversation } from '../services/mockDb';
+import { getConversations, getMessages, sendMessage, subscribe, markConversationAsRead, findOrCreateConversation, sendPaymentRequest, markPaymentComplete, verifyUser, sendDirectPayment, acceptIncomingPayment } from '../services/mockDb';
 import { Conversation, Message } from '../types';
 import { CURRENT_USER } from '../constants';
+import { stripeService } from '../services/stripeService';
 
 interface MessagesProps {
   onViewProfile?: (userId: string) => void;
@@ -95,6 +97,18 @@ export const Messages: React.FC<MessagesProps> = ({ onViewProfile, initialChatUs
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   
+  // Payment Request State
+  const [showPaymentRequestModal, setShowPaymentRequestModal] = useState(false);
+  const [showPaymentMenu, setShowPaymentMenu] = useState(false);
+  const [paymentType, setPaymentType] = useState<'request' | 'send'>('request');
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentNote, setPaymentNote] = useState('');
+  const [processingPaymentId, setProcessingPaymentId] = useState<string | null>(null);
+
+  // Verification Purchase State
+  const [isBuyingVerification, setIsBuyingVerification] = useState(false);
+  const [isSendingPayment, setIsSendingPayment] = useState(false);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -140,6 +154,81 @@ export const Messages: React.FC<MessagesProps> = ({ onViewProfile, initialChatUs
       setNewMessage('');
   };
 
+  const openPaymentModal = (type: 'request' | 'send') => {
+      setPaymentType(type);
+      setShowPaymentMenu(false);
+      setShowPaymentRequestModal(true);
+  };
+
+  const handleProcessPaymentAction = async () => {
+      if (!activeConversation || !paymentAmount) return;
+      const amount = parseFloat(paymentAmount);
+      if (isNaN(amount) || amount <= 0) return;
+      
+      if (paymentType === 'request') {
+          // Send Request Flow
+          sendPaymentRequest(activeConversation.id, amount, paymentNote || 'Payment Request');
+          setShowPaymentRequestModal(false);
+          setPaymentAmount('');
+          setPaymentNote('');
+      } else {
+          // Direct Send Flow
+          setIsSendingPayment(true);
+          const result = await stripeService.processPayment(amount, paymentNote || 'Direct Payment');
+          if (result.success) {
+               sendDirectPayment(activeConversation.id, amount, paymentNote || 'Payment Sent');
+               setShowPaymentRequestModal(false);
+               setPaymentAmount('');
+               setPaymentNote('');
+          } else {
+               alert('Payment failed: ' + result.error);
+          }
+          setIsSendingPayment(false);
+      }
+  };
+
+  const handlePayRequest = async (msgId: string, amount: number) => {
+      if (!activeConversation) return;
+      setProcessingPaymentId(msgId);
+      
+      // Call Mock Stripe Service
+      const result = await stripeService.processPayment(amount, `Payment to ${activeConversation.participants.find(p=>p.id!==CURRENT_USER.id)?.username}`);
+      
+      if (result.success) {
+          markPaymentComplete(activeConversation.id, msgId);
+      } else {
+          alert('Payment failed: ' + result.error);
+      }
+      setProcessingPaymentId(null);
+  };
+
+  const handleAcceptPayment = async (msgId: string) => {
+      if (!activeConversation) return;
+      setProcessingPaymentId(msgId);
+      
+      // Simulate network request to accept
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      acceptIncomingPayment(activeConversation.id, msgId);
+      
+      setProcessingPaymentId(null);
+  };
+
+  const handlePurchaseVerification = async () => {
+      setIsBuyingVerification(true);
+      
+      // Call Mock Stripe Service
+      const result = await stripeService.processPayment(25, "Verified Stylist Subscription");
+      
+      if (result.success) {
+          verifyUser(CURRENT_USER.id);
+          setShowVerification(false);
+          alert("Success! You are now a Verified Stylist.");
+      } else {
+          alert("Payment failed. Please try again.");
+      }
+      setIsBuyingVerification(false);
+  };
+
   const handleProfileClick = (e: React.MouseEvent, userId?: string) => {
     if (userId && onViewProfile) {
         e.stopPropagation();
@@ -174,9 +263,100 @@ export const Messages: React.FC<MessagesProps> = ({ onViewProfile, initialChatUs
               </div>
 
               {/* Messages Area */}
-              <div className="flex-1 p-4 space-y-4 bg-gray-50 dark:bg-zinc-900/50 min-h-0 overflow-x-hidden animate-in slide-in-from-right">
+              <div 
+                className="flex-1 p-4 space-y-4 bg-gray-50 dark:bg-zinc-900/50 min-h-0 overflow-x-hidden animate-in slide-in-from-right"
+                onClick={() => setShowPaymentMenu(false)}
+              >
                   {messages.map((msg) => {
                       const isMe = msg.senderId === CURRENT_USER.id;
+                      
+                      // Payment Bubble Renderer
+                      if (msg.paymentRequest) {
+                          const { amount, description, status, type } = msg.paymentRequest;
+                          const isPending = status === 'pending';
+                          const isProcessing = processingPaymentId === msg.id;
+                          const isRequest = type === 'request';
+
+                          return (
+                            <SwipeableMessage 
+                                key={msg.id}
+                                timestamp={<TimeAgo timestamp={msg.createdAt} staticText={msg.timestamp} format="time" />}
+                            >
+                                <div className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                    <div className={`max-w-[80%] rounded-2xl overflow-hidden shadow-sm border ${isMe ? 'bg-white dark:bg-black border-gray-200 dark:border-zinc-800' : 'bg-white dark:bg-black border-gray-200 dark:border-zinc-800'}`}>
+                                        <div className="bg-gray-50 dark:bg-zinc-800 p-4 border-b border-gray-100 dark:border-zinc-700 flex justify-between items-center gap-4">
+                                            <div className="flex items-center gap-2">
+                                                <div className={`w-8 h-8 ${isRequest ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600' : 'bg-green-100 dark:bg-green-900/30 text-green-600'} rounded-full flex items-center justify-center`}>
+                                                    {isRequest ? <DollarSign size={16} /> : (isMe ? <ArrowUpRight size={16} /> : <ArrowDownLeft size={16} />)}
+                                                </div>
+                                                <div>
+                                                    <div className="font-bold text-lg text-black dark:text-white leading-none">${amount}</div>
+                                                    <div className="text-[10px] text-gray-500 dark:text-zinc-400 font-bold uppercase tracking-wider">
+                                                        {isRequest ? 'Request' : (isMe ? 'Sent' : 'Received')} • {status}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            {status === 'completed' && <CheckCircle2 className="text-green-500" />}
+                                        </div>
+                                        <div className="p-4">
+                                            <p className="text-sm text-gray-600 dark:text-zinc-400 mb-4">{description}</p>
+                                            
+                                            {/* LOGIC FOR REQUESTS (Asking for money) */}
+                                            {isRequest && (
+                                                <>
+                                                    {isPending && !isMe ? (
+                                                        <button 
+                                                            onClick={() => handlePayRequest(msg.id, amount)}
+                                                            disabled={isProcessing}
+                                                            className="w-full bg-black dark:bg-white text-white dark:text-black font-bold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity"
+                                                        >
+                                                            {isProcessing ? <Loader2 className="animate-spin" size={16}/> : 'Pay Now'}
+                                                        </button>
+                                                    ) : isPending && isMe ? (
+                                                        <div className="w-full bg-gray-100 dark:bg-zinc-800 text-gray-400 dark:text-zinc-500 font-bold py-2.5 rounded-xl text-sm text-center cursor-default">
+                                                            Request Sent
+                                                        </div>
+                                                    ) : (
+                                                        <div className="w-full bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 font-bold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 cursor-default">
+                                                            <Check size={16} /> Paid
+                                                        </div>
+                                                    )}
+                                                </>
+                                            )}
+
+                                            {/* LOGIC FOR SENDING (Direct Transfer) */}
+                                            {!isRequest && (
+                                                <>
+                                                    {isPending && !isMe ? (
+                                                        // Receiver: Needs to accept
+                                                        <button 
+                                                            onClick={() => handleAcceptPayment(msg.id)}
+                                                            disabled={isProcessing}
+                                                            className="w-full bg-green-600 text-white font-bold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 hover:bg-green-700 transition-colors shadow-lg shadow-green-200 dark:shadow-none"
+                                                        >
+                                                            {isProcessing ? <Loader2 className="animate-spin" size={16}/> : 'Accept Payment'}
+                                                        </button>
+                                                    ) : isPending && isMe ? (
+                                                        // Sender: Waiting for acceptance
+                                                        <div className="w-full bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-500 font-bold py-2.5 rounded-xl text-sm text-center cursor-default border border-dashed border-gray-300 dark:border-zinc-600">
+                                                            Waiting for acceptance...
+                                                        </div>
+                                                    ) : (
+                                                        // Completed
+                                                        <div className="w-full bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 font-bold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 cursor-default">
+                                                            <Check size={16} /> {isMe ? 'Transfer Complete' : 'Deposited'}
+                                                        </div>
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </SwipeableMessage>
+                          );
+                      }
+
+                      // Standard Message Renderer
                       return (
                           <SwipeableMessage 
                             key={msg.id} 
@@ -207,14 +387,45 @@ export const Messages: React.FC<MessagesProps> = ({ onViewProfile, initialChatUs
 
               {/* Input Area - Sticky Bottom */}
               <div className="p-3 bg-white dark:bg-black border-t border-gray-100 dark:border-zinc-800 shrink-0 sticky bottom-0 z-10">
-                  <div className="flex items-center gap-2 bg-gray-100 dark:bg-zinc-900 rounded-full px-2 py-1.5">
+                  <div className="flex items-center gap-2 bg-gray-100 dark:bg-zinc-900 rounded-full px-2 py-1.5 relative">
+                      {/* Payment Menu Popover */}
+                      {showPaymentMenu && (
+                          <div className="absolute bottom-12 left-0 w-48 bg-white dark:bg-zinc-800 border border-gray-100 dark:border-zinc-700 shadow-xl rounded-2xl overflow-hidden z-30 animate-in slide-in-from-bottom-2 fade-in">
+                              <button 
+                                onClick={() => openPaymentModal('request')}
+                                className="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-zinc-700 text-sm font-bold text-black dark:text-white flex items-center gap-2"
+                              >
+                                  <div className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                                      <DollarSign size={14} />
+                                  </div>
+                                  Request Payment
+                              </button>
+                              <button 
+                                onClick={() => openPaymentModal('send')}
+                                className="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-zinc-700 text-sm font-bold text-black dark:text-white flex items-center gap-2"
+                              >
+                                  <div className="w-6 h-6 rounded-full bg-green-100 dark:bg-green-900/50 flex items-center justify-center text-green-600 dark:text-green-400">
+                                      <Send size={14} />
+                                  </div>
+                                  Send Payment
+                              </button>
+                          </div>
+                      )}
+
+                      <button 
+                        onClick={() => setShowPaymentMenu(!showPaymentMenu)}
+                        className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${showPaymentMenu ? 'bg-green-100 text-green-600' : 'bg-gray-200 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-green-100 dark:hover:bg-green-900/30 hover:text-green-600 dark:hover:text-green-400'}`}
+                      >
+                          <DollarSign size={18} strokeWidth={2.5} />
+                      </button>
                       <input 
                         type="text" 
                         value={newMessage}
                         onChange={(e) => setNewMessage(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                        onFocus={() => setShowPaymentMenu(false)}
                         placeholder="Message..." 
-                        className="flex-1 bg-transparent border-none focus:ring-0 text-sm px-3 focus:outline-none text-black dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
+                        className="flex-1 bg-transparent border-none focus:ring-0 text-sm px-2 focus:outline-none text-black dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
                       />
                       <button 
                         onClick={handleSend}
@@ -225,6 +436,33 @@ export const Messages: React.FC<MessagesProps> = ({ onViewProfile, initialChatUs
                       </button>
                   </div>
               </div>
+
+              {/* Payment Action Modal - Rendered Inside Chat View now */}
+              <Modal isOpen={showPaymentRequestModal} onClose={() => setShowPaymentRequestModal(false)} variant="center" title={paymentType === 'request' ? 'Request Payment' : 'Send Payment'}>
+                <div className="flex flex-col gap-4 text-black dark:text-white">
+                    <div className="bg-gray-50 dark:bg-zinc-800 p-4 rounded-xl flex items-center gap-2 border border-gray-100 dark:border-zinc-700">
+                        <DollarSign size={24} className={paymentType === 'request' ? "text-blue-600 dark:text-blue-400" : "text-green-600 dark:text-green-400"} />
+                        <input 
+                            type="number" 
+                            placeholder="0.00" 
+                            value={paymentAmount}
+                            onChange={e => setPaymentAmount(e.target.value)}
+                            className="bg-transparent text-2xl font-bold w-full focus:outline-none text-black dark:text-white placeholder:text-gray-300"
+                            autoFocus
+                        />
+                    </div>
+                    <input 
+                        type="text" 
+                        placeholder={paymentType === 'request' ? "What's this for? (e.g. Styling Fee)" : "Add a note..."}
+                        value={paymentNote}
+                        onChange={e => setPaymentNote(e.target.value)}
+                        className="w-full bg-gray-50 dark:bg-zinc-800 border border-gray-100 dark:border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white dark:text-white"
+                    />
+                    <Button variant="black" onClick={handleProcessPaymentAction} disabled={!paymentAmount || isSendingPayment}>
+                        {isSendingPayment ? <Loader2 className="animate-spin" size={20} /> : (paymentType === 'request' ? 'Send Request' : 'Pay Now')}
+                    </Button>
+                </div>
+            </Modal>
           </div>
       );
   }
@@ -239,7 +477,11 @@ export const Messages: React.FC<MessagesProps> = ({ onViewProfile, initialChatUs
             onClick={() => setShowVerification(true)}
             className="group active:scale-95 transition-transform outline-none"
         >
-            <div className="w-10 h-10 rounded-full bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400 shadow-sm group-hover:bg-blue-100 dark:group-hover:bg-blue-900/50">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center shadow-sm group-hover:bg-blue-100 dark:group-hover:bg-blue-900/50 ${
+                CURRENT_USER.isVerifiedStylist 
+                ? 'bg-blue-600 text-white' 
+                : 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+            }`}>
                 <BadgeCheck size={18} strokeWidth={2.5} />
             </div>
         </button>
@@ -304,36 +546,57 @@ export const Messages: React.FC<MessagesProps> = ({ onViewProfile, initialChatUs
       {/* Verification Modal */}
       <Modal isOpen={showVerification} onClose={() => setShowVerification(false)}>
          <div className="text-center text-black dark:text-white">
-             <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600 dark:text-blue-400">
-                 <ShieldCheck size={32} />
-             </div>
-             <h2 className="text-2xl font-black mb-2">Become a Verified Stylist</h2>
-             <p className="text-gray-500 dark:text-zinc-400 mb-6 text-sm leading-relaxed px-4">
-                Unlock professional tools and start earning from your style.
-             </p>
-             
-             <div className="bg-gray-50 dark:bg-zinc-800 p-5 rounded-xl mb-6 text-left border border-gray-100 dark:border-zinc-700">
-                <div className="flex justify-between items-center mb-4 border-b border-gray-200 dark:border-zinc-700 pb-2">
-                    <span className="font-bold">Stylist Subscription</span>
-                    <span className="font-bold text-xl">$25<span className="text-xs font-normal text-gray-400">/mo</span></span>
-                </div>
-                <ul className="text-xs text-gray-600 dark:text-zinc-400 space-y-2.5 font-medium">
-                    <li className="flex items-center gap-2">
-                        <CheckCircle2 size={14} className="text-blue-500" />
-                        Blue Verified Badge on profile
-                    </li>
-                    <li className="flex items-center gap-2">
-                        <CheckCircle2 size={14} className="text-blue-500" />
-                        Process payments directly in DMs
-                    </li>
-                    <li className="flex items-center gap-2">
-                        <CheckCircle2 size={14} className="text-blue-500" />
-                        Rank on the "Featured Stylists" leaderboard
-                    </li>
-                </ul>
-             </div>
+             {CURRENT_USER.isVerifiedStylist ? (
+                <>
+                    <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600 dark:text-blue-400">
+                        <BadgeCheck size={32} />
+                    </div>
+                    <h2 className="text-2xl font-black mb-2">You are Verified!</h2>
+                    <p className="text-gray-500 dark:text-zinc-400 mb-6 text-sm leading-relaxed px-4">
+                        Thank you for being a Stylist Pro member. Your badge is active.
+                    </p>
+                </>
+             ) : (
+                <>
+                    <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600 dark:text-blue-400">
+                        <ShieldCheck size={32} />
+                    </div>
+                    <h2 className="text-2xl font-black mb-2">Become a Verified Stylist</h2>
+                    <p className="text-gray-500 dark:text-zinc-400 mb-6 text-sm leading-relaxed px-4">
+                        Unlock professional tools and start earning from your style.
+                    </p>
+                    
+                    <div className="bg-gray-50 dark:bg-zinc-800 p-5 rounded-xl mb-6 text-left border border-gray-100 dark:border-zinc-700">
+                        <div className="flex justify-between items-center mb-4 border-b border-gray-200 dark:border-zinc-700 pb-2">
+                            <span className="font-bold">Stylist Subscription</span>
+                            <span className="font-bold text-xl">$25<span className="text-xs font-normal text-gray-400">/mo</span></span>
+                        </div>
+                        <ul className="text-xs text-gray-600 dark:text-zinc-400 space-y-2.5 font-medium">
+                            <li className="flex items-center gap-2">
+                                <CheckCircle2 size={14} className="text-blue-500" />
+                                Blue Verified Badge on profile
+                            </li>
+                            <li className="flex items-center gap-2">
+                                <CheckCircle2 size={14} className="text-blue-500" />
+                                Process payments directly in DMs
+                            </li>
+                            <li className="flex items-center gap-2">
+                                <CheckCircle2 size={14} className="text-blue-500" />
+                                Rank on the "Featured Stylists" leaderboard
+                            </li>
+                        </ul>
+                    </div>
 
-             <Button variant="purple" className="w-full">Purchase Verification</Button>
+                    <Button 
+                        variant="purple" 
+                        className="w-full flex items-center justify-center gap-2"
+                        onClick={handlePurchaseVerification}
+                        disabled={isBuyingVerification}
+                    >
+                        {isBuyingVerification ? <Loader2 className="animate-spin" size={20} /> : 'Purchase Verification'}
+                    </Button>
+                </>
+             )}
          </div>
       </Modal>
     </div>

@@ -1,4 +1,5 @@
 
+
 import { Post, User, Stylist, ClothingItem } from './types';
 
 export const MOCK_USERS: Record<string, User> = {
@@ -9,9 +10,11 @@ export const MOCK_USERS: Record<string, User> = {
     avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2.25&w=256&h=256&q=80',
     headerUrl: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?auto=format&fit=crop&q=80&w=1000',
     aiFaceUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2.25&w=500&h=500&q=80', // Pre-filled for demo
-    socials: { instagram: 'bnod', twitter: 'bnod' },
+    socials: { instagram: 'bnod', twitter: 'bnod', tiktok: 'bnod_tok' },
     bio: 'Yung fly pretty n* wit a bankroll.',
     location: "Prince George's County, MD",
+    website: 'https://fitted.app',
+    isBusinessAccount: false,
     stats: { followers: 305, following: 10, fits: 1 },
     showActivityStatus: true,
     favoriteBrand: 'Rick Owens',
@@ -27,9 +30,11 @@ export const MOCK_USERS: Record<string, User> = {
     handle: '@rocky',
     avatarUrl: 'https://images.unsplash.com/photo-1531384441138-2736e62e0919?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2.25&w=256&h=256&q=80',
     headerUrl: 'https://images.unsplash.com/photo-1550614000-4b9519e0031a?auto=format&fit=crop&q=80&w=1000',
-    socials: { instagram: 'asaprocky' },
+    socials: { instagram: 'asaprocky', tiktok: 'rocky88' },
     bio: 'Always strive and prosper.',
     location: 'Harlem, NY',
+    website: 'https://awge.com',
+    isBusinessAccount: true,
     stats: { followers: 12500, following: 200, fits: 42 },
     showActivityStatus: true,
     favoriteBrand: 'Bottega Veneta',
@@ -51,6 +56,7 @@ export const MOCK_USERS: Record<string, User> = {
     stats: { followers: 4000, following: 150, fits: 89 },
     showActivityStatus: true,
     isVerifiedStylist: true,
+    isBusinessAccount: true,
     rate: '$50 / fit'
   },
   's2': {

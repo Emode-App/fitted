@@ -1,17 +1,19 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Post, ClothingItem, Comment } from '../types';
-import { MessageCircle, Send, ShoppingBag, ChevronLeft, ChevronRight, MoreHorizontal, Bookmark, EyeOff, Flag, UserPlus, Heart, Copy, Share, Twitter, Instagram, MessageSquare as MessageIcon, Search, Music } from 'lucide-react';
+import { MessageCircle, Send, ShoppingBag, ChevronLeft, ChevronRight, MoreHorizontal, Bookmark, EyeOff, Flag, UserPlus, Heart, Copy, Share, Twitter, Instagram, MessageSquare as MessageIcon, Search, Music, Trash2, AlertCircle } from 'lucide-react';
 import { Modal, StoreButtonRow, Button, TimeAgo } from './Shared';
 import { CURRENT_USER } from '../constants';
-import { getPostComments, addComment, toggleCommentLike, subscribe } from '../services/mockDb';
+import { getPostComments, addComment, toggleCommentLike, subscribe, deletePost, deleteComment, isFollowing, toggleFollow, isPostSaved, toggleSavePost, getUserByHandle, togglePostLike } from '../services/mockDb';
 
 interface PostItemProps {
   post: Post;
   onOpenFullView: (post: Post) => void;
   onViewProfile?: (userId: string) => void;
+  onViewHashtag?: (hashtag: string) => void;
 }
 
-export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onViewProfile }) => {
+export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onViewProfile, onViewHashtag }) => {
   const [activeSlide, setActiveSlide] = useState(0);
   const [showTags, setShowTags] = useState(false);
   const [isLiked, setIsLiked] = useState(post.isLiked);
@@ -27,7 +29,12 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   
+  // Delete States (UI Confirmation)
+  const [confirmDeleteCommentId, setConfirmDeleteCommentId] = useState<string | null>(null);
+  const [isConfirmingPostDelete, setIsConfirmingPostDelete] = useState(false);
+  
   const [isSaved, setIsSaved] = useState(false);
+  const [isFollowingUser, setIsFollowingUser] = useState(false);
   
   // Music / Info Fading Logic
   const [infoState, setInfoState] = useState<'brands' | 'music'>('brands');
@@ -35,16 +42,34 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const commentInputRef = useRef<HTMLInputElement>(null);
+  // Ref for handling double tap vs single tap delay
+  const clickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load comments dynamically
+  const isOwner = post.user.id === CURRENT_USER.id;
+
+  // Initialize DB dependent states
   useEffect(() => {
-    const loadComments = () => {
+    const syncData = () => {
         setComments(getPostComments(post.id));
+        setIsSaved(isPostSaved(CURRENT_USER.id, post.id));
+        setIsFollowingUser(isFollowing(CURRENT_USER.id, post.user.id));
+        // Sync like state from DB updates
+        setIsLiked(post.isLiked);
+        setLikesCount(post.likes);
     };
-    loadComments();
-    const unsubscribe = subscribe(loadComments);
+    syncData();
+    const unsubscribe = subscribe(syncData);
     return () => unsubscribe();
-  }, [post.id]);
+  }, [post.id, post.user.id, post.isLiked, post.likes]);
+
+  // Reset confirmation states when modals close
+  useEffect(() => {
+    if (!showComments) setConfirmDeleteCommentId(null);
+  }, [showComments]);
+
+  useEffect(() => {
+    if (!showOptions) setIsConfirmingPostDelete(false);
+  }, [showOptions]);
 
   const brands = Array.from(new Set(post.items.map(i => i.brand).filter(b => b))).join(', ');
 
@@ -86,6 +111,10 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
 
   const handleLike = (e?: React.MouseEvent) => {
     e?.stopPropagation();
+    // Toggle DB State
+    togglePostLike(post.id);
+    
+    // Optimistic Update
     setIsLiked(!isLiked);
     setLikesCount(prev => isLiked ? prev - 1 : prev + 1);
   };
@@ -93,15 +122,38 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
   const handleDoubleTap = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!isLiked) {
-      setIsLiked(true);
-      setLikesCount(prev => prev + 1);
+
+    // Clear any pending single click action to prevent tag toggle
+    if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current);
+        clickTimeoutRef.current = null;
+    }
+
+    // Toggle DB State
+    togglePostLike(post.id);
+    
+    if (isLiked) {
+        // Unlike
+        setIsLiked(false);
+        setLikesCount(prev => Math.max(0, prev - 1));
+    } else {
+        // Like
+        setIsLiked(true);
+        setLikesCount(prev => prev + 1);
     }
   };
 
   const handleImageClick = (e: React.MouseEvent) => {
      if ((e.target as HTMLElement).closest('button')) return;
-     setShowTags(!showTags);
+     
+     // Clear any existing timeout
+     if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
+
+     // Set a delay to allow for double tap detection
+     clickTimeoutRef.current = setTimeout(() => {
+         setShowTags(prev => !prev);
+         clickTimeoutRef.current = null;
+     }, 250); // 250ms delay is standard for double tap distinction
   };
 
   const handleUserClick = (e: React.MouseEvent) => {
@@ -116,6 +168,7 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
     const comment: Comment = {
         id: `nc_${Date.now()}`,
         username: CURRENT_USER.username,
+        handle: CURRENT_USER.handle,
         avatarUrl: CURRENT_USER.avatarUrl,
         text: newComment,
         timestamp: 'Just now',
@@ -128,6 +181,48 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
 
   const handleLikeComment = (commentId: string) => {
     toggleCommentLike(post.id, commentId);
+  };
+
+  const handleDeleteComment = (e: React.MouseEvent, commentId: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    
+    if (confirmDeleteCommentId === commentId) {
+        // Confirmed
+        deleteComment(post.id, commentId);
+        setConfirmDeleteCommentId(null);
+    } else {
+        // First click - arm the button
+        setConfirmDeleteCommentId(commentId);
+        // Reset after 3 seconds if not confirmed
+        setTimeout(() => {
+             // Only reset if it hasn't been deleted (component might unmount but check safe)
+             setConfirmDeleteCommentId(prev => prev === commentId ? null : prev);
+        }, 3000);
+    }
+  };
+
+  const handleDeletePost = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      
+      if (isConfirmingPostDelete) {
+          deletePost(post.id);
+          setShowOptions(false);
+          setIsConfirmingPostDelete(false);
+      } else {
+          setIsConfirmingPostDelete(true);
+      }
+  };
+  
+  const handleFollowToggle = () => {
+      toggleFollow(CURRENT_USER.id, post.user.id);
+      setIsFollowingUser(!isFollowingUser);
+  };
+  
+  const handleSaveToggle = () => {
+      toggleSavePost(CURRENT_USER.id, post.id);
+      setShowOptions(false);
   };
 
   const getPolaroidStyle = (idx: number) => {
@@ -172,6 +267,60 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
       };
   };
 
+  // Reusable text parser for tags and mentions
+  const renderStyledText = (text: string) => {
+    const parts = text.split(/(\s+)/);
+    return (
+      <span>
+        {parts.map((part, i) => {
+            if (part.startsWith('#') && part.length > 1) {
+              return (
+                <span 
+                  key={i} 
+                  onClick={(e) => { e.stopPropagation(); onViewHashtag && onViewHashtag(part); }} 
+                  className="text-blue-600 dark:text-blue-400 font-medium hover:underline cursor-pointer"
+                >
+                  {part}
+                </span>
+              );
+            }
+            if (part.startsWith('@') && part.length > 1) {
+                return (
+                    <span
+                        key={i}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            // Attempt to look up user
+                            const taggedUser = getUserByHandle(part);
+                            if (taggedUser && onViewProfile) {
+                                onViewProfile(taggedUser.id);
+                            }
+                        }}
+                        className="text-blue-600 dark:text-blue-400 font-medium hover:underline cursor-pointer"
+                    >
+                        {part}
+                    </span>
+                );
+            }
+            return <span key={i}>{part}</span>;
+          })}
+      </span>
+    );
+  };
+
+  const renderCaption = () => {
+    return (
+      <div className="text-sm cursor-pointer active:opacity-70" onClick={() => onOpenFullView(post)}>
+        <span className="font-bold mr-1 text-black dark:text-white hover:underline" onClick={(e) => { e.stopPropagation(); handleUserClick(e); }}>
+          {post.user.handle}
+        </span>
+        <span className="text-gray-900 dark:text-gray-200 leading-normal">
+          {renderStyledText(post.caption)}
+        </span>
+      </div>
+    );
+  };
+
   const bgStyle = getBackgroundStyle();
 
   return (
@@ -190,7 +339,7 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
             <img src={post.user.avatarUrl} alt={post.user.username} className="w-full h-full object-cover" />
           </div>
           <div className="min-w-0">
-            <div className="font-bold text-sm leading-tight text-black dark:text-white hover:underline">{post.user.username}</div>
+            <div className="font-bold text-sm leading-tight text-black dark:text-white hover:underline">{post.user.handle}</div>
             
             {/* Wearing / Music Info with Fade */}
             <div className={`text-[11px] text-gray-500 dark:text-zinc-400 font-light leading-tight mt-0.5 min-h-[14px] flex items-center gap-1 transition-opacity duration-500 ${isFading ? 'opacity-0' : 'opacity-100'}`}>
@@ -249,24 +398,25 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
           >
             <img src={post.generatedImage} alt="Generated Fit" className="w-full h-full object-cover select-none" />
             
-            {/* Tags Overlay */}
-            {showTags && post.items.map((item, idx) => (
-               <button
-                  key={item.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedItem(item);
-                  }}
-                  className="absolute bg-white text-black text-xs font-bold pl-3 pr-2 py-1.5 rounded-full flex items-center gap-1.5 shadow-xl animate-in fade-in zoom-in duration-200 active:scale-95 hover:bg-gray-50 z-10"
-                  style={{ 
-                    top: `${40 + (idx * 15)}%`, 
-                    left: `${30 + (idx * 10)}%` 
-                  }}
-               >
-                 <span>{item.brand}</span>
-                 <ShoppingBag size={12} strokeWidth={3} className="text-black" />
-               </button>
-            ))}
+            {/* Tags Overlay (Stacked Center Left) */}
+            {showTags && (
+               <div className="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-2 items-start z-10">
+                 {post.items.map((item, idx) => (
+                    <button
+                        key={item.id}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedItem(item);
+                        }}
+                        className="bg-white/90 backdrop-blur-md text-black text-xs font-bold pl-3 pr-4 py-2 rounded-full flex items-center gap-2 shadow-lg animate-in slide-in-from-left-2 duration-200 active:scale-95 hover:bg-white"
+                        style={{ animationDelay: `${idx * 50}ms` }}
+                    >
+                        <ShoppingBag size={12} strokeWidth={2.5} />
+                        <span>{item.brand}</span>
+                    </button>
+                 ))}
+               </div>
+            )}
           </div>
 
           {/* Slide 2: The Board */}
@@ -377,10 +527,7 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
       {/* Likes & Caption */}
       <div className="px-4 pb-4 pt-3">
         <div className="font-bold text-sm mb-1 text-black dark:text-white">{likesCount} flames</div>
-        <div className="text-sm cursor-pointer active:opacity-70" onClick={() => onOpenFullView(post)}>
-          <span className="font-bold mr-1 text-black dark:text-white hover:underline" onClick={(e) => { e.stopPropagation(); handleUserClick(e); }}>{post.user.username}</span>
-          <span className="text-gray-900 dark:text-gray-200 leading-normal">{post.caption}</span>
-        </div>
+        {renderCaption()}
         <div className="text-gray-400 dark:text-zinc-500 text-xs mt-2 uppercase tracking-wide font-medium">
             <TimeAgo timestamp={post.createdAt} staticText={post.timestamp} />
         </div>
@@ -389,37 +536,62 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
       {/* Options Modal */}
       <Modal isOpen={showOptions} onClose={() => setShowOptions(false)} variant="bottom">
         <div className="flex flex-col gap-2 pb-8">
-            <button 
-                onClick={() => { setShowOptions(false); }}
-                className="w-full p-4 flex items-center gap-4 hover:bg-gray-50 dark:hover:bg-zinc-800 rounded-2xl transition-colors text-left"
-            >
-                <UserPlus size={24} className="text-gray-900 dark:text-zinc-200" />
-                <span className="font-bold text-sm text-gray-900 dark:text-zinc-200">Follow</span>
-            </button>
+            {isOwner ? (
+                <button 
+                    type="button"
+                    onClick={handleDeletePost}
+                    className={`w-full p-4 flex items-center gap-4 rounded-2xl transition-all text-left ${
+                        isConfirmingPostDelete 
+                        ? 'bg-red-600 text-white shadow-lg' 
+                        : 'hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600'
+                    }`}
+                >
+                    {isConfirmingPostDelete ? <AlertCircle size={24} /> : <Trash2 size={24} />}
+                    <span className="font-bold text-sm">
+                        {isConfirmingPostDelete ? 'Are you sure? Tap again to delete.' : 'Delete Post'}
+                    </span>
+                </button>
+            ) : (
+                <>
+                    <button 
+                        onClick={() => { handleFollowToggle(); setShowOptions(false); }}
+                        className="w-full p-4 flex items-center gap-4 hover:bg-gray-50 dark:hover:bg-zinc-800 rounded-2xl transition-colors text-left"
+                    >
+                        {isFollowingUser ? (
+                            <UserPlus size={24} className="text-blue-600 dark:text-blue-400" />
+                        ) : (
+                            <UserPlus size={24} className="text-gray-900 dark:text-zinc-200" />
+                        )}
+                        <span className={`font-bold text-sm ${isFollowingUser ? 'text-blue-600 dark:text-blue-400' : 'text-gray-900 dark:text-zinc-200'}`}>
+                            {isFollowingUser ? 'Following' : 'Follow'}
+                        </span>
+                    </button>
 
-            <button 
-                onClick={() => { setIsSaved(!isSaved); setShowOptions(false); }}
-                className="w-full p-4 flex items-center gap-4 hover:bg-gray-50 dark:hover:bg-zinc-800 rounded-2xl transition-colors text-left"
-            >
-                <Bookmark size={24} className={isSaved ? "fill-black dark:fill-white text-black dark:text-white" : "text-gray-900 dark:text-zinc-200"} />
-                <span className="font-bold text-sm text-gray-900 dark:text-zinc-200">{isSaved ? "Unsave Post" : "Save Post"}</span>
-            </button>
-            
-            <button 
-                onClick={() => { alert("We'll show fewer posts like this."); setShowOptions(false); }}
-                className="w-full p-4 flex items-center gap-4 hover:bg-gray-50 dark:hover:bg-zinc-800 rounded-2xl transition-colors text-left"
-            >
-                <EyeOff size={24} className="text-gray-900 dark:text-zinc-200" />
-                <span className="font-bold text-sm text-gray-900 dark:text-zinc-200">See less like this</span>
-            </button>
-            
-            <button 
-                onClick={() => { alert("Report submitted. Thanks for keeping Fitted safe."); setShowOptions(false); }}
-                className="w-full p-4 flex items-center gap-4 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-2xl transition-colors text-left text-red-600"
-            >
-                <Flag size={24} />
-                <span className="font-bold text-sm">Report Post</span>
-            </button>
+                    <button 
+                        onClick={handleSaveToggle}
+                        className="w-full p-4 flex items-center gap-4 hover:bg-gray-50 dark:hover:bg-zinc-800 rounded-2xl transition-colors text-left"
+                    >
+                        <Bookmark size={24} className={isSaved ? "fill-black dark:fill-white text-black dark:text-white" : "text-gray-900 dark:text-zinc-200"} />
+                        <span className="font-bold text-sm text-gray-900 dark:text-zinc-200">{isSaved ? "Unsave Post" : "Save Post"}</span>
+                    </button>
+                    
+                    <button 
+                        onClick={() => { alert("We'll show fewer posts like this."); setShowOptions(false); }}
+                        className="w-full p-4 flex items-center gap-4 hover:bg-gray-50 dark:hover:bg-zinc-800 rounded-2xl transition-colors text-left"
+                    >
+                        <EyeOff size={24} className="text-gray-900 dark:text-zinc-200" />
+                        <span className="font-bold text-sm text-gray-900 dark:text-zinc-200">See less like this</span>
+                    </button>
+                    
+                    <button 
+                        onClick={() => { alert("Report submitted. Thanks for keeping Fitted safe."); setShowOptions(false); }}
+                        className="w-full p-4 flex items-center gap-4 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-2xl transition-colors text-left text-red-600"
+                    >
+                        <Flag size={24} />
+                        <span className="font-bold text-sm">Report Post</span>
+                    </button>
+                </>
+            )}
         </div>
       </Modal>
 
@@ -429,34 +601,76 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
             {/* List */}
             <div className="flex-1 overflow-y-auto pb-4 space-y-4 px-1">
                 {comments.length === 0 && <div className="text-gray-400 text-center py-10 text-sm">No comments yet. Be the first.</div>}
-                {comments.map(comment => (
-                    <div key={comment.id} className="flex gap-3 items-start">
-                        <img src={comment.avatarUrl} className="w-9 h-9 rounded-full object-cover border border-gray-100 dark:border-zinc-700 shrink-0 mt-1" alt={comment.username} />
-                        <div className="flex-1">
-                            <div className="flex items-baseline gap-2">
-                                <span className="font-bold text-sm text-black dark:text-white">{comment.username}</span>
-                                <span className="text-[10px] text-gray-400 dark:text-zinc-500 font-medium">
-                                    <TimeAgo timestamp={comment.createdAt} staticText={comment.timestamp} />
-                                </span>
+                {comments.map(comment => {
+                    const isMyComment = comment.username === CURRENT_USER.username;
+                    const isConfirming = confirmDeleteCommentId === comment.id;
+
+                    return (
+                        <div key={comment.id} className="flex gap-3 items-start group">
+                            <img 
+                                src={comment.avatarUrl} 
+                                className="w-9 h-9 rounded-full object-cover border border-gray-100 dark:border-zinc-700 shrink-0 mt-1 cursor-pointer hover:opacity-80 transition-opacity" 
+                                alt={comment.username} 
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    const user = getUserByHandle(comment.handle);
+                                    if (user && onViewProfile) {
+                                        onViewProfile(user.id);
+                                    }
+                                }}
+                            />
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-0.5">
+                                    <span 
+                                        className="font-bold text-sm text-black dark:text-white truncate cursor-pointer hover:underline"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            const user = getUserByHandle(comment.handle);
+                                            if (user && onViewProfile) {
+                                                onViewProfile(user.id);
+                                            }
+                                        }}
+                                    >
+                                        {comment.handle}
+                                    </span>
+                                    <span className="text-[10px] text-gray-400 dark:text-zinc-500 font-medium shrink-0">
+                                        <TimeAgo timestamp={comment.createdAt} staticText={comment.timestamp} />
+                                    </span>
+                                    {isMyComment && (
+                                        <button 
+                                            type="button"
+                                            onClick={(e) => handleDeleteComment(e, comment.id)}
+                                            className={`flex items-center justify-center w-5 h-5 transition-all ${
+                                                isConfirming 
+                                                ? 'bg-red-500 text-white rounded w-auto px-1.5' 
+                                                : 'text-gray-300 hover:text-red-500'
+                                            } translate-y-0.5`}
+                                        >
+                                            {isConfirming ? <span className="text-[10px] font-bold">Confirm?</span> : <Trash2 size={12} />}
+                                        </button>
+                                    )}
+                                </div>
+                                <p className="text-sm text-gray-800 dark:text-zinc-300 leading-snug break-words">
+                                    {renderStyledText(comment.text)}
+                                </p>
                             </div>
-                            <p className="text-sm text-gray-800 dark:text-zinc-300 leading-snug">{comment.text}</p>
+                            <div className="flex flex-col items-center gap-0.5 pt-1 shrink-0">
+                                <button 
+                                    onClick={() => handleLikeComment(comment.id)}
+                                    className={`transition-transform active:scale-90 p-1 ${comment.isLiked ? 'text-red-500' : 'text-gray-400 dark:text-zinc-600 hover:text-gray-600 dark:hover:text-zinc-400'}`}
+                                >
+                                    <Heart size={14} fill={comment.isLiked ? "currentColor" : "none"} />
+                                </button>
+                                {/* Show like count text if > 0 */}
+                                {comment.likes > 0 && (
+                                    <span className="text-[9px] text-gray-400 dark:text-zinc-500 font-medium leading-none">
+                                        {comment.likes}
+                                    </span>
+                                )}
+                            </div>
                         </div>
-                        <div className="flex flex-col items-center gap-0.5 pt-1">
-                            <button 
-                                onClick={() => handleLikeComment(comment.id)}
-                                className={`transition-transform active:scale-90 p-1 ${comment.isLiked ? 'text-red-500' : 'text-gray-400 dark:text-zinc-600 hover:text-gray-600 dark:hover:text-zinc-400'}`}
-                            >
-                                <Heart size={14} fill={comment.isLiked ? "currentColor" : "none"} />
-                            </button>
-                            {/* Show like count text if > 0 */}
-                            {comment.likes > 0 && (
-                                <span className="text-[9px] text-gray-400 dark:text-zinc-500 font-medium leading-none">
-                                    {comment.likes} like{comment.likes !== 1 ? 's' : ''}
-                                </span>
-                            )}
-                        </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
             
             {/* Input */}
@@ -469,7 +683,7 @@ export const PostItem: React.FC<PostItemProps> = ({ post, onOpenFullView, onView
                         value={newComment}
                         onChange={e => setNewComment(e.target.value)}
                         onKeyDown={e => e.key === 'Enter' && handlePostComment()}
-                        placeholder={`Add a comment for ${post.user.username}...`}
+                        placeholder={`Add a comment for ${post.user.handle}...`}
                         className="w-full bg-gray-100 dark:bg-zinc-800 rounded-full py-2.5 pl-4 pr-12 text-sm focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white dark:text-white"
                     />
                     <button 

@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect } from 'react';
-import { X, User, Lock, Bell, HelpCircle, LogOut, ChevronRight, Moon } from 'lucide-react';
+import { X, User, Lock, Bell, HelpCircle, LogOut, ChevronRight, Moon, Briefcase } from 'lucide-react';
 import { 
   EditProfile, 
   PrivacySecurity, 
@@ -12,6 +13,8 @@ import {
   PrivacyPolicyText,
   ContactUs
 } from './SettingsPages';
+import { toggleBusinessAccount, getUser } from '../services/mockDb';
+import { CURRENT_USER } from '../constants';
 
 interface SettingsDrawerProps {
   isOpen: boolean;
@@ -36,10 +39,14 @@ type SettingsView =
 
 export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({ isOpen, onClose, initialView = 'menu', currentTheme, setTheme }) => {
   const [currentView, setCurrentView] = useState<SettingsView>(initialView);
+  const [isBusiness, setIsBusiness] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
         setCurrentView(initialView);
+        // Sync business status
+        const user = getUser(CURRENT_USER.id);
+        if (user) setIsBusiness(!!user.isBusinessAccount);
     } else {
         const timer = setTimeout(() => setCurrentView('menu'), 300);
         return () => clearTimeout(timer);
@@ -54,6 +61,12 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({ isOpen, onClose,
     } else {
         setCurrentView('menu');
     }
+  };
+
+  const handleToggleBusiness = () => {
+      toggleBusinessAccount(CURRENT_USER.id);
+      setIsBusiness(!isBusiness);
+      alert(!isBusiness ? "Switched to Business Account" : "Switched to Personal Account");
   };
 
   const renderContent = () => {
@@ -89,6 +102,16 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({ isOpen, onClose,
                             <MenuItem icon={<User size={20} />} label="Edit Profile" onClick={() => setCurrentView('editProfile')} />
                             <MenuItem icon={<Lock size={20} />} label="Privacy & Security" onClick={() => setCurrentView('privacy')} />
                             <MenuItem icon={<Bell size={20} />} label="Notifications" onClick={() => setCurrentView('notifications')} />
+                            
+                            <button 
+                                onClick={handleToggleBusiness} 
+                                className="w-full flex items-center justify-between px-3 py-3 hover:bg-gray-50 dark:hover:bg-zinc-800 rounded-xl transition-colors group mt-2"
+                            >
+                                <div className="flex items-center gap-3 text-blue-600 dark:text-blue-400 font-medium">
+                                    <Briefcase size={20} />
+                                    <span>{isBusiness ? "Switch to Personal Account" : "Switch to Business Account"}</span>
+                                </div>
+                            </button>
                         </div>
                     </div>
 

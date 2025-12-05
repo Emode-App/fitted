@@ -1,6 +1,6 @@
 
 import { MOCK_USERS, MOCK_POSTS, CURRENT_USER } from '../constants';
-import { Post, User, Comment, Conversation, Message, Folder, Asset } from '../types';
+import { Post, User, Comment, Conversation, Message, Folder, Asset, PaymentRequest } from '../types';
 
 // Helper to parse relative time string to minutes
 const parseTimeMinutes = (timeStr: string): number => {
@@ -48,16 +48,21 @@ const followingStore: Record<string, Set<string>> = {
   's3': new Set([CURRENT_USER.id, 'u2', 's2']),   // s3 follows me, u2, s2
 };
 
+// Saved Posts: userId -> Set<postId>
+const savedPostsStore: Record<string, Set<string>> = {
+    [CURRENT_USER.id]: new Set(['p2']) // Initial mock save
+};
+
 // Comments: postId -> Comment[]
 // Hydrate comments with createdAt
 const commentsStore: Record<string, Comment[]> = {
   'p1': [
-    { id: 'c1', username: 'steven', avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100', text: 'This goes hard 🔥', timestamp: '2m', createdAt: Date.now() - 2 * 60 * 1000, isLiked: false, likes: 0 },
-    { id: 'c2', username: 'alealimay', avatarUrl: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&q=80&w=100', text: 'Need that hoodie asap.', timestamp: '5m', createdAt: Date.now() - 5 * 60 * 1000, isLiked: false, likes: 0 },
+    { id: 'c1', username: 'steven', handle: '@steven', avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100', text: 'This goes hard 🔥', timestamp: '2m', createdAt: Date.now() - 2 * 60 * 1000, isLiked: false, likes: 0 },
+    { id: 'c2', username: 'alealimay', handle: '@aleali', avatarUrl: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&q=80&w=100', text: 'Need that hoodie asap.', timestamp: '5m', createdAt: Date.now() - 5 * 60 * 1000, isLiked: false, likes: 0 },
   ],
   'p2': [
-    { id: 'c3', username: 'bloodyosiris', avatarUrl: 'https://images.unsplash.com/photo-1522075469751-3a3694c2dd77?auto=format&fit=crop&q=80&w=100', text: 'Rick always valid.', timestamp: '12m', createdAt: Date.now() - 12 * 60 * 1000, isLiked: false, likes: 0 },
-    { id: 'c4', username: 'yungbrando', avatarUrl: CURRENT_USER.avatarUrl, text: 'Grails only.', timestamp: '1h', createdAt: Date.now() - 60 * 60 * 1000, isLiked: false, likes: 0 },
+    { id: 'c3', username: 'bloodyosiris', handle: '@bloody', avatarUrl: 'https://images.unsplash.com/photo-1522075469751-3a3694c2dd77?auto=format&fit=crop&q=80&w=100', text: 'Rick always valid.', timestamp: '12m', createdAt: Date.now() - 12 * 60 * 1000, isLiked: false, likes: 0 },
+    { id: 'c4', username: 'yungbrando', handle: '@bnod', avatarUrl: CURRENT_USER.avatarUrl, text: 'Grails only.', timestamp: '1h', createdAt: Date.now() - 60 * 60 * 1000, isLiked: false, likes: 0 },
   ]
 };
 
@@ -71,6 +76,7 @@ const messagesStore: Record<string, Message[]> = {
   ],
   'conv_2': [
     { id: 'm4', senderId: 's1', text: 'Hey, I saw your profile. Would love to style you sometime.', timestamp: '1d ago', createdAt: Date.now() - 1440 * 60 * 1000, isRead: true },
+    { id: 'm5', senderId: 's1', text: 'My rate is $50/fit if you are interested.', timestamp: '1d ago', createdAt: Date.now() - 1440 * 60 * 1000, isRead: true },
   ]
 };
 
@@ -84,7 +90,7 @@ const conversationsStore: Conversation[] = [
   {
     id: 'conv_2',
     participants: [MOCK_USERS['u1'], MOCK_USERS['s1']],
-    lastMessage: { id: 'm4', senderId: 's1', text: 'Hey, I saw your profile. Would love to style you sometime.', timestamp: '1d ago', createdAt: Date.now() - 1440 * 60 * 1000, isRead: true },
+    lastMessage: { id: 'm5', senderId: 's1', text: 'My rate is $50/fit if you are interested.', timestamp: '1d ago', createdAt: Date.now() - 1440 * 60 * 1000, isRead: true },
     unreadCount: 0
   }
 ];
@@ -136,12 +142,48 @@ export const getUser = (userId: string): User | undefined => {
   return usersStore[userId];
 };
 
+export const getUserByHandle = (handle: string): User | undefined => {
+    const cleanHandle = handle.startsWith('@') ? handle : `@${handle}`;
+    // Case insensitive matching for handle
+    return Object.values(usersStore).find(u => u.handle.toLowerCase() === cleanHandle.toLowerCase());
+};
+
+export const searchUsers = (query: string): User[] => {
+    if (!query) return [];
+    const lowerQuery = query.toLowerCase();
+    return Object.values(usersStore).filter(user => 
+        user.username.toLowerCase().includes(lowerQuery) || 
+        user.handle.toLowerCase().includes(lowerQuery) ||
+        (user.bio && user.bio.toLowerCase().includes(lowerQuery))
+    );
+};
+
 export const updateUser = (updatedUser: User) => {
   if (usersStore[updatedUser.id]) {
     usersStore[updatedUser.id] = updatedUser;
     notify();
   }
 };
+
+export const verifyUser = (userId: string) => {
+    if (usersStore[userId]) {
+        usersStore[userId] = {
+            ...usersStore[userId],
+            isVerifiedStylist: true
+        };
+        notify();
+    }
+}
+
+export const toggleBusinessAccount = (userId: string) => {
+    if (usersStore[userId]) {
+        usersStore[userId] = {
+            ...usersStore[userId],
+            isBusinessAccount: !usersStore[userId].isBusinessAccount
+        };
+        notify();
+    }
+}
 
 export const getUserPosts = (userId: string): Post[] => {
   const userPosts = postsStore.filter(post => post.user.id === userId);
@@ -163,6 +205,38 @@ export const addPost = (post: Post) => {
     };
   }
   notify();
+};
+
+export const deletePost = (postId: string) => {
+  const postToDelete = postsStore.find(p => p.id === postId);
+  postsStore = postsStore.filter(p => p.id !== postId);
+  
+  // Also remove from saved lists
+  Object.values(savedPostsStore).forEach(set => set.delete(postId));
+  
+  if (postToDelete) {
+      const userId = postToDelete.user.id;
+      const user = usersStore[userId];
+      if (user) {
+          usersStore[userId] = {
+              ...user,
+              stats: {
+                  ...user.stats,
+                  fits: Math.max(0, user.stats.fits - 1)
+              }
+          };
+      }
+  }
+  notify();
+};
+
+export const togglePostLike = (postId: string) => {
+    const post = postsStore.find(p => p.id === postId);
+    if (post) {
+        post.isLiked = !post.isLiked;
+        post.likes = post.isLiked ? post.likes + 1 : Math.max(0, post.likes - 1);
+        notify();
+    }
 };
 
 export const isFollowing = (followerId: string, targetId: string): boolean => {
@@ -223,6 +297,32 @@ export const toggleFollow = (followerId: string, targetId: string) => {
   notify();
 };
 
+// --- SAVED POSTS LOGIC ---
+
+export const isPostSaved = (userId: string, postId: string): boolean => {
+    return savedPostsStore[userId]?.has(postId) || false;
+};
+
+export const toggleSavePost = (userId: string, postId: string) => {
+    if (!savedPostsStore[userId]) {
+        savedPostsStore[userId] = new Set();
+    }
+    const saved = savedPostsStore[userId];
+    if (saved.has(postId)) {
+        saved.delete(postId);
+    } else {
+        saved.add(postId);
+    }
+    notify();
+};
+
+export const getSavedPosts = (userId: string): Post[] => {
+    const savedIds = savedPostsStore[userId] || new Set();
+    // Filter all posts to find the saved ones. 
+    // In a real DB this would be a join or specific query.
+    return postsStore.filter(p => savedIds.has(p.id));
+};
+
 export const getPostComments = (postId: string): Comment[] => {
   return commentsStore[postId] || [];
 };
@@ -234,6 +334,13 @@ export const addComment = (postId: string, comment: Comment) => {
   const newComment = { ...comment, createdAt: Date.now(), timestamp: 'Just now' };
   commentsStore[postId].push({ ...newComment, likes: 0 });
   notify();
+};
+
+export const deleteComment = (postId: string, commentId: string) => {
+  if (commentsStore[postId]) {
+    commentsStore[postId] = commentsStore[postId].filter(c => c.id !== commentId);
+    notify();
+  }
 };
 
 export const toggleCommentLike = (postId: string, commentId: string) => {
@@ -328,6 +435,99 @@ export const sendMessage = (conversationId: string, text: string) => {
     notify();
 };
 
+export const sendPaymentRequest = (conversationId: string, amount: number, description: string) => {
+    const now = Date.now();
+    const paymentRequest: PaymentRequest = {
+        type: 'request',
+        amount,
+        description,
+        status: 'pending',
+        currency: 'USD'
+    };
+    
+    const newMessage: Message = {
+        id: `msg_pay_${now}`,
+        senderId: CURRENT_USER.id,
+        text: `Requested $${amount}: ${description}`,
+        timestamp: 'Just now',
+        createdAt: now,
+        isRead: true,
+        paymentRequest
+    };
+
+    if (!messagesStore[conversationId]) {
+        messagesStore[conversationId] = [];
+    }
+    messagesStore[conversationId].push(newMessage);
+
+    const convIndex = conversationsStore.findIndex(c => c.id === conversationId);
+    if (convIndex > -1) {
+        conversationsStore[convIndex] = {
+            ...conversationsStore[convIndex],
+            lastMessage: newMessage
+        };
+    }
+    notify();
+};
+
+export const sendDirectPayment = (conversationId: string, amount: number, description: string) => {
+    const now = Date.now();
+    const paymentRequest: PaymentRequest = {
+        type: 'send',
+        amount,
+        description,
+        status: 'pending', // IMPORTANT: Status is pending until accepted by receiver
+        currency: 'USD',
+        transactionId: `txn_${now}`
+    };
+    
+    const newMessage: Message = {
+        id: `msg_sent_${now}`,
+        senderId: CURRENT_USER.id,
+        text: `Sent $${amount}: ${description}`,
+        timestamp: 'Just now',
+        createdAt: now,
+        isRead: true,
+        paymentRequest
+    };
+
+    if (!messagesStore[conversationId]) {
+        messagesStore[conversationId] = [];
+    }
+    messagesStore[conversationId].push(newMessage);
+
+    const convIndex = conversationsStore.findIndex(c => c.id === conversationId);
+    if (convIndex > -1) {
+        conversationsStore[convIndex] = {
+            ...conversationsStore[convIndex],
+            lastMessage: newMessage
+        };
+    }
+    notify();
+};
+
+export const markPaymentComplete = (conversationId: string, messageId: string) => {
+    const messages = messagesStore[conversationId];
+    if (messages) {
+        const msgIndex = messages.findIndex(m => m.id === messageId);
+        if (msgIndex > -1 && messages[msgIndex].paymentRequest) {
+            messages[msgIndex].paymentRequest!.status = 'completed';
+            notify();
+        }
+    }
+};
+
+export const acceptIncomingPayment = (conversationId: string, messageId: string) => {
+    const messages = messagesStore[conversationId];
+    if (messages) {
+        const msgIndex = messages.findIndex(m => m.id === messageId);
+        if (msgIndex > -1 && messages[msgIndex].paymentRequest && messages[msgIndex].paymentRequest.type === 'send') {
+            messages[msgIndex].paymentRequest!.status = 'completed';
+            notify();
+        }
+    }
+};
+
 export const markConversationAsRead = (conversationId: string) => {
     const convIndex = conversationsStore.findIndex(c => c.id === conversationId);
     if (convIndex > -1) {
@@ -345,10 +545,20 @@ export const getWardrobe = (): Folder[] => {
     return wardrobeStore;
 };
 
+// Helper for unique asset handling
+const upsertAsset = (list: Asset[], newAsset: Asset) => {
+   // Filter out any asset with same signature (if signature exists)
+   let filtered = list;
+   if (newAsset.fileSignature) {
+       filtered = list.filter(a => a.fileSignature !== newAsset.fileSignature);
+   }
+   return [newAsset, ...filtered];
+};
+
 export const addAssetToWardrobe = (folderId: string, asset: Asset) => {
     wardrobeStore = wardrobeStore.map(f => {
         if (f.id === folderId) {
-            return { ...f, assets: [asset, ...f.assets] };
+            return { ...f, assets: upsertAsset(f.assets, asset) };
         }
         return f;
     });
@@ -356,8 +566,7 @@ export const addAssetToWardrobe = (folderId: string, asset: Asset) => {
     if (folderId !== 'last_used') {
         wardrobeStore = wardrobeStore.map(f => {
             if (f.id === 'last_used') {
-                 // Simple prepend, dupes allowed for now as 'recent' log
-                 return { ...f, assets: [asset, ...f.assets] };
+                 return { ...f, assets: upsertAsset(f.assets, asset) };
             }
             return f;
         });

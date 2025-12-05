@@ -9,9 +9,12 @@ export interface User {
   socials?: {
     instagram?: string;
     twitter?: string;
+    tiktok?: string;
   };
   bio: string;
   location: string;
+  website?: string; // New: Bio Link
+  isBusinessAccount?: boolean; // New: Account Type
   stats: {
     followers: number;
     following: number;
@@ -81,12 +84,24 @@ export interface Stylist {
 export interface Comment {
   id: string;
   username: string;
+  handle: string; // User handle (e.g. @bnod)
   avatarUrl: string;
   text: string;
   timestamp: string;
   createdAt?: number;
   isLiked?: boolean;
   likes: number;
+}
+
+export type PaymentStatus = 'pending' | 'completed' | 'failed';
+
+export interface PaymentRequest {
+  type: 'request' | 'send'; // Distinguish between asking for money and sending money
+  amount: number;
+  description: string;
+  status: PaymentStatus;
+  currency: string;
+  transactionId?: string; // Real Stripe ID would go here
 }
 
 export interface Message {
@@ -97,6 +112,7 @@ export interface Message {
   createdAt?: number;
   isRead: boolean;
   isOwn?: boolean;
+  paymentRequest?: PaymentRequest; // Optional payment data
 }
 
 export interface Conversation {
@@ -110,6 +126,7 @@ export interface Asset {
   id: string;
   url: string;
   dateAdded: number;
+  fileSignature?: string; // Used for deduplication
 }
 
 export interface Folder {

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Layout } from './components/Layout';
 import { Feed } from './components/Feed';
@@ -8,8 +9,10 @@ import { Profile } from './components/Profile';
 import { Notifications } from './components/Notifications';
 import { BrandPage } from './components/BrandPage';
 import { TrendingPage } from './components/TrendingPage'; 
+import { HashtagPage } from './components/HashtagPage';
 import { FullPostView } from './components/FullPostView';
 import { Post } from './types';
+import { getAllPosts, subscribe } from './services/mockDb';
 
 const SplashScreen = ({ isExiting }: { isExiting: boolean }) => (
   <div className={`fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center transition-opacity duration-1000 ease-out ${isExiting ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
@@ -31,6 +34,7 @@ const App = () => {
 
   // Navigation States
   const [viewedBrand, setViewedBrand] = useState<string | null>(null);
+  const [viewedHashtag, setViewedHashtag] = useState<string | null>(null);
   const [initialChatUserId, setInitialChatUserId] = useState<string | null>(null);
   
   // Feed Tab State
@@ -42,6 +46,8 @@ const App = () => {
 
   // Profile Tab State
   const [profileSelectedPost, setProfileSelectedPost] = useState<Post | null>(null);
+  // Hashtag Page Post State
+  const [hashtagSelectedPost, setHashtagSelectedPost] = useState<Post | null>(null);
 
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(true);
@@ -61,6 +67,27 @@ const App = () => {
 
     return () => { clearTimeout(timer1); clearTimeout(timer2); };
   }, []);
+
+  // Sync state on DB changes (handle deletions in open views)
+  useEffect(() => {
+      const unsubscribe = subscribe(() => {
+          const posts = getAllPosts();
+          
+          if (feedSelectedPost && !posts.find(p => p.id === feedSelectedPost.id)) {
+              setFeedSelectedPost(null);
+          }
+          if (exploreSelectedPost && !posts.find(p => p.id === exploreSelectedPost.id)) {
+              setExploreSelectedPost(null);
+          }
+          if (profileSelectedPost && !posts.find(p => p.id === profileSelectedPost.id)) {
+              setProfileSelectedPost(null);
+          }
+          if (hashtagSelectedPost && !posts.find(p => p.id === hashtagSelectedPost.id)) {
+              setHashtagSelectedPost(null);
+          }
+      });
+      return () => unsubscribe();
+  }, [feedSelectedPost, exploreSelectedPost, profileSelectedPost, hashtagSelectedPost]);
 
   // Theme Logic
   useEffect(() => {
@@ -84,8 +111,10 @@ const App = () => {
     setActiveTab(tab);
     setIsNotificationsOpen(false);
     setViewedBrand(null);
+    setViewedHashtag(null);
     setProfileSelectedPost(null);
     setExploreSelectedPost(null);
+    setHashtagSelectedPost(null);
     setViewedTrend(null);
     if (tab === 'profile') {
         setViewedProfileId(null);
@@ -99,6 +128,7 @@ const App = () => {
       setActiveTab('home');
       setIsNotificationsOpen(false);
       setViewedBrand(null);
+      setViewedHashtag(null);
       setFeedSelectedPost(null);
   };
 
@@ -111,8 +141,9 @@ const App = () => {
     setViewedProfileId(userId);
     setIsNotificationsOpen(false);
     setViewedBrand(null);
+    // Don't clear hashtag view to allow back navigation ideally, but for now strict reset
+    // setViewedHashtag(null); 
     setProfileSelectedPost(null);
-    // Note: We don't clear explore/feed states here to preserve history if they go back
     setActiveTab('profile');
   };
 
@@ -131,8 +162,16 @@ const App = () => {
     setViewedBrand(brandName);
   };
 
+  const handleViewHashtag = (hashtag: string) => {
+    setViewedHashtag(hashtag);
+  };
+
   const handleBrandBack = () => {
     setViewedBrand(null);
+  };
+
+  const handleHashtagBack = () => {
+    setViewedHashtag(null);
   };
 
   const handleEditProfile = () => {
@@ -156,7 +195,26 @@ const App = () => {
   };
 
   const renderContent = () => {
-    // Global Overlays (Brand Page, Notifications)
+    // Global Overlays (Brand Page, Hashtag Page, Notifications)
+    
+    // Hashtag Page Overlay
+    if (viewedHashtag) {
+        if (hashtagSelectedPost) {
+             return <FullPostView 
+                post={hashtagSelectedPost} 
+                onBack={() => setHashtagSelectedPost(null)}
+                onViewProfile={handleViewProfile}
+                onViewBrand={handleViewBrand}
+                onViewHashtag={handleViewHashtag}
+            />;
+        }
+        return <HashtagPage 
+            hashtag={viewedHashtag} 
+            onBack={handleHashtagBack} 
+            onOpenPost={setHashtagSelectedPost} 
+        />;
+    }
+
     if (viewedBrand) {
         return <BrandPage brandName={viewedBrand} onBack={handleBrandBack} />;
     }
@@ -169,7 +227,8 @@ const App = () => {
       case 'home': 
         return <Feed 
             onViewProfile={handleViewProfile} 
-            onViewBrand={handleViewBrand} 
+            onViewBrand={handleViewBrand}
+            onViewHashtag={handleViewHashtag}
             selectedPost={feedSelectedPost}
             onOpenFullView={setFeedSelectedPost}
         />;
@@ -181,6 +240,7 @@ const App = () => {
                 onBack={() => setExploreSelectedPost(null)}
                 onViewProfile={handleViewProfile}
                 onViewBrand={handleViewBrand}
+                onViewHashtag={handleViewHashtag}
             />;
         }
         if (viewedTrend) {
@@ -195,6 +255,7 @@ const App = () => {
             onViewProfile={handleViewProfile} 
             onViewTrend={handleViewTrend}
             onOpenPost={setExploreSelectedPost}
+            onViewHashtag={handleViewHashtag}
         />;
 
       case 'create': 
@@ -212,6 +273,7 @@ const App = () => {
                 onBack={() => setProfileSelectedPost(null)}
                 onViewProfile={handleViewProfile}
                 onViewBrand={handleViewBrand}
+                onViewHashtag={handleViewHashtag}
             />;
         }
         return <Profile 
@@ -225,7 +287,8 @@ const App = () => {
       default: 
         return <Feed 
             onViewProfile={handleViewProfile} 
-            onViewBrand={handleViewBrand} 
+            onViewBrand={handleViewBrand}
+            onViewHashtag={handleViewHashtag}
             selectedPost={feedSelectedPost}
             onOpenFullView={setFeedSelectedPost}
         />;
@@ -245,7 +308,7 @@ const App = () => {
           onCloseSettings={() => setIsSettingsOpen(false)}
           onOpenSettings={handleOpenSettings}
           settingsView={settingsView}
-          scrollKey={`${activeTab}${viewedProfileId ? '-' + viewedProfileId : ''}${isNotificationsOpen ? '-notif' : ''}${viewedBrand ? '-' + viewedBrand : ''}${feedSelectedPost ? '-' + feedSelectedPost.id : ''}${profileSelectedPost ? '-' + profileSelectedPost.id : ''}${exploreSelectedPost ? '-' + exploreSelectedPost.id : ''}${viewedTrend ? '-' + viewedTrend.name : ''}`}
+          scrollKey={`${activeTab}${viewedProfileId ? '-' + viewedProfileId : ''}${isNotificationsOpen ? '-notif' : ''}${viewedBrand ? '-' + viewedBrand : ''}${viewedHashtag ? '-' + viewedHashtag : ''}${feedSelectedPost ? '-' + feedSelectedPost.id : ''}${profileSelectedPost ? '-' + profileSelectedPost.id : ''}${exploreSelectedPost ? '-' + exploreSelectedPost.id : ''}${viewedTrend ? '-' + viewedTrend.name : ''}`}
           hasUnreadNotifications={hasUnreadNotifications}
           currentTheme={theme}
           setTheme={setTheme}

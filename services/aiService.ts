@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -71,6 +72,73 @@ export const generateOutfit = async (
 
   } catch (error) {
     console.error("Generation error:", error);
+    throw error;
+  }
+};
+
+/**
+ * Searches for products using Gemini with Google Search Grounding.
+ * Simulates a Product API by extracting structured data from search results.
+ */
+export const searchProducts = async (query: string) => {
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `Search for clothing products matching "${query}".
+      Return a raw JSON array of 12 distinct items.
+      Each item object must strictly have these fields: 
+      - "name" (string, precise product name)
+      - "brand" (string)
+      - "price" (number, estimate if needed)
+      - "sku" (string, optional - important for images)
+      - "imageUrl" (string, optional - if you find a very reliable one)
+      - "purchaseLink" (string, the direct product page URL on StockX. e.g. https://stockx.com/jordan-1-retro-high-og-chicago-lost-and-found)
+      
+      Important:
+      1. Prioritize StockX links.
+      2. Do NOT return "vertexaisearch.com" or "google.com/url" redirect links. If the link looks like that, assume it is invalid.
+      3. If you can't find a direct link, construct a valid StockX URL using the product name (e.g. https://stockx.com/product-slug).
+      
+      Do not include markdown formatting or backticks. Just the raw JSON string.`,
+      config: {
+        tools: [{ googleSearch: {} }]
+      }
+    });
+
+    const text = response.text || '';
+    // Clean up markdown if present despite instructions
+    const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+    
+    try {
+      const items = JSON.parse(cleanText);
+      
+      if (Array.isArray(items)) {
+          return items.map(item => {
+              let link = item.purchaseLink;
+              
+              // Sanitizer: Filter out garbage links from search grounding
+              if (typeof link !== 'string' || link.includes('vertexaisearch') || link.includes('google.com')) {
+                  // Fallback: Construct a StockX Search URL which is safe and reliable
+                  link = `https://stockx.com/search?s=${encodeURIComponent(item.name)}`;
+              }
+
+              return {
+                  ...item,
+                  // Normalize data
+                  price: item.price || 0,
+                  purchaseLink: link,
+                  // We intentionally don't stress about images here, 
+                  // Create.tsx will fallback to Bing Search if this is empty/broken
+              };
+          });
+      }
+      return [];
+    } catch (e) {
+      console.error("Failed to parse search results JSON", e);
+      return [];
+    }
+  } catch (error) {
+    console.error("Search error:", error);
     throw error;
   }
 };

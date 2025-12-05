@@ -1,9 +1,10 @@
+
 import React, { useEffect, useState } from 'react';
 import { CURRENT_USER } from '../constants';
-import { Settings, MapPin, Camera, Instagram, Twitter, ArrowLeft, CheckCircle, Music, ExternalLink, BadgeCheck, MessageCircle } from 'lucide-react';
-import { getUser, getUserPosts, subscribe, isFollowing, toggleFollow, getFollowers, getFollowing, updateUser } from '../services/mockDb';
+import { Settings, MapPin, Camera, Instagram, Twitter, ArrowLeft, CheckCircle, Music, ExternalLink, BadgeCheck, MessageCircle, Grid, Bookmark, LayoutGrid, Link as LinkIcon, Briefcase } from 'lucide-react';
+import { getUser, getUserPosts, subscribe, isFollowing, toggleFollow, getFollowers, getFollowing, updateUser, getSavedPosts } from '../services/mockDb';
 import { User, Post } from '../types';
-import { Modal } from './Shared';
+import { Modal, TikTokLogo } from './Shared';
 
 interface ProfileProps {
   userId?: string;
@@ -17,6 +18,8 @@ interface ProfileProps {
 export const Profile: React.FC<ProfileProps> = ({ userId, onBack, onEditProfile, onOpenPost, onViewProfile, onMessage }) => {
   const [user, setUser] = useState<User>(CURRENT_USER);
   const [posts, setPosts] = useState<Post[]>([]);
+  const [savedPosts, setSavedPosts] = useState<Post[]>([]);
+  const [activeTab, setActiveTab] = useState<'fits' | 'saved'>('fits');
   const [isFollowed, setIsFollowed] = useState(false);
   
   // Follow List State
@@ -35,6 +38,11 @@ export const Profile: React.FC<ProfileProps> = ({ userId, onBack, onEditProfile,
             setUser(foundUser);
             setPosts(getUserPosts(targetUserId));
             setIsFollowed(isFollowing(CURRENT_USER.id, targetUserId));
+            
+            // If viewing own profile, load saved posts
+            if (targetUserId === CURRENT_USER.id) {
+                setSavedPosts(getSavedPosts(CURRENT_USER.id));
+            }
             
             // Refresh list if open
             if (followListType === 'followers') {
@@ -91,6 +99,9 @@ export const Profile: React.FC<ProfileProps> = ({ userId, onBack, onEditProfile,
 
   const isCurrentUser = user.id === CURRENT_USER.id;
   const isOnline = user.showActivityStatus !== false; // Default true if undefined
+  
+  // Determine which posts to display based on active tab
+  const displayPosts = activeTab === 'saved' ? savedPosts : posts;
 
   return (
     <div className="pb-24 bg-white dark:bg-black min-h-full transition-colors duration-200">
@@ -113,7 +124,7 @@ export const Profile: React.FC<ProfileProps> = ({ userId, onBack, onEditProfile,
       </div>
 
       {/* Profile Content */}
-      <div className="px-6 pb-4 border-b border-gray-100 dark:border-zinc-800 relative">
+      <div className="px-6 pb-2 border-b border-gray-100 dark:border-zinc-800 relative">
         <div className="flex justify-between items-end mb-4 -mt-12">
           <div className="relative">
             <div className="w-24 h-24 rounded-full bg-gray-200 dark:bg-zinc-800 overflow-hidden border-[4px] border-white dark:border-black shadow-sm">
@@ -160,12 +171,19 @@ export const Profile: React.FC<ProfileProps> = ({ userId, onBack, onEditProfile,
                 <div className="text-gray-500 dark:text-zinc-400 text-sm mb-2">{user.handle}</div>
                 
                 {user.rate && (
-                    <div className="inline-block bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 font-bold text-xs px-2 py-1 rounded-md mb-2 border border-green-100 dark:border-green-800">
+                    <div className="inline-block bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 font-bold text-xs px-2 py-1 rounded-md mb-2 border border-green-100 dark:border-green-800 mr-2">
                         {user.rate}
                     </div>
                 )}
                 
-                <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-zinc-400 font-medium">
+                {user.isBusinessAccount && (
+                    <div className="inline-flex items-center gap-1 bg-gray-100 dark:bg-zinc-800 text-gray-700 dark:text-zinc-300 font-bold text-xs px-2 py-1 rounded-md mb-2">
+                         <Briefcase size={10} />
+                         <span>Business Account</span>
+                    </div>
+                )}
+                
+                <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-zinc-400 font-medium mt-1">
                     <MapPin size={12} className="shrink-0" />
                     <span className="truncate max-w-[150px]">{user.location}</span>
                     {isOnline && (
@@ -198,9 +216,22 @@ export const Profile: React.FC<ProfileProps> = ({ userId, onBack, onEditProfile,
             </div>
         </div>
 
-        <p className="text-sm font-medium leading-relaxed mb-3 text-gray-800 dark:text-zinc-300">{user.bio}</p>
+        <p className="text-sm font-medium leading-relaxed mb-2 text-gray-800 dark:text-zinc-300">{user.bio}</p>
+        
+        {/* Profile Link */}
+        {user.website && (
+            <a 
+                href={user.website} 
+                target="_blank" 
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-400 text-sm font-medium hover:underline mb-1"
+            >
+                <LinkIcon size={14} />
+                <span className="truncate max-w-[280px]">{user.website.replace(/^https?:\/\//, '')}</span>
+            </a>
+        )}
 
-        <div className="flex items-center gap-8">
+        <div className="flex items-center gap-8 mt-1">
             <div className="flex gap-8">
                 <button onClick={() => handleOpenList('followers')} className="text-left group cursor-pointer hover:opacity-70 transition-opacity">
                     <span className="font-black text-lg block text-black dark:text-white group-hover:text-blue-600 transition-colors">{user.stats.followers}</span>
@@ -218,14 +249,19 @@ export const Profile: React.FC<ProfileProps> = ({ userId, onBack, onEditProfile,
 
             {/* Social Icons to the right of stats */}
             <div className="h-8 w-px bg-gray-200 dark:bg-zinc-800 mx-2"></div>
-            <div className="flex gap-3">
+            <div className="flex gap-3 items-center">
                 {user.socials?.instagram && (
-                    <a href={`https://instagram.com/${user.socials.instagram}`} className="text-gray-400 dark:text-zinc-600 hover:text-pink-600 transition-colors">
+                    <a href={`https://instagram.com/${user.socials.instagram}`} target="_blank" rel="noreferrer" className="text-gray-400 dark:text-zinc-600 hover:text-pink-600 transition-colors">
                         <Instagram size={20} />
                     </a>
                 )}
+                {user.socials?.tiktok && (
+                    <a href={`https://tiktok.com/@${user.socials.tiktok}`} target="_blank" rel="noreferrer" className="text-gray-400 dark:text-zinc-600 hover:text-black dark:hover:text-white transition-colors translate-y-px">
+                         <TikTokLogo className="w-5 h-5" />
+                    </a>
+                )}
                 {user.socials?.twitter && (
-                    <a href={`https://twitter.com/${user.socials.twitter}`} className="text-gray-400 dark:text-zinc-600 hover:text-blue-400 transition-colors">
+                    <a href={`https://twitter.com/${user.socials.twitter}`} target="_blank" rel="noreferrer" className="text-gray-400 dark:text-zinc-600 hover:text-blue-400 transition-colors">
                         <Twitter size={20} />
                     </a>
                 )}
@@ -235,8 +271,8 @@ export const Profile: React.FC<ProfileProps> = ({ userId, onBack, onEditProfile,
 
       {/* Face Data Upload (Only for Current User) */}
       {isCurrentUser && (
-        <div className="p-4">
-            <div className={`border-2 border-dashed ${user.aiFaceUrl ? 'border-green-300 bg-green-50/50 dark:bg-green-900/20 dark:border-green-800' : 'border-purple-300 bg-purple-50/50 dark:bg-purple-900/20 dark:border-purple-800'} rounded-2xl p-4 flex items-center gap-4 mb-4`}>
+        <div className="px-4 pt-4 pb-0">
+            <div className={`border-2 border-dashed ${user.aiFaceUrl ? 'border-green-300 bg-green-50/50 dark:bg-green-900/20 dark:border-green-800' : 'border-purple-300 bg-purple-50/50 dark:bg-purple-900/20 dark:border-purple-800'} rounded-2xl p-4 flex items-center gap-4 mb-1`}>
                 <div className={`w-12 h-12 rounded-full ${user.aiFaceUrl ? 'bg-green-100 text-green-600 dark:bg-green-900/50 dark:text-green-400' : 'bg-purple-100 text-purple-600 dark:bg-purple-900/50 dark:text-purple-400'} flex items-center justify-center shrink-0 overflow-hidden`}>
                     {user.aiFaceUrl ? (
                         <img src={user.aiFaceUrl} className="w-full h-full object-cover" alt="ai face" />
@@ -261,15 +297,45 @@ export const Profile: React.FC<ProfileProps> = ({ userId, onBack, onEditProfile,
         </div>
       )}
 
+      {/* Tabs for Current User */}
+      {isCurrentUser && (
+          <div className="flex border-b border-gray-100 dark:border-zinc-800 px-2 sticky top-14 bg-white dark:bg-black z-10 pt-0">
+            <button 
+                onClick={() => setActiveTab('fits')} 
+                className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-bold border-b-2 transition-colors ${
+                    activeTab === 'fits' 
+                    ? 'border-black dark:border-white text-black dark:text-white' 
+                    : 'border-transparent text-gray-400 dark:text-zinc-600'
+                }`}
+            >
+                <LayoutGrid size={16} />
+                <span>My Fits</span>
+            </button>
+            <button 
+                onClick={() => setActiveTab('saved')} 
+                className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-bold border-b-2 transition-colors ${
+                    activeTab === 'saved' 
+                    ? 'border-black dark:border-white text-black dark:text-white' 
+                    : 'border-transparent text-gray-400 dark:text-zinc-600'
+                }`}
+            >
+                <Bookmark size={16} />
+                <span>Saved</span>
+            </button>
+          </div>
+      )}
+
       {/* Fits Grid */}
-      <div className="px-1">
-        {posts.length === 0 ? (
+      <div className="px-1 py-1">
+        {displayPosts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-gray-400 dark:text-zinc-600">
-                <p className="text-sm font-medium">No fits posted yet.</p>
+                <p className="text-sm font-medium">
+                    {activeTab === 'saved' ? 'No saved posts yet.' : 'No fits posted yet.'}
+                </p>
             </div>
         ) : (
             <div className="grid grid-cols-3 gap-0.5">
-                {posts.map((post) => (
+                {displayPosts.map((post) => (
                     <div 
                         key={post.id} 
                         className="aspect-square bg-gray-100 dark:bg-zinc-900 relative group overflow-hidden cursor-pointer"

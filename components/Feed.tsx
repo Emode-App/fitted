@@ -8,11 +8,12 @@ import { getAllPosts, subscribe } from '../services/mockDb';
 interface FeedProps {
   onViewProfile?: (userId: string) => void;
   onViewBrand?: (brandName: string) => void;
+  onViewHashtag?: (hashtag: string) => void;
   selectedPost: Post | null;
   onOpenFullView: (post: Post | null) => void;
 }
 
-export const Feed: React.FC<FeedProps> = ({ onViewProfile, onViewBrand, selectedPost, onOpenFullView }) => {
+export const Feed: React.FC<FeedProps> = ({ onViewProfile, onViewBrand, onViewHashtag, selectedPost, onOpenFullView }) => {
   const [posts, setPosts] = useState<Post[]>([]);
 
   useEffect(() => {
@@ -21,10 +22,19 @@ export const Feed: React.FC<FeedProps> = ({ onViewProfile, onViewBrand, selected
 
     // Subscribe to DB updates (e.g. new posts)
     const unsubscribe = subscribe(() => {
-        setPosts(getAllPosts());
+        const currentPosts = getAllPosts();
+        setPosts(currentPosts);
+        
+        // If the selected post was deleted, close full view
+        if (selectedPost) {
+            const exists = currentPosts.find(p => p.id === selectedPost.id);
+            if (!exists) {
+                onOpenFullView(null);
+            }
+        }
     });
     return () => unsubscribe();
-  }, []);
+  }, [selectedPost, onOpenFullView]);
   
   if (selectedPost) {
     return (
@@ -33,6 +43,7 @@ export const Feed: React.FC<FeedProps> = ({ onViewProfile, onViewBrand, selected
             onBack={() => onOpenFullView(null)} 
             onViewProfile={onViewProfile}
             onViewBrand={onViewBrand}
+            onViewHashtag={onViewHashtag}
         />
     );
   }
@@ -45,6 +56,7 @@ export const Feed: React.FC<FeedProps> = ({ onViewProfile, onViewBrand, selected
             post={post} 
             onOpenFullView={onOpenFullView}
             onViewProfile={onViewProfile}
+            onViewHashtag={onViewHashtag}
         />
       ))}
       <div className="h-24"></div> {/* Spacer for bottom nav */}

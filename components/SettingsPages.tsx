@@ -1,8 +1,9 @@
+
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Camera, ChevronRight, Moon, Sun, Monitor, Shield, Eye, Lock, Bell, MessageSquare, Heart, UserPlus, HelpCircle, Mail, FileText, Image as ImageIcon, Instagram, Twitter, Music, Tag, Smartphone, QrCode, MapPin, Laptop, Plus, Minus, ChevronDown, CheckCircle, Send } from 'lucide-react';
+import { ArrowLeft, Camera, ChevronRight, Moon, Sun, Monitor, Shield, Eye, Lock, Bell, MessageSquare, Heart, UserPlus, HelpCircle, Mail, FileText, Image as ImageIcon, Instagram, Twitter, Music, Tag, Smartphone, QrCode, MapPin, Laptop, Plus, Minus, ChevronDown, CheckCircle, Send, Link as LinkIcon } from 'lucide-react';
 import { CURRENT_USER } from '../constants';
 import { getUser, updateUser } from '../services/mockDb';
-import { Button } from './Shared';
+import { Button, TikTokLogo } from './Shared';
 
 interface SubPageProps {
   onBack: () => void;
@@ -64,10 +65,12 @@ export const EditProfile: React.FC<SubPageProps> = ({ onBack }) => {
     username: '',
     bio: '',
     location: '',
+    website: '',
     avatarUrl: '',
     headerUrl: '',
     instagram: '',
     twitter: '',
+    tiktok: '',
     favoriteBrand: '',
     songTitle: '',
     songArtist: '',
@@ -82,10 +85,12 @@ export const EditProfile: React.FC<SubPageProps> = ({ onBack }) => {
             username: user.handle.replace('@', ''),
             bio: user.bio,
             location: user.location,
+            website: user.website || '',
             avatarUrl: user.avatarUrl,
             headerUrl: user.headerUrl || '',
             instagram: user.socials?.instagram || '',
             twitter: user.socials?.twitter || '',
+            tiktok: user.socials?.tiktok || '',
             favoriteBrand: user.favoriteBrand || '',
             songTitle: user.favoriteSong?.title || '',
             songArtist: user.favoriteSong?.artist || '',
@@ -103,11 +108,13 @@ export const EditProfile: React.FC<SubPageProps> = ({ onBack }) => {
             handle: `@${formData.username}`,
             bio: formData.bio,
             location: formData.location,
+            website: formData.website,
             avatarUrl: formData.avatarUrl,
             headerUrl: formData.headerUrl,
             socials: {
                 instagram: formData.instagram,
-                twitter: formData.twitter
+                twitter: formData.twitter,
+                tiktok: formData.tiktok
             },
             favoriteBrand: formData.favoriteBrand,
             favoriteSong: formData.songTitle ? {
@@ -206,6 +213,21 @@ export const EditProfile: React.FC<SubPageProps> = ({ onBack }) => {
                     />
                 </div>
             </div>
+            <div>
+                <label className="text-xs font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-wider mb-1.5 block">Website</label>
+                <div className="relative">
+                    <input 
+                        type="text" 
+                        value={formData.website}
+                        onChange={e => setFormData({...formData, website: e.target.value})}
+                        placeholder="https://..."
+                        className="w-full bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-xl pl-10 px-4 py-3 text-sm font-medium focus:outline-none focus:border-black dark:focus:border-white focus:ring-1 focus:ring-black dark:focus:ring-white text-black dark:text-white"
+                    />
+                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
+                        <LinkIcon size={16} />
+                    </div>
+                </div>
+            </div>
         </div>
 
         {/* Favorites Section */}
@@ -259,6 +281,16 @@ export const EditProfile: React.FC<SubPageProps> = ({ onBack }) => {
                     placeholder="Instagram Username"
                     value={formData.instagram}
                     onChange={e => setFormData({...formData, instagram: e.target.value})}
+                    className="w-full bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-xl pl-11 pr-4 py-3 text-sm font-medium focus:outline-none focus:border-black dark:focus:border-white focus:ring-1 focus:ring-black dark:focus:ring-white text-black dark:text-white"
+                />
+             </div>
+             <div className="relative">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"><TikTokLogo className="w-5 h-5" /></div>
+                <input 
+                    type="text" 
+                    placeholder="TikTok Username"
+                    value={formData.tiktok}
+                    onChange={e => setFormData({...formData, tiktok: e.target.value})}
                     className="w-full bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-xl pl-11 pr-4 py-3 text-sm font-medium focus:outline-none focus:border-black dark:focus:border-white focus:ring-1 focus:ring-black dark:focus:ring-white text-black dark:text-white"
                 />
              </div>

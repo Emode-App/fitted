@@ -1,4 +1,6 @@
+
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Globe } from 'lucide-react';
 
 export const Button: React.FC<{ 
@@ -54,10 +56,10 @@ export const Modal: React.FC<{
     : "bg-white dark:bg-zinc-900 w-[85%] max-w-sm rounded-3xl p-6 relative max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200 shadow-2xl";
 
   const containerClasses = variant === 'bottom'
-    ? "fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
-    : "fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200 p-4";
+    ? "fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+    : "fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200 p-4";
 
-  return (
+  return createPortal(
     <div className={containerClasses}>
       <div 
         className={contentClasses}
@@ -74,7 +76,8 @@ export const Modal: React.FC<{
         </button>
       </div>
       <div className="absolute inset-0 -z-10" onClick={onClose} />
-    </div>
+    </div>,
+    document.body
   );
 };
 
@@ -154,6 +157,10 @@ export const GrailedLogo = ({ className }: { className?: string }) => (
   </svg>
 );
 
+export const TikTokLogo = ({ className }: { className?: string }) => (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} xmlns="http://www.w3.org/2000/svg"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93v6.16c0 2.52-1.12 4.84-2.9 6.24-1.72 1.33-3.92 1.83-6.09 1.46-2.15-.36-4.11-1.64-5.32-3.48-1.21-1.84-1.45-4.14-.64-6.15 1.05-2.62 3.65-4.17 6.42-3.83v4.06c-1.13-.19-2.31.25-3.03 1.16-.72.9-1 2.16-.73 3.28.28 1.11 1.25 1.93 2.39 2.03 1.14.09 2.22-.59 2.75-1.58.52-1 .56-2.18.56-3.32V.02h2.51z"/></svg>
+);
+
 // --- DYNAMIC STORE LINK COMPONENT ---
 
 export const StoreButtonRow = ({ link, itemName }: { link: string, itemName?: string }) => {
@@ -184,6 +191,14 @@ export const StoreButtonRow = ({ link, itemName }: { link: string, itemName?: st
   };
 
   const searchQuery = encodeURIComponent(itemName || '');
+  
+  // Force generic search queries for known platforms if the specific link is provided but might be hallucinated
+  // This ensures the button always works.
+  const stockXSearchUrl = `https://stockx.com/search?s=${searchQuery}`;
+  const goatUrl = `https://www.goat.com/search?query=${searchQuery}`;
+
+  // If the provided link is a valid StockX link, use it. Otherwise fall back to search.
+  const finalStockXUrl = (link && isStockXLink) ? link : stockXSearchUrl;
 
   return (
     <div className="flex gap-4 justify-center w-full mb-2">
@@ -200,7 +215,7 @@ export const StoreButtonRow = ({ link, itemName }: { link: string, itemName?: st
 
         {/* 2. StockX Default Button */}
         <a 
-            href={isStockXLink ? link : `https://stockx.com/search?s=${searchQuery}`} 
+            href={finalStockXUrl} 
             target="_blank" 
             rel="noreferrer" 
             className="bg-[#006340] text-white w-12 h-12 rounded-full flex items-center justify-center shadow-lg hover:scale-105 transition-transform"
@@ -210,7 +225,7 @@ export const StoreButtonRow = ({ link, itemName }: { link: string, itemName?: st
 
         {/* 3. GOAT Default Button */}
         <a 
-            href={isGoatLink ? link : `https://www.goat.com/search?query=${searchQuery}`} 
+            href={isGoatLink ? goatUrl : goatUrl} 
             target="_blank" 
             rel="noreferrer" 
             className="bg-black dark:bg-white text-white dark:text-black w-12 h-12 rounded-full flex items-center justify-center shadow-lg hover:scale-105 transition-transform"

@@ -1,7 +1,8 @@
+
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, X, Loader2, Sparkles, Layers, Eraser, Move, User, Camera, FolderPlus, Plus, Image as ImageIcon, Trash2, ChevronLeft, ChevronRight, Link as LinkIcon, Share2, Check, ShoppingBag, Music } from 'lucide-react';
-import { Button, Modal } from './Shared';
-import { generateOutfit } from '../services/aiService';
+import { Upload, X, Loader2, Sparkles, Layers, Eraser, Move, User, Camera, FolderPlus, Plus, Image as ImageIcon, Trash2, ChevronLeft, ChevronRight, Link as LinkIcon, Share2, Check, ShoppingBag, Music, Search, ArrowRight, AlertCircle } from 'lucide-react';
+import { Button, Modal, TikTokLogo } from './Shared';
+import { generateOutfit, searchProducts } from '../services/aiService';
 import { addPost, getUser, getWardrobe, addAssetToWardrobe, createFolder, subscribe } from '../services/mockDb';
 import { CURRENT_USER, BRAND_COLLECTIONS } from '../constants';
 import { Post, Asset, Folder } from '../types';
@@ -41,6 +42,7 @@ interface BackgroundOption {
   name: string;
   type: 'pattern' | 'color' | 'image';
   value: string;
+  previewValue?: string; // For thumbnail rendering
 }
 
 const BACKGROUND_OPTIONS: BackgroundOption[] = [
@@ -50,6 +52,10 @@ const BACKGROUND_OPTIONS: BackgroundOption[] = [
   { id: 'green', name: 'Fitted Green', type: 'color', value: 'bg-[#2a3b2a]' },
   { id: 'concrete', name: 'Concrete', type: 'image', value: 'https://www.transparenttextures.com/patterns/concrete-wall.png' },
   { id: 'felt', name: 'Felt', type: 'image', value: 'https://www.transparenttextures.com/patterns/black-felt.png' },
+  { id: 'frame_blue', name: 'Blue Board', type: 'color', value: 'bg-[#1e3a8a] border-[14px] border-[#e5e7eb] shadow-[inset_0_0_20px_rgba(0,0,0,0.4)]', previewValue: 'bg-[#1e3a8a] border-[4px] border-[#e5e7eb]' },
+  { id: 'frame_green', name: 'Green Board', type: 'color', value: 'bg-[#14532d] border-[14px] border-[#e5e7eb] shadow-[inset_0_0_20px_rgba(0,0,0,0.4)]', previewValue: 'bg-[#14532d] border-[4px] border-[#e5e7eb]' },
+  { id: 'frame_red', name: 'Red Board', type: 'color', value: 'bg-[#7f1d1d] border-[14px] border-[#e5e7eb] shadow-[inset_0_0_20px_rgba(0,0,0,0.4)]', previewValue: 'bg-[#7f1d1d] border-[4px] border-[#e5e7eb]' },
+  { id: 'frame_black', name: 'Black Board', type: 'color', value: 'bg-[#18181b] border-[14px] border-[#e5e7eb] shadow-[inset_0_0_20px_rgba(0,0,0,0.4)]', previewValue: 'bg-[#18181b] border-[4px] border-[#e5e7eb]' },
 ];
 
 const MOCK_TRACKS: MusicTrack[] = [
@@ -59,13 +65,10 @@ const MOCK_TRACKS: MusicTrack[] = [
   { id: 't4', title: 'Lovin On Me', artist: 'Jack Harlow', cover: 'https://upload.wikimedia.org/wikipedia/en/f/f6/Jack_Harlow_-_Lovin_on_Me.png' },
 ];
 
-// Brand Logos
 const InstagramLogo = ({ className }: { className?: string }) => (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} xmlns="http://www.w3.org/2000/svg"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} xmlns="http://www.w3.org/2000/svg"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.645.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>
 );
-const TikTokLogo = ({ className }: { className?: string }) => (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} xmlns="http://www.w3.org/2000/svg"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93v6.16c0 2.52-1.12 4.84-2.9 6.24-1.72 1.33-3.92 1.83-6.09 1.46-2.15-.36-4.11-1.64-5.32-3.48-1.21-1.84-1.45-4.14-.64-6.15 1.05-2.62 3.65-4.17 6.42-3.83v4.06c-1.13-.19-2.31.25-3.03 1.16-.72.9-1 2.16-.73 3.28.28 1.11 1.25 1.93 2.39 2.03 1.14.09 2.22-.59 2.75-1.58.52-1 .56-2.18.56-3.32V.02h2.51z"/></svg>
-);
+
 const XLogo = ({ className }: { className?: string }) => (
     <svg viewBox="0 0 24 24" fill="currentColor" className={className} xmlns="http://www.w3.org/2000/svg"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
 );
@@ -89,7 +92,6 @@ const FolderCarousel = ({
 
   const scroll = (direction: 'left' | 'right') => {
     if (scrollRef.current) {
-        // Scroll amount: roughly 2 tabs worth (approx 160px)
         const amount = 160 * (direction === 'left' ? -1 : 1);
         scrollRef.current.scrollBy({ left: amount, behavior: 'smooth' });
     }
@@ -156,6 +158,15 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   
+  // Search State
+  const [activeUploadTab, setActiveUploadTab] = useState<'upload' | 'search'>('upload');
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [isProductSearching, setIsProductSearching] = useState(false);
+  const [productSearchResults, setProductSearchResults] = useState<any[]>([]);
+  
+  // In-Canvas Search Modal
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+
   // Canvas & Preview State
   const [activeTab, setActiveTab] = useState<'items' | 'background'>('items');
   const [selectedBackground, setSelectedBackground] = useState<BackgroundOption>(BACKGROUND_OPTIONS[0]);
@@ -197,10 +208,27 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
     return () => unsubscribe();
   }, []);
 
+  // Use wsrv.nl proxy to bypass CORS/Hotlink protection and resize images for performance
+  const getProxiedUrl = (url: string) => {
+    if (!url) return '';
+    if (url.startsWith('data:')) return url; // Don't proxy base64
+    if (url.startsWith('blob:')) return url; // Don't proxy blobs
+    
+    // Check if it's already a bing URL
+    if (url.includes('bing.net')) return url;
+
+    // Encode the URL safely
+    const encodedUrl = encodeURIComponent(url);
+    // Use wsrv.nl for reliable image delivery
+    return `https://wsrv.nl/?url=${encodedUrl}&w=500&output=png`;
+  };
+
   // Convert Blob/File URL to Base64
   const urlToBase64 = async (url: string): Promise<string> => {
     try {
-        const response = await fetch(url);
+        // Try direct first
+        const response = await fetch(url).catch(() => null);
+        if (!response || !response.ok) throw new Error("Direct fetch failed");
         const blob = await response.blob();
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -209,12 +237,25 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
             reader.readAsDataURL(blob);
         });
     } catch (e) {
-        console.error("Conversion failed", e);
-        return "";
+        // Fallback to proxy
+        try {
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+            const response = await fetch(proxyUrl);
+            const blob = await response.blob();
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        } catch (proxyError) {
+             console.error("Conversion failed", proxyError);
+             return "";
+        }
     }
   };
 
-  const addItemToCanvas = (url: string) => {
+  const addItemToCanvas = (url: string, metadata?: Partial<ItemMetadata>, autoSwitchStep: boolean = true) => {
     const id = Math.random().toString(36).substr(2, 9);
     const newItem: CanvasItem = {
       id,
@@ -229,25 +270,39 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
     
     setItems(prev => [...prev, newItem]);
     
-    // Initialize metadata with empty name so placeholder shows
+    // Initialize metadata
     setItemMetadata(prev => ({
         ...prev,
-        [id]: { id, brand: '', name: '', price: '', urls: [''] }
+        [id]: { 
+            id, 
+            brand: metadata?.brand || '', 
+            name: metadata?.name || '', 
+            price: metadata?.price || '', 
+            urls: metadata?.urls || [''] 
+        }
     }));
 
     setSelectedItemId(newItem.id);
-    if (step === 'upload') setStep('canvas');
+    if (autoSwitchStep && step === 'upload') setStep('canvas');
   };
+
+  const getSignature = (file: File) => `${file.name}-${file.size}-${file.lastModified}`;
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const url = URL.createObjectURL(e.target.files[0]);
+      const file = e.target.files[0];
+      const url = URL.createObjectURL(file);
       
       // Add to canvas
       addItemToCanvas(url);
 
       // Add to "Last Used" in Wardrobe DB
-      const newAsset: Asset = { id: Math.random().toString(36), url, dateAdded: Date.now() };
+      const newAsset: Asset = { 
+          id: Math.random().toString(36), 
+          url, 
+          dateAdded: Date.now(),
+          fileSignature: getSignature(file)
+      };
       addAssetToWardrobe('last_used', newAsset);
 
       // Reset input
@@ -255,10 +310,67 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
     }
   };
 
+  const handleProductSearch = async () => {
+      if (!productSearchQuery.trim()) return;
+      setIsProductSearching(true);
+      try {
+          const results = await searchProducts(productSearchQuery);
+          setProductSearchResults(results);
+      } catch (error) {
+          alert('Failed to search products. Please try again.');
+      } finally {
+          setIsProductSearching(false);
+      }
+  };
+
+  const handleSelectSearchResult = (product: any) => {
+      // Logic: Prefer the constructed SKU url (if present in product object from service), then fallback to search result url
+      // The service now handles returning a good URL, but we should wrap it in proxy to be safe
+      
+      let rawUrl = product.imageUrl || product.backupImage;
+      
+      // BING FALLBACK TRICK
+      // If we don't have a good URL, or the URL looks suspicious, use Bing Thumbnail
+      if (!rawUrl || rawUrl.length < 10 || rawUrl.includes('via.placeholder')) {
+         const searchTerm = `${product.brand} ${product.name} product white background`;
+         rawUrl = `https://tse2.mm.bing.net/th?q=${encodeURIComponent(searchTerm)}&w=800&h=800&c=7&rs=1&p=0`;
+      }
+
+      const safeUrl = getProxiedUrl(rawUrl);
+      
+      // Add to canvas and SWITCH to canvas immediately
+      addItemToCanvas(safeUrl, {
+          name: product.name,
+          brand: product.brand,
+          price: product.price?.toString(),
+          urls: [product.purchaseLink]
+      }, true); // Auto-switch enabled
+
+      // Add to "Last Used" in Wardrobe DB with proxied URL
+      const newAsset: Asset = { 
+          id: Math.random().toString(36), 
+          url: safeUrl, 
+          dateAdded: Date.now(),
+          fileSignature: `search-${product.name}-${product.brand}`
+      };
+      addAssetToWardrobe('last_used', newAsset);
+      
+      // Close modal if open
+      setIsSearchModalOpen(false);
+      // Ensure we switch to canvas view
+      setStep('canvas');
+  };
+
   const handleAddToFolder = (e: React.ChangeEvent<HTMLInputElement>, folderId: string) => {
     if (e.target.files && e.target.files[0]) {
-        const url = URL.createObjectURL(e.target.files[0]);
-        const newAsset: Asset = { id: Math.random().toString(36), url, dateAdded: Date.now() };
+        const file = e.target.files[0];
+        const url = URL.createObjectURL(file);
+        const newAsset: Asset = { 
+            id: Math.random().toString(36), 
+            url, 
+            dateAdded: Date.now(),
+            fileSignature: getSignature(file)
+        };
         
         addAssetToWardrobe(folderId, newAsset);
         e.target.value = '';
@@ -442,6 +554,85 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
 
   const selectedFolder = folders.find(f => f.id === selectedFolderId);
 
+  // Render Search UI (Shared between Main Tab and Modal)
+  const renderSearchUI = () => (
+    <div className="flex flex-col h-full animate-in fade-in">
+        <div className="flex gap-2 mb-6">
+            <div className="relative flex-1">
+                    <input 
+                    type="text" 
+                    value={productSearchQuery}
+                    onChange={(e) => setProductSearchQuery(e.target.value)}
+                    placeholder="Search items (e.g. Jordan 1 Chicago)"
+                    onKeyDown={(e) => e.key === 'Enter' && handleProductSearch()}
+                    className="w-full bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white text-black dark:text-white"
+                    />
+                    <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            </div>
+            <Button onClick={handleProductSearch} disabled={isProductSearching || !productSearchQuery.trim()}>
+                {isProductSearching ? <Loader2 className="animate-spin" size={20} /> : 'Go'}
+            </Button>
+        </div>
+        
+        {productSearchResults.length > 0 ? (
+            <div className="grid grid-cols-2 gap-4 pb-4">
+                {productSearchResults.map((product, idx) => {
+                    // Try to generate a BING FALLBACK for preview immediately if the provided URL looks bad
+                    let previewUrl = product.imageUrl || product.backupImage;
+                    if (!previewUrl || previewUrl.length < 10) {
+                        const searchTerm = `${product.brand} ${product.name} product white background`;
+                        previewUrl = `https://tse2.mm.bing.net/th?q=${encodeURIComponent(searchTerm)}&w=500&h=500&c=7&rs=1&p=0`;
+                    }
+                    
+                    const imageUrl = getProxiedUrl(previewUrl);
+
+                    return (
+                        <button 
+                            key={idx}
+                            onClick={() => handleSelectSearchResult(product)}
+                            className="text-left bg-white dark:bg-zinc-900 rounded-xl p-3 border border-gray-100 dark:border-zinc-800 hover:border-black dark:hover:border-white transition-all group relative"
+                        >
+                            <div className="aspect-square bg-gray-50 dark:bg-zinc-800 rounded-lg mb-3 overflow-hidden flex items-center justify-center relative">
+                                <img 
+                                    src={imageUrl} 
+                                    className="w-full h-full object-contain mix-blend-multiply transition-opacity duration-300" 
+                                    alt={product.name}
+                                    onError={(e) => {
+                                        // Final robust fallback to Bing if even the first try fails
+                                        const target = e.target as HTMLImageElement;
+                                        const fallbackBing = `https://tse2.mm.bing.net/th?q=${encodeURIComponent(product.brand + ' ' + product.name)}&w=400&h=400&c=7&rs=1&p=0`;
+                                        
+                                        if (target.src !== fallbackBing) {
+                                            target.src = fallbackBing;
+                                        } else {
+                                            // Give up
+                                            target.style.display = 'none';
+                                            if (target.parentElement) target.parentElement.classList.add('bg-gray-100');
+                                        }
+                                    }}
+                                />
+                            </div>
+                            <div className="text-xs font-bold text-gray-400 dark:text-zinc-500 uppercase">{product.brand}</div>
+                            <div className="font-bold text-sm text-black dark:text-white line-clamp-1 mb-1">{product.name}</div>
+                            <div className="text-xs font-medium text-gray-600 dark:text-zinc-400">${product.price}</div>
+                            
+                            {/* Added Indicator */}
+                            <div className="absolute top-2 right-2 bg-green-500 text-white p-1 rounded-full opacity-0 group-active:opacity-100 transition-opacity">
+                                <Check size={12} />
+                            </div>
+                        </button>
+                    );
+                })}
+            </div>
+        ) : (
+            <div className="flex flex-col items-center justify-center py-10 text-gray-400 dark:text-zinc-600">
+                    <Search size={48} className="mb-4 opacity-20" />
+                    <p className="text-sm">Search for any item to add it to your canvas.</p>
+            </div>
+        )}
+    </div>
+  );
+
   return (
     <div 
         className="h-full bg-white dark:bg-black w-full flex flex-col transition-colors duration-200"
@@ -461,96 +652,130 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
         )}
       </div>
 
-      <div className="p-4 flex-1 overflow-y-auto">
-        {step === 'upload' && items.length === 0 && (
+      <div className="p-4 flex-1 overflow-y-auto pb-24">
+        {step === 'upload' && (
           <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {/* Main Upload Box */}
-            <div className="mb-8">
-                <label className="w-full aspect-[4/3] border-2 border-dashed border-gray-300 dark:border-zinc-700 rounded-3xl flex flex-col items-center justify-center bg-gray-50 dark:bg-zinc-900 cursor-pointer hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors group">
-                    <div className="w-16 h-16 bg-gray-200 dark:bg-zinc-800 rounded-full flex items-center justify-center mb-4 text-gray-500 group-hover:scale-110 transition-transform">
-                        <Upload size={24} />
-                    </div>
-                    <span className="font-bold text-gray-800 dark:text-zinc-200">Quick Upload</span>
-                    <span className="text-xs text-gray-400 dark:text-zinc-500 mt-2 max-w-[200px] text-center">Auto-adds to 'Last Used' and Canvas</span>
-                    <input 
-                        type="file" 
-                        className="hidden" 
-                        ref={fileInputRef}
-                        onChange={handleUpload} 
-                        accept="image/*" 
-                    />
-                </label>
+            
+            {/* Main Tabs (Smaller, Segmented) */}
+            <div className="flex p-1 bg-gray-100 dark:bg-zinc-800 rounded-xl mb-6">
+                <button 
+                    onClick={() => setActiveUploadTab('upload')}
+                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${activeUploadTab === 'upload' ? 'bg-white dark:bg-zinc-700 shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-zinc-300'}`}
+                >
+                    Upload
+                </button>
+                <button 
+                    onClick={() => setActiveUploadTab('search')}
+                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${activeUploadTab === 'search' ? 'bg-white dark:bg-zinc-700 shadow-sm text-black dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-zinc-300'}`}
+                >
+                    Search
+                </button>
             </div>
 
-            {/* Wardrobe / Assets Section */}
-            <div>
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="font-black text-xl text-black dark:text-white">Wardrobe</h2>
-                </div>
-
-                {/* Folder Carousel */}
-                <div className="mb-4">
-                  <FolderCarousel 
-                    folders={folders}
-                    selectedFolderId={selectedFolderId}
-                    setSelectedFolderId={setSelectedFolderId}
-                    setIsCreatingFolder={setIsCreatingFolder}
-                  />
-                </div>
-
-                {/* Custom Folder Input */}
-                {isCreatingFolder && (
-                    <div className="flex gap-2 mb-4 animate-in slide-in-from-left">
-                        <input 
-                            autoFocus
-                            type="text" 
-                            value={newFolderName}
-                            onChange={(e) => setNewFolderName(e.target.value)}
-                            placeholder="Folder Name..."
-                            className="flex-1 bg-gray-50 dark:bg-zinc-900 border border-gray-300 dark:border-zinc-700 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-black dark:focus:border-white text-black dark:text-white"
-                            onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
-                        />
-                        <button onClick={handleCreateFolder} className="bg-black dark:bg-white text-white dark:text-black px-4 rounded-xl font-bold text-sm">Add</button>
-                        <button onClick={() => setIsCreatingFolder(false)} className="text-gray-400 px-2"><X size={20}/></button>
-                    </div>
-                )}
-
-                {/* Assets Grid for Selected Folder */}
-                <div className="bg-gray-50 dark:bg-zinc-900 rounded-2xl p-4 min-h-[200px]">
-                    <div className="flex justify-between items-center mb-4">
-                        <span className="text-xs font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-wider">{selectedFolder?.name} Assets</span>
-                        <label className="text-xs font-bold text-black dark:text-white flex items-center gap-1 cursor-pointer hover:opacity-70">
-                            <Plus size={14} />
-                            Add to {selectedFolder?.name}
-                            <input type="file" className="hidden" onChange={(e) => handleAddToFolder(e, selectedFolderId)} accept="image/*" />
+            {activeUploadTab === 'upload' ? (
+                <>
+                     {/* Main Upload Box */}
+                    <div className="mb-8">
+                        <label className="w-full aspect-[4/3] border-2 border-dashed border-gray-300 dark:border-zinc-700 rounded-3xl flex flex-col items-center justify-center bg-gray-50 dark:bg-zinc-900 cursor-pointer hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors group">
+                            <div className="w-16 h-16 bg-gray-200 dark:bg-zinc-800 rounded-full flex items-center justify-center mb-4 text-gray-500 group-hover:scale-110 transition-transform">
+                                <Plus size={24} />
+                            </div>
+                            <span className="font-bold text-gray-800 dark:text-zinc-200">Tap to Upload</span>
+                            <span className="text-xs text-gray-400 dark:text-zinc-500 mt-2 max-w-[200px] text-center">Auto-adds to 'Last Used' and Canvas</span>
+                            <input 
+                                type="file" 
+                                className="hidden" 
+                                ref={fileInputRef}
+                                onChange={handleUpload} 
+                                accept="image/*" 
+                            />
                         </label>
                     </div>
 
-                    {selectedFolder?.assets.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-10 text-gray-400 border-2 border-dashed border-gray-200 dark:border-zinc-700 rounded-xl">
-                            <ImageIcon size={24} className="mb-2 opacity-50" />
-                            <span className="text-xs">No items yet</span>
+                    {/* Wardrobe / Assets Section */}
+                    <div>
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="font-black text-xl text-black dark:text-white">Wardrobe</h2>
                         </div>
-                    ) : (
-                        <div className="grid grid-cols-3 gap-3">
-                            {selectedFolder?.assets.map((asset) => (
-                                <div 
-                                    key={asset.id} 
-                                    onClick={() => addItemToCanvas(asset.url)}
-                                    className="aspect-square bg-white dark:bg-black rounded-xl p-2 shadow-sm border border-gray-100 dark:border-zinc-800 cursor-pointer hover:border-black dark:hover:border-white hover:shadow-md transition-all group relative"
-                                >
-                                    <img src={asset.url} className="w-full h-full object-contain" alt="asset" />
-                                    <div className="absolute inset-0 bg-black/5 dark:bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl" />
+
+                        {/* Folder Carousel */}
+                        <div className="mb-4">
+                        <FolderCarousel 
+                            folders={folders}
+                            selectedFolderId={selectedFolderId}
+                            setSelectedFolderId={setSelectedFolderId}
+                            setIsCreatingFolder={setIsCreatingFolder}
+                        />
+                        </div>
+
+                        {/* Custom Folder Input */}
+                        {isCreatingFolder && (
+                            <div className="flex gap-2 mb-4 animate-in slide-in-from-left">
+                                <input 
+                                    autoFocus
+                                    type="text" 
+                                    value={newFolderName}
+                                    onChange={(e) => setNewFolderName(e.target.value)}
+                                    placeholder="Folder Name..."
+                                    className="flex-1 bg-gray-50 dark:bg-zinc-900 border border-gray-300 dark:border-zinc-700 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-black dark:focus:border-white text-black dark:text-white"
+                                    onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
+                                />
+                                <button onClick={handleCreateFolder} className="bg-black dark:bg-white text-white dark:text-black px-4 rounded-xl font-bold text-sm">Add</button>
+                                <button onClick={() => setIsCreatingFolder(false)} className="text-gray-400 px-2"><X size={20}/></button>
+                            </div>
+                        )}
+
+                        {/* Assets Grid for Selected Folder */}
+                        <div className="bg-gray-50 dark:bg-zinc-900 rounded-2xl p-4 min-h-[200px]">
+                            <div className="flex justify-between items-center mb-4">
+                                <span className="text-xs font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-wider">{selectedFolder?.name} Assets</span>
+                                <label className="text-xs font-bold text-black dark:text-white flex items-center gap-1 cursor-pointer hover:opacity-70">
+                                    <Plus size={14} />
+                                    Add to {selectedFolder?.name}
+                                    <input type="file" className="hidden" onChange={(e) => handleAddToFolder(e, selectedFolderId)} accept="image/*" />
+                                </label>
+                            </div>
+
+                            {selectedFolder?.assets.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center py-10 text-gray-400 border-2 border-dashed border-gray-200 dark:border-zinc-700 rounded-xl">
+                                    <ImageIcon size={24} className="mb-2 opacity-50" />
+                                    <span className="text-xs">No items yet</span>
                                 </div>
-                            ))}
+                            ) : (
+                                <div className="grid grid-cols-3 gap-3">
+                                    {selectedFolder?.assets.map((asset) => (
+                                        <div 
+                                            key={asset.id} 
+                                            onClick={() => addItemToCanvas(asset.url)}
+                                            className="aspect-square bg-white dark:bg-black rounded-xl p-2 shadow-sm border border-gray-100 dark:border-zinc-800 cursor-pointer hover:border-black dark:hover:border-white hover:shadow-md transition-all group relative overflow-hidden"
+                                        >
+                                            <img 
+                                                src={asset.url} 
+                                                className="w-full h-full object-contain" 
+                                                alt="asset" 
+                                                onError={(e) => {
+                                                    const target = e.target as HTMLImageElement;
+                                                    target.style.display = 'none';
+                                                    if(target.parentElement) target.parentElement.classList.add('flex', 'items-center', 'justify-center', 'bg-gray-50');
+                                                }}
+                                            />
+                                            <div className="absolute inset-0 bg-black/5 dark:bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl" />
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
-                    )}
-                </div>
-            </div>
+                    </div>
+                </>
+            ) : (
+                /* SEARCH VIEW */
+                renderSearchUI()
+            )}
+            
           </div>
         )}
 
-        {(step === 'canvas' || step === 'preview' || (step === 'upload' && items.length > 0)) && (
+        {(step === 'canvas' || step === 'preview') && (
           <div className="flex flex-col w-full">
             
             {/* Control Bar (Face Upload) - Only in Canvas Mode */}
@@ -680,6 +905,16 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
                                 className={`w-full h-full object-contain drop-shadow-xl transition-all duration-300 ${item.isBgRemoved ? 'mix-blend-multiply' : ''} ${item.isProcessingBg ? 'opacity-50 blur-sm' : ''}`} 
                                 alt="Item" 
                                 draggable={false}
+                                onError={(e) => {
+                                    // Handle broken images in canvas
+                                    const target = e.target as HTMLImageElement;
+                                    target.style.display = 'none';
+                                    const parent = target.parentElement;
+                                    if(parent) {
+                                        parent.classList.add('bg-gray-100', 'flex', 'items-center', 'justify-center', 'text-xs', 'font-bold', 'text-gray-400');
+                                        parent.innerText = 'Image Error';
+                                    }
+                                }}
                             />
 
                             {item.isProcessingBg && (
@@ -705,9 +940,18 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
                     </div>
                 ))}
                 
-                {/* Direct Upload Button Overlay (Bottom Left) */}
+                {/* Search Button Overlay (Bottom Right - Top) */}
+                <button
+                    onClick={() => setIsSearchModalOpen(true)}
+                    className="absolute bottom-16 right-4 z-40 bg-white text-black border border-gray-100 p-3 rounded-full shadow-lg cursor-pointer hover:bg-gray-50 active:scale-95 transition-transform"
+                    title="Search Items"
+                >
+                    <Search size={20} />
+                </button>
+
+                {/* Direct Upload Button Overlay (Bottom Right - Bottom) */}
                 <label 
-                    className="absolute bottom-4 left-4 z-40 bg-black dark:bg-white text-white dark:text-black p-3 rounded-full shadow-lg cursor-pointer hover:bg-gray-800 dark:hover:bg-gray-200 active:scale-95 transition-transform"
+                    className="absolute bottom-4 right-4 z-40 bg-black text-white p-3 rounded-full shadow-lg cursor-pointer hover:bg-gray-800 active:scale-95 transition-transform"
                     title="Quick Add Item"
                 >
                      <Plus size={20} />
@@ -723,7 +967,7 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
                 {isGenerating && (
                     <div className="absolute inset-0 bg-white/80 dark:bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center z-50">
                         <Loader2 className="animate-spin text-purple-600 mb-2" size={40} />
-                        <span className="text-sm font-bold text-purple-900 dark:text-purple-400 animate-pulse">Nano Banana is cooking...</span>
+                        <span className="text-sm font-bold text-purple-900 dark:text-purple-400 animate-pulse">Fitted is cooking...</span>
                     </div>
                 )}
                 </div>
@@ -783,7 +1027,19 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
                                             onClick={() => addItemToCanvas(asset.url)}
                                             className="aspect-square bg-gray-50 dark:bg-zinc-900 border border-gray-100 dark:border-zinc-800 rounded-xl p-1.5 cursor-pointer hover:border-black dark:hover:border-white transition-all relative group"
                                         >
-                                            <img src={asset.url} className="w-full h-full object-contain" alt="asset" />
+                                            <img 
+                                                src={asset.url} 
+                                                className="w-full h-full object-contain" 
+                                                alt="asset" 
+                                                onError={(e) => {
+                                                    const target = e.target as HTMLImageElement;
+                                                    target.style.display = 'none';
+                                                    if(target.parentElement) {
+                                                        target.parentElement.classList.add('flex', 'items-center', 'justify-center');
+                                                        target.parentElement.innerHTML = '<span class="text-[9px] text-gray-400 font-bold">Error</span>';
+                                                    }
+                                                }}
+                                            />
                                         </div>
                                     ))}
                                 </div>
@@ -797,7 +1053,7 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
                                         className={`aspect-square rounded-xl border-2 overflow-hidden relative shadow-sm transition-all ${selectedBackground.id === bg.id ? 'border-black ring-1 ring-black dark:border-white dark:ring-white scale-95' : 'border-gray-200 dark:border-zinc-700 hover:border-gray-300'}`}
                                     >
                                         <div 
-                                            className={`w-full h-full ${bg.type !== 'image' ? bg.value : ''}`}
+                                            className={`w-full h-full ${bg.type !== 'image' ? (bg.previewValue || bg.value) : ''}`}
                                             style={bg.type === 'image' ? { backgroundImage: `url(${bg.value})`, backgroundSize: 'cover' } : {}}
                                         />
                                         <span className="absolute bottom-0 inset-x-0 bg-white/80 dark:bg-black/80 text-[9px] font-bold text-center py-1 backdrop-blur-sm text-black dark:text-white">{bg.name}</span>
@@ -893,7 +1149,19 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
                                     <div key={item.id} className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-xl p-3 shadow-sm z-10 relative">
                                         <div className="flex gap-3 mb-3">
                                             <div className="w-12 h-12 bg-gray-50 dark:bg-zinc-800 rounded-lg p-1 border border-gray-100 dark:border-zinc-700">
-                                                <img src={item.url} className="w-full h-full object-contain" alt="item"/>
+                                                <img 
+                                                    src={item.url} 
+                                                    className="w-full h-full object-contain" 
+                                                    alt="item"
+                                                    onError={(e) => {
+                                                        const target = e.target as HTMLImageElement;
+                                                        target.style.display = 'none';
+                                                        if(target.parentElement) {
+                                                            target.parentElement.classList.add('flex', 'items-center', 'justify-center');
+                                                            target.parentElement.innerHTML = '<span class="text-[9px] text-gray-400 font-bold">Error</span>';
+                                                        }
+                                                    }}
+                                                />
                                             </div>
                                             <div className="flex-1 space-y-2 relative">
                                                 {/* Brand Input with Autocomplete */}
@@ -1031,7 +1299,7 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
                 <div className="w-16 h-1 bg-gray-200 dark:bg-zinc-700 rounded-full mb-4"></div>
                 <h3 className="text-lg font-bold text-gray-400 uppercase tracking-widest text-[10px] mb-2">Preview Mode</h3>
                 <h2 className="text-xl font-bold mb-0.5 font-serif text-black dark:text-white">{testModalItem.brand || 'Brand'}</h2>
-                <p className="text-gray-500 dark:text-zinc-400 text-sm mb-4 line-clamp-1">{testModalItem.name}</p>
+                <p className="text-gray-500 dark:text-zinc-400 text-sm mb-4">{testModalItem.name}</p>
                 <div className="text-2xl font-black mb-6 text-black dark:text-white">${testModalItem.price || '0'}</div>
                 <div className="w-full space-y-2">
                     {testModalItem.urls && testModalItem.urls.map((url, idx) => (
@@ -1047,6 +1315,13 @@ export const Create: React.FC<CreateProps> = ({ onPublishSuccess }) => {
                 </div>
              </div>
         )}
+      </Modal>
+
+      {/* In-Canvas Search Modal */}
+      <Modal isOpen={isSearchModalOpen} onClose={() => setIsSearchModalOpen(false)} variant="bottom" title="Search Items">
+          <div className="h-[60vh] overflow-y-auto">
+             {renderSearchUI()}
+          </div>
       </Modal>
     </div>
   );
