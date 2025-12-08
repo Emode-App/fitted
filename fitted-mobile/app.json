@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "fitted-mobile",
+    "slug": "fitted-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "fittedmobile",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
