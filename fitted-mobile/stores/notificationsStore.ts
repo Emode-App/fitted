@@ -49,7 +49,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
 
             set({ notifications, unreadCount, isLoading: false });
         } catch (error) {
-            console.error('Error fetching notifications:', error);
+            console.error('Error fetching notifications:', JSON.stringify(error, null, 2));
             set({ isLoading: false });
         }
     },

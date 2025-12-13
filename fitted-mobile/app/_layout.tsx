@@ -3,10 +3,12 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { StatusBar } from 'expo-status-bar';
+import { useEffect, useState } from 'react';
 import 'react-native-reanimated';
+import { Inter_700Bold, Inter_900Black } from '@expo-google-fonts/inter';
 
-
+import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
 
 export {
@@ -19,10 +21,19 @@ export const unstable_settings = {
 
 SplashScreen.preventAutoHideAsync();
 
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+
+import { CustomSplashScreen } from '@/components/CustomSplashScreen';
+
 export default function RootLayout() {
   const [loaded, error] = useFonts({
+    Inter_700Bold,
+    Inter_900Black,
     ...FontAwesome.font,
   });
+
+  const [appReady, setAppReady] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
 
   const initialize = useAuthStore((state) => state.initialize);
   const isLoading = useAuthStore((state) => state.isLoading);
@@ -57,23 +68,37 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (loaded && !isLoading) {
+      setAppReady(true);
+      // Hide native splash screen immediately so our custom one takes over
       SplashScreen.hideAsync();
     }
   }, [loaded, isLoading]);
 
-  if (!loaded || isLoading) {
+  if (!appReady) {
     return null;
   }
 
-  return <RootLayoutNav />;
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <RootLayoutNav />
+      {showSplash && (
+        <CustomSplashScreen onAnimationFinish={() => setShowSplash(false)} />
+      )}
+    </GestureHandlerRootView>
+  );
 }
 
 function RootLayoutNav() {
+  const { isDark } = useTheme();
+
   return (
-    <ThemeProvider value={DarkTheme}>
+    <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="auth" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="post" options={{ headerShown: false }} />
+        <Stack.Screen name="user" options={{ headerShown: false }} />
       </Stack>
     </ThemeProvider>
   );

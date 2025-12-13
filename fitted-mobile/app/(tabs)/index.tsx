@@ -1,17 +1,17 @@
-﻿import { StyleSheet, FlatList, RefreshControl, ActivityIndicator, Modal, Pressable } from 'react-native';
+﻿import { StyleSheet, FlatList, RefreshControl, ActivityIndicator, Pressable } from 'react-native';
 import { useState, useCallback, useEffect } from 'react';
 import { router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { Feather } from '@expo/vector-icons';
 
 import { Text, View } from '@/components/Themed';
 import PostItem from '@/components/PostItem';
 import CommentsModal from '@/components/CommentsModal';
 import { usePostsStore } from '@/stores/postsStore';
 import { useAuthStore } from '@/stores/authStore';
-import { useNotificationsStore } from '@/stores/notificationsStore';
+import { useTheme } from '@/hooks/useTheme';
 
 export default function FeedScreen() {
+    const { colors } = useTheme();
     const [refreshing, setRefreshing] = useState(false);
     const [commentsPost, setCommentsPost] = useState<{ id: string; user_id: string } | null>(null);
 
@@ -22,14 +22,10 @@ export default function FeedScreen() {
     const toggleSave = usePostsStore((state) => state.toggleSave);
     const setCurrentUserId = usePostsStore((state) => state.setCurrentUserId);
     const user = useAuthStore((state) => state.user);
-    const unreadCount = useNotificationsStore((state) => state.unreadCount);
-    const fetchNotifications = useNotificationsStore((state) => state.fetchNotifications);
 
-    // Set current user ID for like tracking
     useEffect(() => {
         if (user?.id) {
             setCurrentUserId(user.id);
-            fetchNotifications(user.id);
         }
     }, [user]);
 
@@ -55,8 +51,8 @@ export default function FeedScreen() {
     };
 
     const handleShare = (postId: string) => {
-        // TODO: Share post
-        console.log('Share post:', postId);
+        // Navigate to messages tab to share with someone
+        router.push('/(tabs)/messages');
     };
 
     const handleSave = (postId: string) => {
@@ -67,32 +63,23 @@ export default function FeedScreen() {
         router.push({ pathname: '/user/[id]', params: { id: userId } });
     };
 
+    const handleDelete = async (postId: string) => {
+        const deletePost = usePostsStore.getState().deletePost;
+        await deletePost(postId);
+    };
+
     if (isLoading && posts.length === 0) {
         return (
-            <View style={styles.container}>
-                <View style={styles.header}>
-                    <Text style={styles.logo}>fitted</Text>
-                </View>
+            <View style={[styles.container, { backgroundColor: colors.background }]}>
                 <View style={styles.loadingContainer}>
-                    <ActivityIndicator color="#fff" size="large" />
+                    <ActivityIndicator color={colors.text} size="large" />
                 </View>
             </View>
         );
     }
 
     return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.logo}>fitted</Text>
-                <Pressable style={styles.bellButton} onPress={() => router.push('/activity')}>
-                    <Feather name="bell" size={24} color="#fff" />
-                    {unreadCount > 0 && (
-                        <View style={styles.badge}>
-                            <Text style={styles.badgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
-                        </View>
-                    )}
-                </Pressable>
-            </View>
+        <View style={[styles.container, { backgroundColor: colors.background }]}>
 
             <FlatList
                 data={posts}
@@ -105,6 +92,9 @@ export default function FeedScreen() {
                         onShare={() => handleShare(item.id)}
                         onSave={() => handleSave(item.id)}
                         onUserPress={() => handleUserPress(item.user_id)}
+                        onPostPress={() => router.push({ pathname: '/post/[id]', params: { id: item.id } })}
+                        onDelete={() => handleDelete(item.id)}
+                        currentUserId={user?.id}
                     />
                 )}
                 refreshControl={
@@ -141,23 +131,6 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: '#000',
     },
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingTop: 60,
-        paddingHorizontal: 16,
-        paddingBottom: 12,
-        backgroundColor: '#000',
-        borderBottomWidth: 0.5,
-        borderBottomColor: '#222',
-    },
-    logo: {
-        fontSize: 28,
-        fontWeight: '700',
-        color: '#fff',
-        letterSpacing: -1,
-    },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
@@ -182,25 +155,5 @@ const styles = StyleSheet.create({
         color: '#666',
         textAlign: 'center',
     },
-    bellButton: {
-        position: 'relative',
-        padding: 4,
-    },
-    badge: {
-        position: 'absolute',
-        top: 0,
-        right: 0,
-        backgroundColor: '#ff3b5c',
-        borderRadius: 8,
-        minWidth: 16,
-        height: 16,
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingHorizontal: 4,
-    },
-    badgeText: {
-        color: '#fff',
-        fontSize: 10,
-        fontWeight: 'bold',
-    },
 });
+

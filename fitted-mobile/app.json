@@ -7,6 +7,9 @@
     "scheme": "fittedmobile",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#000000"
+    },
     "ios": {
       "supportsTablet": true
     },

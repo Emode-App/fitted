@@ -29,6 +29,7 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
     const [loading, setLoading] = useState(false);
     const [newComment, setNewComment] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const [likedComments, setLikedComments] = useState<Set<string>>(new Set());
     const user = useAuthStore((state) => state.user);
 
     const translateY = useRef(new Animated.Value(0)).current;
@@ -83,14 +84,28 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
             const { data, error } = await supabase
                 .from('comments')
                 .select(`
-          *,
-          user:users!comments_user_id_fkey(*)
-        `)
+                    *,
+                    user:users!comments_user_id_fkey(*)
+                `)
                 .eq('post_id', postId)
                 .order('created_at', { ascending: true });
 
             if (!error && data) {
                 setComments(data as CommentWithUser[]);
+
+                // Fetch which comments the current user has liked
+                if (user?.id && data.length > 0) {
+                    const commentIds = data.map(c => c.id);
+                    const { data: likedData } = await supabase
+                        .from('comment_likes')
+                        .select('comment_id')
+                        .eq('user_id', user.id)
+                        .in('comment_id', commentIds);
+
+                    if (likedData) {
+                        setLikedComments(new Set(likedData.map(l => l.comment_id)));
+                    }
+                }
             }
         } catch (err) {
             console.error('Error fetching comments:', err);
@@ -98,6 +113,7 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
             setLoading(false);
         }
     };
+
 
     const handleSubmit = async () => {
         if (!newComment.trim() || !user) return;
@@ -121,8 +137,10 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                         actor_id: user.id,
                         type: 'comment',
                         post_id: postId,
+                        content: newComment.trim().slice(0, 100), // Store first 100 chars
                     });
                 }
+
             }
         } catch (err) {
             console.error('Error posting comment:', err);
@@ -152,6 +170,60 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
         router.push({ pathname: '/user/[id]', params: { id: userId } });
     };
 
+    const toggleCommentLike = async (commentId: string) => {
+        if (!user?.id) return;
+
+        const isLiked = likedComments.has(commentId);
+
+        // Optimistic update
+        setLikedComments(prev => {
+            const newSet = new Set(prev);
+            if (isLiked) {
+                newSet.delete(commentId);
+            } else {
+                newSet.add(commentId);
+            }
+            return newSet;
+        });
+
+        // Update local comment likes count
+        setComments(prev => prev.map(c =>
+            c.id === commentId
+                ? { ...c, likes_count: (c.likes_count || 0) + (isLiked ? -1 : 1) }
+                : c
+        ));
+
+        try {
+            if (isLiked) {
+                await supabase
+                    .from('comment_likes')
+                    .delete()
+                    .eq('comment_id', commentId)
+                    .eq('user_id', user.id);
+            } else {
+                await supabase
+                    .from('comment_likes')
+                    .insert({ comment_id: commentId, user_id: user.id });
+            }
+        } catch (error) {
+            // Revert on error
+            setLikedComments(prev => {
+                const newSet = new Set(prev);
+                if (isLiked) {
+                    newSet.add(commentId);
+                } else {
+                    newSet.delete(commentId);
+                }
+                return newSet;
+            });
+            setComments(prev => prev.map(c =>
+                c.id === commentId
+                    ? { ...c, likes_count: (c.likes_count || 0) + (isLiked ? 1 : -1) }
+                    : c
+            ));
+        }
+    };
+
     const renderComment = ({ item }: { item: CommentWithUser }) => (
         <View style={styles.commentItem}>
             <Pressable style={styles.avatarContainer} onPress={() => handleCommentUserPress(item.user?.id)}>
@@ -168,8 +240,21 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                     <Text style={styles.username} onPress={() => handleCommentUserPress(item.user?.id)}>{item.user?.username || 'User'} </Text>
                     <MentionText text={item.text} style={styles.commentBodyText} />
                 </Text>
-                <Text style={styles.timestamp}>{formatTime(item.created_at)}</Text>
+                <View style={styles.commentMeta}>
+                    <Text style={styles.timestamp}>{formatTime(item.created_at)}</Text>
+                    {(item.likes_count || 0) > 0 && (
+                        <Text style={styles.likesCount}>{item.likes_count} like{(item.likes_count || 0) !== 1 ? 's' : ''}</Text>
+                    )}
+                </View>
             </View>
+            <Pressable style={styles.likeButton} onPress={() => toggleCommentLike(item.id)}>
+                <Feather
+                    name="heart"
+                    size={14}
+                    color={likedComments.has(item.id) ? '#ff3b5c' : '#666'}
+                    fill={likedComments.has(item.id) ? '#ff3b5c' : 'transparent'}
+                />
+            </Pressable>
         </View>
     );
 
@@ -294,7 +379,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingBottom: 12,
+        paddingVertical: 12,
         borderBottomWidth: 0.5,
         borderBottomColor: '#333',
     },
@@ -306,6 +391,9 @@ const styles = StyleSheet.create({
     closeButton: {
         position: 'absolute',
         right: 16,
+        top: 0,
+        bottom: 0,
+        justifyContent: 'center',
     },
     loadingContainer: {
         flex: 1,
@@ -352,7 +440,21 @@ const styles = StyleSheet.create({
     timestamp: {
         fontSize: 12,
         color: '#666',
+    },
+    commentMeta: {
+        flexDirection: 'row',
+        alignItems: 'center',
         marginTop: 4,
+        gap: 12,
+    },
+    likesCount: {
+        fontSize: 12,
+        color: '#666',
+        fontWeight: '600',
+    },
+    likeButton: {
+        padding: 8,
+        alignSelf: 'flex-start',
     },
     emptyContainer: {
         alignItems: 'center',

@@ -16,6 +16,7 @@ interface PostsState {
     createPost: (post: Partial<Post>) => Promise<{ error?: string }>;
     toggleLike: (postId: string) => Promise<void>;
     toggleSave: (postId: string) => Promise<void>;
+    deletePost: (postId: string) => Promise<void>;
 }
 
 export const usePostsStore = create<PostsState>((set, get) => ({
@@ -105,7 +106,7 @@ export const usePostsStore = create<PostsState>((set, get) => ({
             if (error) throw error;
             return data || [];
         } catch (error) {
-            console.error('Error fetching user posts:', error);
+            console.error('Error fetching user posts:', JSON.stringify(error, null, 2));
             return [];
         }
     },
@@ -128,7 +129,7 @@ export const usePostsStore = create<PostsState>((set, get) => ({
             // Extract the post from each saved_posts row
             return (data || []).map((item: any) => item.post).filter(Boolean);
         } catch (error) {
-            console.error('Error fetching saved posts:', error);
+            console.error('Error fetching saved posts:', JSON.stringify(error, null, 2));
             return [];
         }
     },
@@ -178,6 +179,17 @@ export const usePostsStore = create<PostsState>((set, get) => ({
                     .delete()
                     .eq('post_id', postId)
                     .eq('user_id', currentUserId);
+
+                // Delete the like notification if it exists
+                if (post.user_id && post.user_id !== currentUserId) {
+                    await supabase
+                        .from('notifications')
+                        .delete()
+                        .eq('user_id', post.user_id)
+                        .eq('actor_id', currentUserId)
+                        .eq('type', 'like')
+                        .eq('post_id', postId);
+                }
             } else {
                 // Like
                 await supabase
@@ -185,15 +197,20 @@ export const usePostsStore = create<PostsState>((set, get) => ({
                     .insert({ post_id: postId, user_id: currentUserId });
 
                 // Create notification for post owner (if not liking own post)
+                // Use upsert to prevent duplicates
                 if (post.user_id && post.user_id !== currentUserId) {
-                    await supabase.from('notifications').insert({
+                    await supabase.from('notifications').upsert({
                         user_id: post.user_id,
                         actor_id: currentUserId,
                         type: 'like',
                         post_id: postId,
+                    }, {
+                        onConflict: 'user_id,actor_id,type,post_id',
+                        ignoreDuplicates: true,
                     });
                 }
             }
+
         } catch (error) {
             console.error('Error toggling like:', error);
             // Revert on error
@@ -246,6 +263,26 @@ export const usePostsStore = create<PostsState>((set, get) => ({
                         : p
                 ),
             });
+        }
+    },
+
+    deletePost: async (postId: string) => {
+        const { posts } = get();
+
+        // Optimistic removal
+        set({ posts: posts.filter(p => p.id !== postId) });
+
+        try {
+            const { error } = await supabase
+                .from('posts')
+                .delete()
+                .eq('id', postId);
+
+            if (error) throw error;
+        } catch (error) {
+            console.error('Error deleting post:', error);
+            // Revert on error
+            set({ posts });
         }
     },
 }));

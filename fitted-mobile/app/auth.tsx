@@ -1,11 +1,12 @@
-import { StyleSheet, TextInput, Pressable, KeyboardAvoidingView, Platform, Alert } from 'react-native';
+import { StyleSheet, TextInput, Pressable, KeyboardAvoidingView, Platform, Alert, View as RNView, Text as RNText } from 'react-native';
 import { useState } from 'react';
 import { router } from 'expo-router';
 
-import { Text, View } from '@/components/Themed';
 import { useAuthStore } from '@/stores/authStore';
+import { useTheme } from '@/hooks/useTheme';
 
 export default function LoginScreen() {
+    const { colors } = useTheme();
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -55,22 +56,22 @@ export default function LoginScreen() {
     return (
         <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.container}
+            style={[styles.container, { backgroundColor: colors.background }]}
         >
-            <View style={styles.inner}>
+            <RNView style={[styles.inner, { backgroundColor: colors.background }]}>
                 {/* Logo */}
-                <View style={styles.logoContainer}>
-                    <Text style={styles.logo}>fitted</Text>
-                    <Text style={styles.tagline}>AI-Powered Virtual Try-On</Text>
-                </View>
+                <RNView style={styles.logoContainer}>
+                    <RNText style={[styles.logo, { color: colors.text }]}>fitted</RNText>
+                    <RNText style={[styles.tagline, { color: colors.textSecondary }]}>AI-Powered Virtual Try-On</RNText>
+                </RNView>
 
                 {/* Form */}
-                <View style={styles.form}>
+                <RNView style={styles.form}>
                     {!isLogin && (
                         <TextInput
-                            style={styles.input}
+                            style={[styles.input, { backgroundColor: colors.input, borderColor: colors.inputBorder, color: colors.text }]}
                             placeholder="Username"
-                            placeholderTextColor="#666"
+                            placeholderTextColor={colors.placeholder}
                             value={username}
                             onChangeText={setUsername}
                             autoCapitalize="none"
@@ -78,9 +79,9 @@ export default function LoginScreen() {
                     )}
 
                     <TextInput
-                        style={styles.input}
+                        style={[styles.input, { backgroundColor: colors.input, borderColor: colors.inputBorder, color: colors.text }]}
                         placeholder="Email"
-                        placeholderTextColor="#666"
+                        placeholderTextColor={colors.placeholder}
                         value={email}
                         onChangeText={setEmail}
                         autoCapitalize="none"
@@ -88,32 +89,32 @@ export default function LoginScreen() {
                     />
 
                     <TextInput
-                        style={styles.input}
+                        style={[styles.input, { backgroundColor: colors.input, borderColor: colors.inputBorder, color: colors.text }]}
                         placeholder="Password"
-                        placeholderTextColor="#666"
+                        placeholderTextColor={colors.placeholder}
                         value={password}
                         onChangeText={setPassword}
                         secureTextEntry
                     />
 
                     <Pressable
-                        style={[styles.button, loading && styles.buttonDisabled]}
+                        style={[styles.button, { backgroundColor: colors.primary }, loading && styles.buttonDisabled]}
                         onPress={handleSubmit}
                         disabled={loading}
                     >
-                        <Text style={styles.buttonText}>
+                        <RNText style={[styles.buttonText, { color: colors.primaryText }]}>
                             {loading ? 'Loading...' : (isLogin ? 'Sign In' : 'Create Account')}
-                        </Text>
+                        </RNText>
                     </Pressable>
-                </View>
+                </RNView>
 
                 {/* Toggle */}
                 <Pressable onPress={() => setIsLogin(!isLogin)}>
-                    <Text style={styles.toggleText}>
+                    <RNText style={[styles.toggleText, { color: colors.textSecondary }]}>
                         {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
-                    </Text>
+                    </RNText>
                 </Pressable>
-            </View>
+            </RNView>
         </KeyboardAvoidingView>
     );
 }

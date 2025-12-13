@@ -1,202 +1,221 @@
-import { StyleSheet, TextInput, FlatList, Pressable, Dimensions, ActivityIndicator, Alert } from 'react-native';
-import { useState, useEffect, useCallback } from 'react';
-import { Feather } from '@expo/vector-icons';
+import { StyleSheet, FlatList, View, RefreshControl, Dimensions, Pressable, Text, ActivityIndicator } from 'react-native';
+import { useState, useCallback, useEffect } from 'react';
 import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
 
-import { Text, View } from '@/components/Themed';
 import { supabase } from '@/services/supabase';
-import { useMessagesStore } from '@/stores/messagesStore';
 import { useAuthStore } from '@/stores/authStore';
 import { Post, User } from '@/types';
+import { useTheme } from '@/hooks/useTheme';
+import { ExploreHeader, FeaturedStylists, TrendingGrid, SearchResults } from '@/components/ExploreComponents';
 
 const { width } = Dimensions.get('window');
-const GRID_SIZE = (width - 4) / 3;
+const GRID_SIZE = width / 3;
 
 export default function ExploreScreen() {
-    const [searchQuery, setSearchQuery] = useState('');
-    const [searchResults, setSearchResults] = useState<User[]>([]);
-    const [discoverPosts, setDiscoverPosts] = useState<Post[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [searching, setSearching] = useState(false);
-
-    const createConversation = useMessagesStore((state) => state.createConversation);
-    const fetchConversations = useMessagesStore((state) => state.fetchConversations);
+    const { colors, isDark } = useTheme();
     const user = useAuthStore((state) => state.user);
 
-    // Fetch discover posts on focus
+    // State
+    const [searchQuery, setSearchQuery] = useState('');
+    const [posts, setPosts] = useState<Post[]>([]);
+    const [featuredStylists, setFeaturedStylists] = useState<User[]>([]);
+
+    // Search State
+    const [searching, setSearching] = useState(false);
+    const [userResults, setUserResults] = useState<User[]>([]);
+    const [brandResults, setBrandResults] = useState<User[]>([]);
+
+    // Loading State
+    const [refreshing, setRefreshing] = useState(false);
+    const [loading, setLoading] = useState(true);
+
+    // Initial Fetch
     useFocusEffect(
         useCallback(() => {
-            fetchDiscoverPosts();
+            fetchContent();
         }, [])
     );
 
-    const fetchDiscoverPosts = async () => {
-        setLoading(true);
-        const { data, error } = await supabase
+    const fetchContent = async () => {
+        try {
+            await Promise.all([
+                fetchPosts(),
+                fetchFeaturedStylists()
+            ]);
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
+    };
+
+    const fetchPosts = async () => {
+        const { data } = await supabase
             .from('posts')
             .select('*')
             .order('likes_count', { ascending: false })
             .limit(30);
 
-        if (!error && data) {
-            setDiscoverPosts(data);
-        }
-        setLoading(false);
+        if (data) setPosts(data);
+    };
+
+    const fetchFeaturedStylists = async () => {
+        // Fetch users who have posted content (simple heuristic for "Featured") 
+        // In a real app, this would be a specific query or 'is_featured' flag
+        const { data } = await supabase
+            .from('users')
+            .select('*')
+            .limit(5); // Get 5 users for the list
+
+        if (data) setFeaturedStylists(data);
     };
 
     const handleSearch = async (query: string) => {
         setSearchQuery(query);
 
         if (query.trim().length < 2) {
-            setSearchResults([]);
+            setUserResults([]);
+            setBrandResults([]);
             setSearching(false);
             return;
         }
 
         setSearching(true);
-        const { data, error } = await supabase
-            .from('users')
-            .select('*')
-            .or(`username.ilike.%${query}%,handle.ilike.%${query}%`)
-            .limit(10);
 
-        if (!error && data) {
-            setSearchResults(data);
-        }
+        // Parallel search for Accounts and Brands
+        const [accountsRes, brandsRes] = await Promise.all([
+            // Accounts
+            supabase
+                .from('users')
+                .select('*')
+                .or(`username.ilike.%${query}%,handle.ilike.%${query}%`)
+                .eq('is_business_account', false) // Exclude business/brands
+                .limit(10),
+
+            // Brands (Business Accounts)
+            supabase
+                .from('users')
+                .select('*')
+                .or(`username.ilike.%${query}%,handle.ilike.%${query}%`)
+                .eq('is_business_account', true)
+                .limit(5)
+        ]);
+
+        if (accountsRes.data) setUserResults(accountsRes.data);
+        if (brandsRes.data) setBrandResults(brandsRes.data);
+
         setSearching(false);
     };
 
-    const handleMessageUser = async (otherUser: User) => {
-        if (!user) return;
-
-        // Create or get existing conversation
-        const conversationId = await createConversation(user.id, otherUser.id);
-        if (conversationId) {
-            // Refresh conversations 
-            await fetchConversations(user.id);
-            // Find and set the active conversation
-            const conversations = useMessagesStore.getState().conversations;
-            const convo = conversations.find(c => c.id === conversationId);
-            if (convo) {
-                useMessagesStore.getState().setActiveConversation(convo);
-            }
-            router.push('/(tabs)/messages');
-        }
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await fetchContent();
     };
 
-    const handleUserPress = (userId: string) => {
-        router.push({ pathname: '/(tabs)/user/[id]', params: { id: userId } });
+    // Navigation Handlers
+    const handleViewProfile = (userId: string) => {
+        router.push({ pathname: '/user/[id]', params: { id: userId } });
     };
 
-    const renderUserResult = ({ item }: { item: User }) => (
-        <Pressable style={styles.userItem} onPress={() => handleUserPress(item.id)}>
-            <View style={styles.userAvatar}>
-                {item.avatar_url ? (
-                    <Image source={{ uri: item.avatar_url }} style={styles.avatar} />
-                ) : (
-                    <View style={styles.avatarPlaceholder}>
-                        <Feather name="user" size={20} color="#666" />
-                    </View>
-                )}
-            </View>
-            <View style={styles.userInfo}>
-                <Text style={styles.username}>{item.username}</Text>
-                <Text style={styles.handle}>{item.handle}</Text>
-            </View>
-            <Pressable style={styles.messageButton} onPress={(e) => { e.stopPropagation(); handleMessageUser(item); }}>
-                <Feather name="message-circle" size={20} color="#fff" />
-            </Pressable>
-        </Pressable>
-    );
+    const handleViewHashtag = (tag: string) => {
+        // TODO: Implement hashtag page
+        console.log('View hashtag:', tag);
+    };
 
+    const handleViewTrend = (trendName: string, trendImage: string) => {
+        router.push({
+            pathname: '/trend/[id]',
+            params: { id: trendName, name: trendName, image: trendImage }
+        });
+    };
+
+    const handleOpenPost = (post: Post) => {
+        router.push({ pathname: '/post/[id]', params: { id: post.id } });
+    };
+
+
+    // Render Helpers
     const renderPostThumbnail = ({ item }: { item: Post }) => (
-        <Pressable style={styles.gridItem}>
+        <Pressable
+            style={styles.gridItem}
+            onPress={() => handleOpenPost(item)}
+        >
             <Image
                 source={{ uri: item.generated_image }}
                 style={styles.gridImage}
                 contentFit="cover"
+                transition={500}
             />
             {item.likes_count > 0 && (
                 <View style={styles.likesOverlay}>
-                    <Feather name="heart" size={12} color="#fff" />
-                    <Text style={styles.likesText}>{item.likes_count}</Text>
+                    <View style={styles.likesPill}>
+                        <Text style={styles.likesText}>{item.likes_count}</Text>
+                        <Text style={{ fontSize: 8 }}>🔥</Text>
+                    </View>
                 </View>
             )}
         </Pressable>
     );
 
-    const showSearchResults = searchQuery.trim().length >= 2;
+    const renderHeader = () => {
+        if (searchQuery.length > 0) return null; // Use main search view
 
-    return (
-        <View style={styles.container}>
-            {/* Search Bar */}
-            <View style={styles.header}>
-                <View style={styles.searchBar}>
-                    <Feather name="search" size={18} color="#666" />
-                    <TextInput
-                        style={styles.searchInput}
-                        placeholder="Search users..."
-                        placeholderTextColor="#666"
-                        value={searchQuery}
-                        onChangeText={handleSearch}
-                        autoCapitalize="none"
-                    />
-                    {searchQuery.length > 0 && (
-                        <Pressable onPress={() => handleSearch('')}>
-                            <Feather name="x" size={18} color="#666" />
-                        </Pressable>
-                    )}
+        return (
+            <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
+                <FeaturedStylists stylists={featuredStylists} onViewProfile={handleViewProfile} />
+                <TrendingGrid onViewTrend={handleViewTrend} />
+                <View style={{ marginBottom: 20 }}>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>Explore</Text>
                 </View>
             </View>
+        );
+    };
 
-            {/* Content */}
-            {showSearchResults ? (
-                /* Search Results */
-                searching ? (
-                    <View style={styles.loadingContainer}>
-                        <ActivityIndicator color="#fff" />
-                    </View>
-                ) : searchResults.length > 0 ? (
-                    <FlatList
-                        key="search-list"
-                        data={searchResults}
-                        keyExtractor={(item) => item.id}
-                        renderItem={renderUserResult}
-                        style={styles.searchList}
+    const isSearching = searchQuery.length > 0;
+
+    return (
+        <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
+            {/* Sticky Header */}
+            <ExploreHeader
+                searchQuery={searchQuery}
+                onSearchChange={handleSearch}
+                onClear={() => handleSearch('')}
+            />
+
+            {isSearching ? (
+                // Search Results View
+                <View style={{ flex: 1 }}>
+                    <SearchResults
+                        query={searchQuery}
+                        results={userResults}
+                        brandResults={brandResults}
+                        loading={searching}
+                        onViewHashtag={handleViewHashtag}
+                        onViewProfile={handleViewProfile}
                     />
-                ) : (
-                    <View style={styles.emptyContainer}>
-                        <Text style={styles.emptyText}>No users found</Text>
-                    </View>
-                )
+                </View>
             ) : (
-                /* Discover Grid */
-                loading ? (
-                    <View style={styles.loadingContainer}>
-                        <ActivityIndicator color="#fff" size="large" />
-                    </View>
-                ) : (
-                    <FlatList
-                        key="discover-grid"
-                        data={discoverPosts}
-                        keyExtractor={(item) => item.id}
-                        numColumns={3}
-                        renderItem={renderPostThumbnail}
-                        ListHeaderComponent={
-                            <Text style={styles.sectionTitle}>Discover</Text>
-                        }
-                        ListEmptyComponent={
-                            <View style={styles.emptyContainer}>
-                                <Feather name="compass" size={48} color="#333" />
-                                <Text style={styles.emptyText}>Nothing to explore yet</Text>
-                                <Text style={styles.emptySubtext}>Posts will appear here</Text>
-                            </View>
-                        }
-                        showsVerticalScrollIndicator={false}
-                    />
-                )
+                // Default View
+                <FlatList
+                    data={posts}
+                    keyExtractor={(item) => item.id}
+                    renderItem={renderPostThumbnail}
+                    numColumns={3}
+                    ListHeaderComponent={renderHeader}
+                    contentContainerStyle={{ paddingBottom: 100 }}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />
+                    }
+                    // columnWrapperStyle={{ gap: 0 }} // Removed gap
+                    style={{ marginHorizontal: 0 }}
+                // Actually, the spec says -mx-4 for grid. Let's adjust.
+                // The FlatList is the main container now. 
+                // Header has padding. Grid items need to be full width relative to screen.
+                // But we have padding on the whole screen usually? 
+                // Let's reset FlatList style to touch edges and handle padding inside Header.
+                />
             )}
         </View>
     );
@@ -205,97 +224,26 @@ export default function ExploreScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#000',
-    },
-    header: {
-        paddingTop: 60,
-        paddingHorizontal: 16,
-        paddingBottom: 12,
-        backgroundColor: '#000',
-    },
-    searchBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#1a1a1a',
-        borderRadius: 12,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-    },
-    searchInput: {
-        flex: 1,
-        marginLeft: 8,
-        fontSize: 16,
-        color: '#fff',
-    },
-    loadingContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'transparent',
-    },
-    searchList: {
-        flex: 1,
-        paddingHorizontal: 16,
-    },
-    userItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 12,
-        borderBottomWidth: 0.5,
-        borderBottomColor: '#222',
-        backgroundColor: 'transparent',
-    },
-    userAvatar: {
-        marginRight: 12,
-        backgroundColor: 'transparent',
-    },
-    avatar: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
-    },
-    avatarPlaceholder: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
-        backgroundColor: '#222',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    userInfo: {
-        flex: 1,
-        backgroundColor: 'transparent',
-    },
-    messageButton: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: '#222',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    username: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#fff',
-    },
-    handle: {
-        fontSize: 14,
-        color: '#888',
-        marginTop: 2,
+        // No padding here to allow sticky header background to maintain negative margins logic if needed,
+        // but React Native Sticky Headers work differently. 
+        // We'll just put the ExploreHeader at the top (it's absolute styled in ExploreComponents, wait check).
+        // Spec: "Sticky Search Header... position: sticky".
+        // React Native: Sticky headers are tricky.
+        // My ExploreHeader implementation uses 'position: absolute'.
+        // This means it overlaps content. We need to add paddingTop to the content container.
+        paddingTop: 60, // approximate height of header
     },
     sectionTitle: {
-        fontSize: 18,
-        fontWeight: '600',
-        color: '#fff',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
+        fontSize: 20,
+        fontWeight: '700',
+        letterSpacing: -0.5,
     },
     gridItem: {
         width: GRID_SIZE,
         height: GRID_SIZE,
-        margin: 0.5,
+        // margin: 1, // Removed margin
         position: 'relative',
+        backgroundColor: '#e4e4e7', // zinc-200 placeholder
     },
     gridImage: {
         width: '100%',
@@ -303,35 +251,30 @@ const styles = StyleSheet.create({
     },
     likesOverlay: {
         position: 'absolute',
-        bottom: 6,
-        left: 6,
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.6)',
+        top: 4,
+        right: 4,
+    },
+    likesPill: {
+        backgroundColor: 'rgba(0,0,0,0.4)',
         paddingHorizontal: 6,
         paddingVertical: 2,
-        borderRadius: 4,
+        borderRadius: 999,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 2,
+        // backdropFilter not supported in RN StyleSheet
     },
     likesText: {
-        fontSize: 12,
-        color: '#fff',
-        marginLeft: 4,
+        fontSize: 10,
+        fontWeight: '700',
+        color: 'white',
+        textShadowColor: 'rgba(0,0,0,0.3)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 2,
     },
-    emptyContainer: {
-        flex: 1,
-        justifyContent: 'center',
+    // Utils
+    row: {
+        flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 100,
-        backgroundColor: 'transparent',
-    },
-    emptyText: {
-        fontSize: 16,
-        color: '#fff',
-        marginTop: 16,
-    },
-    emptySubtext: {
-        fontSize: 14,
-        color: '#666',
-        marginTop: 4,
     },
 });

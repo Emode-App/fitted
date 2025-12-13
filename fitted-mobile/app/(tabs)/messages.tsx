@@ -1,15 +1,24 @@
-import { StyleSheet, FlatList, Pressable, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { StyleSheet, FlatList, Pressable, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Modal as RNModal, PanResponder } from 'react-native';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
+import { BlurView } from 'expo-blur';
 
 import { Text, View } from '@/components/Themed';
 import { useMessagesStore } from '@/stores/messagesStore';
 import { useAuthStore } from '@/stores/authStore';
+import { supabase } from '@/services/supabase';
+import { User, Message } from '@/types';
+import { useTheme } from '@/hooks/useTheme';
+import { Input, Button } from '@/components/Shared';
+import StylistModal from '@/components/StylistModal';
+import { LinearGradient } from 'expo-linear-gradient';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 export default function MessagesScreen() {
+    const { colors } = useTheme();
     const user = useAuthStore((state) => state.user);
     const conversations = useMessagesStore((state) => state.conversations);
     const activeConversation = useMessagesStore((state) => state.activeConversation);
@@ -19,9 +28,25 @@ export default function MessagesScreen() {
     const fetchMessages = useMessagesStore((state) => state.fetchMessages);
     const sendMessage = useMessagesStore((state) => state.sendMessage);
     const setActiveConversation = useMessagesStore((state) => state.setActiveConversation);
+    const createConversation = useMessagesStore((state) => state.createConversation);
 
     const [newMessage, setNewMessage] = useState('');
+    const [showNewMessageModal, setShowNewMessageModal] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState<User[]>([]);
+    const [searching, setSearching] = useState(false);
+    const [conversationSearch, setConversationSearch] = useState('');
+    const [showStylistModal, setShowStylistModal] = useState(false);
     const flatListRef = useRef<FlatList>(null);
+
+    // Filter conversations by search
+    const filteredConversations = conversationSearch.trim()
+        ? conversations.filter(c =>
+            c.otherUser?.username?.toLowerCase().includes(conversationSearch.toLowerCase()) ||
+            c.otherUser?.handle?.toLowerCase().includes(conversationSearch.toLowerCase()) ||
+            c.lastMessage?.text?.toLowerCase().includes(conversationSearch.toLowerCase())
+        )
+        : conversations;
 
     useFocusEffect(
         useCallback(() => {
@@ -43,7 +68,6 @@ export default function MessagesScreen() {
         await sendMessage(activeConversation.id, user.id, newMessage.trim());
         setNewMessage('');
 
-        // Scroll to bottom
         setTimeout(() => {
             flatListRef.current?.scrollToEnd();
         }, 100);
@@ -71,27 +95,82 @@ export default function MessagesScreen() {
         router.push({ pathname: '/user/[id]', params: { id: userId } });
     };
 
+    const searchUsers = async (query: string) => {
+        if (!query.trim() || !user?.id) {
+            setSearchResults([]);
+            return;
+        }
+
+        setSearching(true);
+        try {
+            const { data } = await supabase
+                .from('users')
+                .select('*')
+                .neq('id', user.id)
+                .or(`username.ilike.%${query}%,handle.ilike.%${query}%`)
+                .limit(10);
+
+            setSearchResults(data || []);
+        } catch (error) {
+            console.error('Error searching users:', error);
+        } finally {
+            setSearching(false);
+        }
+    };
+
+    const handleSelectUser = async (selectedUser: User) => {
+        if (!user?.id) return;
+
+        const conversationId = await createConversation(user.id, selectedUser.id);
+        if (conversationId) {
+            await fetchConversations(user.id);
+            const convo = conversations.find(c => c.id === conversationId);
+            if (convo) {
+                setActiveConversation(convo);
+            }
+        }
+        setShowNewMessageModal(false);
+        setSearchQuery('');
+        setSearchResults([]);
+    };
+
+    // Pan responder for swipe to exit chat
+    const panResponder = useMemo(() => PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gestureState) => {
+            // Only respond to horizontal swipes that are more horizontal than vertical
+            return Math.abs(gestureState.dx) > Math.abs(gestureState.dy) && gestureState.dx > 20;
+        },
+        onPanResponderRelease: (_, gestureState) => {
+            // If swiped right more than 100px, exit conversation
+            if (gestureState.dx > 100) {
+                setActiveConversation(null);
+            }
+        },
+    }), []);
+
     // Chat View
     if (activeConversation) {
         return (
             <KeyboardAvoidingView
-                style={styles.container}
+                style={[styles.container, { backgroundColor: colors.background }]}
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                {...panResponder.panHandlers}
             >
                 {/* Chat Header */}
-                <View style={styles.chatHeader}>
+                <View style={[styles.chatHeader, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
                     <Pressable onPress={() => setActiveConversation(null)} style={styles.backButton}>
-                        <Feather name="arrow-left" size={24} color="#fff" />
+                        <Feather name="arrow-left" size={24} color={colors.text} />
                     </Pressable>
                     <Pressable style={styles.chatUserInfo} onPress={() => handleUserPress(activeConversation.otherUser?.id)}>
                         {activeConversation.otherUser?.avatar_url ? (
                             <Image source={{ uri: activeConversation.otherUser.avatar_url }} style={styles.chatAvatar} />
                         ) : (
-                            <View style={styles.chatAvatarPlaceholder}>
-                                <Feather name="user" size={16} color="#666" />
+                            <View style={[styles.chatAvatarPlaceholder, { backgroundColor: colors.backgroundTertiary }]}>
+                                <Feather name="user" size={16} color={colors.textTertiary} />
                             </View>
                         )}
-                        <Text style={styles.chatUsername}>{activeConversation.otherUser?.username || 'User'}</Text>
+                        <Text style={[styles.chatUsername, { color: colors.text }]}>{activeConversation.otherUser?.username || 'User'}</Text>
                     </Pressable>
                     <View style={{ width: 40 }} />
                 </View>
@@ -106,9 +185,22 @@ export default function MessagesScreen() {
                     renderItem={({ item }) => {
                         const isOwn = item.sender_id === user?.id;
                         return (
-                            <View style={[styles.messageBubble, isOwn ? styles.ownMessage : styles.otherMessage]}>
-                                <Text style={[styles.messageText, isOwn && styles.ownMessageText]}>{item.text}</Text>
-                                <Text style={[styles.messageTime, isOwn && styles.ownMessageTime]}>
+                            <View style={[
+                                styles.messageBubble,
+                                isOwn
+                                    ? { backgroundColor: colors.primary, borderBottomRightRadius: 4, alignSelf: 'flex-end' }
+                                    : { backgroundColor: colors.backgroundSecondary, borderBottomLeftRadius: 4, alignSelf: 'flex-start' }
+                            ]}>
+                                <Text style={[
+                                    styles.messageText,
+                                    isOwn ? { color: colors.primaryForeground } : { color: colors.text }
+                                ]}>
+                                    {item.text}
+                                </Text>
+                                <Text style={[
+                                    styles.messageTime,
+                                    isOwn ? { color: colors.primaryForeground, opacity: 0.7 } : { color: colors.textSecondary }
+                                ]}>
                                     {formatTime(item.created_at)}
                                 </Text>
                             </View>
@@ -117,29 +209,33 @@ export default function MessagesScreen() {
                     onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
                     ListEmptyComponent={
                         <View style={styles.emptyMessages}>
-                            <Text style={styles.emptyMessagesText}>No messages yet</Text>
-                            <Text style={styles.emptyMessagesSubtext}>Say hello!</Text>
+                            <Text style={[styles.emptyMessagesText, { color: colors.textSecondary }]}>No messages yet</Text>
+                            <Text style={[styles.emptyMessagesSubtext, { color: colors.textTertiary }]}>Say hello to start the convo!</Text>
                         </View>
                     }
                 />
 
                 {/* Input */}
-                <View style={styles.inputContainer}>
+                <View style={[styles.inputContainer, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
                     <TextInput
-                        style={styles.messageInput}
+                        style={[styles.messageInput, {
+                            backgroundColor: colors.backgroundSecondary,
+                            color: colors.text,
+                            borderColor: colors.border
+                        }]}
                         placeholder="Message..."
-                        placeholderTextColor="#666"
+                        placeholderTextColor={colors.textTertiary}
                         value={newMessage}
                         onChangeText={setNewMessage}
                         multiline
                         maxLength={1000}
                     />
                     <Pressable
-                        style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
+                        style={[styles.sendButton, { backgroundColor: newMessage.trim() ? colors.primary : colors.backgroundTertiary }]}
                         onPress={handleSend}
                         disabled={!newMessage.trim()}
                     >
-                        <Feather name="send" size={20} color={newMessage.trim() ? "#000" : "#666"} />
+                        <Feather name="send" size={20} color={newMessage.trim() ? colors.primaryForeground : colors.textTertiary} />
                     </Pressable>
                 </View>
             </KeyboardAvoidingView>
@@ -148,263 +244,236 @@ export default function MessagesScreen() {
 
     // Conversations List
     return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.title}>Messages</Text>
-                <Pressable>
-                    <Feather name="edit" size={22} color="#fff" />
-                </Pressable>
+        <>
+            <View style={[styles.container, { backgroundColor: colors.background }]}>
+                <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
+                    <View style={styles.headerTitleRow}>
+                        <Text style={[styles.title, { color: colors.text }]}>Messages</Text>
+                        {/* Verification button - only show if not already verified */}
+                        {!user?.is_verified_stylist && (
+                            <Pressable
+                                style={styles.verifyButton}
+                                onPress={() => setShowStylistModal(true)}
+                            >
+                                <LinearGradient
+                                    colors={['#3b82f6', '#2563eb']}
+                                    style={styles.verifyButtonGradient}
+                                >
+                                    <MaterialCommunityIcons name="check-decagram" size={16} color="#fff" />
+                                </LinearGradient>
+                            </Pressable>
+                        )}
+                    </View>
+                    <Pressable onPress={() => setShowNewMessageModal(true)} style={styles.iconButton}>
+                        <Feather name="edit" size={22} color={colors.text} />
+                    </Pressable>
+                </View>
+
+                {/* Search bar */}
+                <View style={[styles.searchContainer, { backgroundColor: colors.background }]}>
+                    <View style={[styles.searchInputWrapper, { backgroundColor: colors.backgroundSecondary }]}>
+                        <Feather name="search" size={18} color={colors.textTertiary} />
+                        <TextInput
+                            style={[styles.searchInput, { color: colors.text }]}
+                            placeholder="Search messages..."
+                            placeholderTextColor={colors.textTertiary}
+                            value={conversationSearch}
+                            onChangeText={setConversationSearch}
+                        />
+                        {conversationSearch.length > 0 && (
+                            <Pressable onPress={() => setConversationSearch('')}>
+                                <Feather name="x" size={18} color={colors.textTertiary} />
+                            </Pressable>
+                        )}
+                    </View>
+                </View>
+
+                {isLoading ? (
+                    <View style={styles.loadingContainer}>
+                        <ActivityIndicator color={colors.text} size="large" />
+                    </View>
+                ) : filteredConversations.length > 0 ? (
+                    <FlatList
+                        data={filteredConversations}
+                        keyExtractor={(item) => item.id}
+                        renderItem={({ item }) => (
+                            <Pressable style={[styles.conversationItem, { borderBottomColor: colors.border }]} onPress={() => setActiveConversation(item)}>
+                                <View style={styles.avatarContainer}>
+                                    {item.otherUser?.avatar_url ? (
+                                        <Image source={{ uri: item.otherUser.avatar_url }} style={styles.avatar} />
+                                    ) : (
+                                        <View style={[styles.avatarPlaceholder, { backgroundColor: colors.backgroundTertiary }]}>
+                                            <Feather name="user" size={24} color={colors.textTertiary} />
+                                        </View>
+                                    )}
+                                </View>
+                                <View style={styles.conversationInfo}>
+                                    <View style={styles.topRow}>
+                                        <Text style={[styles.username, { color: colors.text }]}>{item.otherUser?.username || 'User'}</Text>
+                                        {item.lastMessage && (
+                                            <Text style={[styles.timestamp, { color: colors.textTertiary }]}>{formatTime(item.lastMessage.created_at)}</Text>
+                                        )}
+                                    </View>
+                                    <Text style={[styles.lastMessage, { color: colors.textSecondary }]} numberOfLines={1}>
+                                        {item.lastMessage?.text || 'Start a conversation'}
+                                    </Text>
+                                </View>
+                            </Pressable>
+                        )}
+                    />
+                ) : (
+                    <View style={styles.emptyContainer}>
+                        <Feather name="message-circle" size={64} color={colors.textTertiary} />
+                        <Text style={[styles.emptyText, { color: colors.text }]}>No messages yet</Text>
+                        <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>Start a conversation with a stylist</Text>
+                        <Button
+                            variant="primary"
+                            onPress={() => setShowNewMessageModal(true)}
+                            style={{ marginTop: 24 }}
+                        >
+                            Start Chat
+                        </Button>
+                    </View>
+                )}
+
+                {/* New Message Modal */}
+                <RNModal
+                    visible={showNewMessageModal}
+                    animationType="slide"
+                    transparent={true}
+                    onRequestClose={() => setShowNewMessageModal(false)}
+                >
+                    <Pressable style={styles.modalOverlay} onPress={() => setShowNewMessageModal(false)}>
+                        <Pressable
+                            style={[styles.newMessageModal, { backgroundColor: colors.background }]}
+                            onPress={(e) => e.stopPropagation()}
+                        >
+                            <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+                                <Text style={[styles.modalTitle, { color: colors.text }]}>New Message</Text>
+                                <Pressable onPress={() => {
+                                    setShowNewMessageModal(false);
+                                    setSearchQuery('');
+                                    setSearchResults([]);
+                                }}>
+                                    <Feather name="x" size={24} color={colors.text} />
+                                </Pressable>
+                            </View>
+
+                            <View style={styles.searchContainer}>
+                                <Input
+                                    placeholder="Search users..."
+                                    value={searchQuery}
+                                    onChangeText={(text) => {
+                                        setSearchQuery(text);
+                                        searchUsers(text);
+                                    }}
+                                    autoFocus
+                                    leftIcon={<Feather name="search" size={18} color={colors.textTertiary} />}
+                                />
+                            </View>
+
+                            <FlatList
+                                data={searchResults}
+                                keyExtractor={(item) => item.id}
+                                renderItem={({ item }) => (
+                                    <Pressable style={[styles.searchResultItem, { borderBottomColor: colors.border }]} onPress={() => handleSelectUser(item)}>
+                                        {item.avatar_url ? (
+                                            <Image source={{ uri: item.avatar_url }} style={styles.searchAvatar} />
+                                        ) : (
+                                            <View style={[styles.searchAvatarPlaceholder, { backgroundColor: colors.backgroundTertiary }]}>
+                                                <Feather name="user" size={18} color={colors.textTertiary} />
+                                            </View>
+                                        )}
+                                        <View style={styles.searchUserInfo}>
+                                            <Text style={[styles.searchUsername, { color: colors.text }]}>{item.username}</Text>
+                                            <Text style={[styles.searchHandle, { color: colors.textSecondary }]}>{item.handle}</Text>
+                                        </View>
+                                    </Pressable>
+                                )}
+                                ListEmptyComponent={
+                                    searchQuery.trim() ? (
+                                        <Text style={[styles.noResults, { color: colors.textSecondary }]}>
+                                            {searching ? 'Searching...' : 'No users found'}
+                                        </Text>
+                                    ) : null
+                                }
+                            />
+                        </Pressable>
+                    </Pressable>
+                </RNModal>
             </View>
 
-            {isLoading ? (
-                <View style={styles.loadingContainer}>
-                    <ActivityIndicator color="#fff" size="large" />
-                </View>
-            ) : conversations.length > 0 ? (
-                <FlatList
-                    data={conversations}
-                    keyExtractor={(item) => item.id}
-                    renderItem={({ item }) => (
-                        <Pressable style={styles.conversationItem} onPress={() => setActiveConversation(item)}>
-                            <View style={styles.avatarContainer}>
-                                {item.otherUser?.avatar_url ? (
-                                    <Image source={{ uri: item.otherUser.avatar_url }} style={styles.avatar} />
-                                ) : (
-                                    <View style={styles.avatarPlaceholder}>
-                                        <Feather name="user" size={24} color="#666" />
-                                    </View>
-                                )}
-                            </View>
-                            <View style={styles.conversationInfo}>
-                                <Text style={styles.username}>{item.otherUser?.username || 'User'}</Text>
-                                <Text style={styles.lastMessage} numberOfLines={1}>
-                                    {item.lastMessage?.text || 'Start a conversation'}
-                                </Text>
-                            </View>
-                            {item.lastMessage && (
-                                <Text style={styles.timestamp}>{formatTime(item.lastMessage.created_at)}</Text>
-                            )}
-                        </Pressable>
-                    )}
-                />
-            ) : (
-                <View style={styles.emptyContainer}>
-                    <Feather name="message-circle" size={64} color="#333" />
-                    <Text style={styles.emptyText}>No messages yet</Text>
-                    <Text style={styles.emptySubtext}>Start a conversation with a stylist</Text>
-                </View>
-            )}
-        </View>
+            {/* Stylist Verification Modal */}
+            <StylistModal
+                visible={showStylistModal}
+                onClose={() => setShowStylistModal(false)}
+            />
+        </>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#000',
-    },
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingTop: 60,
-        paddingHorizontal: 16,
-        paddingBottom: 12,
-        backgroundColor: '#000',
-        borderBottomWidth: 0.5,
-        borderBottomColor: '#222',
-    },
-    title: {
-        fontSize: 20,
-        fontWeight: '600',
-        color: '#fff',
-    },
-    loadingContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'transparent',
-    },
-    conversationItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 16,
-        borderBottomWidth: 0.5,
-        borderBottomColor: '#222',
-        backgroundColor: 'transparent',
-    },
-    avatarContainer: {
-        marginRight: 12,
-        backgroundColor: 'transparent',
-    },
-    avatar: {
-        width: 56,
-        height: 56,
-        borderRadius: 28,
-    },
-    avatarPlaceholder: {
-        width: 56,
-        height: 56,
-        borderRadius: 28,
-        backgroundColor: '#1a1a1a',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    conversationInfo: {
-        flex: 1,
-        backgroundColor: 'transparent',
-    },
-    username: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#fff',
-    },
-    lastMessage: {
-        fontSize: 14,
-        color: '#888',
-        marginTop: 2,
-    },
-    timestamp: {
-        fontSize: 12,
-        color: '#666',
-    },
-    emptyContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'transparent',
-    },
-    emptyText: {
-        fontSize: 18,
-        color: '#fff',
-        marginTop: 16,
-    },
-    emptySubtext: {
-        fontSize: 14,
-        color: '#666',
-        marginTop: 8,
-    },
-    // Chat styles
-    chatHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingTop: 60,
-        paddingHorizontal: 16,
-        paddingBottom: 12,
-        backgroundColor: '#000',
-        borderBottomWidth: 0.5,
-        borderBottomColor: '#222',
-    },
-    backButton: {
-        width: 40,
-    },
-    chatUserInfo: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'transparent',
-    },
-    chatAvatar: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-    },
-    chatAvatarPlaceholder: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        backgroundColor: '#222',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    chatUsername: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#fff',
-        marginLeft: 10,
-    },
-    messagesList: {
-        flex: 1,
-    },
-    messagesContent: {
-        padding: 16,
-    },
-    messageBubble: {
-        maxWidth: '80%',
-        padding: 12,
-        borderRadius: 18,
-        marginBottom: 8,
-    },
-    ownMessage: {
-        alignSelf: 'flex-end',
-        backgroundColor: '#fff',
-    },
-    otherMessage: {
-        alignSelf: 'flex-start',
-        backgroundColor: '#222',
-    },
-    messageText: {
-        fontSize: 15,
-        color: '#fff',
-        lineHeight: 20,
-    },
-    ownMessageText: {
-        color: '#000',
-    },
-    messageTime: {
-        fontSize: 10,
-        color: '#888',
-        marginTop: 4,
-        alignSelf: 'flex-end',
-    },
-    ownMessageTime: {
-        color: '#666',
-    },
-    emptyMessages: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingVertical: 60,
-        backgroundColor: 'transparent',
-    },
-    emptyMessagesText: {
-        fontSize: 16,
-        color: '#888',
-    },
-    emptyMessagesSubtext: {
-        fontSize: 14,
-        color: '#666',
-        marginTop: 4,
-    },
-    inputContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 12,
-        paddingBottom: 30,
-        borderTopWidth: 0.5,
-        borderTopColor: '#222',
-        backgroundColor: '#000',
-    },
-    messageInput: {
-        flex: 1,
-        backgroundColor: '#1a1a1a',
-        borderRadius: 20,
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        color: '#fff',
-        fontSize: 15,
-        maxHeight: 100,
-    },
-    sendButton: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: '#fff',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginLeft: 8,
-    },
-    sendButtonDisabled: {
-        backgroundColor: '#222',
-    },
+    container: { flex: 1 },
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 12, paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: 1 },
+    headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    title: { fontSize: 24, fontWeight: '800', fontFamily: 'Inter_900Black' },
+    verifyButton: { borderRadius: 16, overflow: 'hidden' },
+    verifyButtonGradient: { width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
+    iconButton: { padding: 4 },
+    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+
+    // Search bar for conversations
+    searchContainer: { paddingHorizontal: 20, paddingVertical: 10 },
+    searchInputWrapper: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, gap: 10 },
+    searchInput: { flex: 1, fontSize: 15, fontFamily: 'Inter_400Regular' },
+
+    // Conversation List
+    conversationItem: { flexDirection: 'row', padding: 16, borderBottomWidth: 1, alignItems: 'center' },
+    avatarContainer: { marginRight: 12 },
+    avatar: { width: 56, height: 56, borderRadius: 28 },
+    avatarPlaceholder: { width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center' },
+    conversationInfo: { flex: 1 },
+    topRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
+    username: { fontSize: 16, fontWeight: '700', fontFamily: 'Inter_700Bold' },
+    timestamp: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+    lastMessage: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+
+    emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+    emptyText: { fontSize: 18, fontWeight: '700', marginTop: 16, fontFamily: 'Inter_700Bold' },
+    emptySubtext: { fontSize: 14, marginTop: 8, textAlign: 'center', fontFamily: 'Inter_400Regular' },
+
+    // Chat
+    chatHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 12, paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1 },
+    backButton: { width: 40 },
+    chatUserInfo: { flexDirection: 'row', alignItems: 'center' },
+    chatAvatar: { width: 32, height: 32, borderRadius: 16 },
+    chatAvatarPlaceholder: { width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
+    chatUsername: { fontSize: 16, fontWeight: '700', marginLeft: 10, fontFamily: 'Inter_700Bold' },
+    messagesList: { flex: 1 },
+    messagesContent: { padding: 16, paddingBottom: 32 },
+    messageBubble: { maxWidth: '75%', padding: 12, borderRadius: 18, marginBottom: 8 },
+    messageText: { fontSize: 15, lineHeight: 20, fontFamily: 'Inter_400Regular' },
+    messageTime: { fontSize: 10, marginTop: 4, alignSelf: 'flex-end', fontFamily: 'Inter_400Regular' },
+
+    emptyMessages: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 60 },
+    emptyMessagesText: { fontSize: 16, fontFamily: 'Inter_600SemiBold' },
+    emptyMessagesSubtext: { fontSize: 14, marginTop: 4, fontFamily: 'Inter_400Regular' },
+
+    inputContainer: { flexDirection: 'row', alignItems: 'center', padding: 12, borderTopWidth: 1 },
+    messageInput: { flex: 1, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, maxHeight: 100, borderWidth: 1, fontFamily: 'Inter_400Regular', paddingTop: 10 },
+    sendButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginLeft: 8 },
+
+    // Modal
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+    newMessageModal: { borderTopLeftRadius: 20, borderTopRightRadius: 20, height: '80%', paddingHorizontal: 20, paddingVertical: 16 },
+    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 16, borderBottomWidth: 1, marginBottom: 16 },
+    modalTitle: { fontSize: 18, fontWeight: '700', fontFamily: 'Inter_700Bold' },
+    modalSearchContainer: { marginBottom: 16 },
+    searchResultItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1 },
+    searchAvatar: { width: 44, height: 44, borderRadius: 22 },
+    searchAvatarPlaceholder: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
+    searchUserInfo: { marginLeft: 12 },
+    searchUsername: { fontSize: 16, fontWeight: '700', fontFamily: 'Inter_700Bold' },
+    searchHandle: { fontSize: 14, fontFamily: 'Inter_500Medium' },
+    noResults: { textAlign: 'center', paddingVertical: 20, fontFamily: 'Inter_400Regular' },
 });

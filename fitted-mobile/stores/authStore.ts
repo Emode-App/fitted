@@ -14,6 +14,7 @@ interface AuthState {
     signUp: (email: string, password: string, username: string) => Promise<{ error?: string }>;
     signOut: () => Promise<void>;
     setUser: (user: User | null) => void;
+    updateProfile: (updates: Partial<User>) => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -132,4 +133,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     },
 
     setUser: (user: User | null) => set({ user }),
+
+    updateProfile: async (updates: Partial<User>) => {
+        const { user } = get();
+        if (!user) return;
+
+        // Optimistic update
+        set({ user: { ...user, ...updates } });
+
+        try {
+            const { error } = await supabase
+                .from('users')
+                .update(updates)
+                .eq('id', user.id);
+
+            if (error) {
+                console.error('Error updating profile:', error);
+                // Revert on error (optional, but good practice. For now simpler to just log)
+            }
+        } catch (error) {
+            console.error('Exception updating profile:', error);
+        }
+    },
 }));

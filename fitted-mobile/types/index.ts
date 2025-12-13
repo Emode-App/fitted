@@ -1,4 +1,4 @@
-/ Types adapted from the original Vite project for React Native
+// Types adapted from the original Vite project for React Native
 
 export interface User {
     id: string;

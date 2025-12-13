@@ -9,8 +9,17 @@ import { Text, View } from '@/components/Themed';
 import { useNotificationsStore } from '@/stores/notificationsStore';
 import { useAuthStore } from '@/stores/authStore';
 import { Notification } from '@/types';
+import { useTheme } from '@/hooks/useTheme';
 
-interface NotificationWithDetails extends Notification {
+interface NotificationWithDetails {
+    id: string;
+    user_id: string;
+    actor_id: string;
+    type: 'like' | 'comment' | 'follow';
+    post_id?: string;
+    comment_id?: string;
+    is_read: boolean;
+    created_at: string;
     actor: {
         id: string;
         username: string;
@@ -20,9 +29,11 @@ interface NotificationWithDetails extends Notification {
         id: string;
         generated_image: string;
     };
+    content?: string; // Comment text for comment notifications
 }
 
 export default function ActivityScreen() {
+    const { colors } = useTheme();
     const [refreshing, setRefreshing] = useState(false);
     const user = useAuthStore((state) => state.user);
     const notifications = useNotificationsStore((state) => state.notifications) as NotificationWithDetails[];
@@ -35,9 +46,12 @@ export default function ActivityScreen() {
         useCallback(() => {
             if (user?.id) {
                 fetchNotifications(user.id);
+                // Mark all as read when viewing the activity screen
+                markAllAsRead(user.id);
             }
         }, [user])
     );
+
 
     const onRefresh = async () => {
         if (!user?.id) return;
@@ -54,10 +68,12 @@ export default function ActivityScreen() {
 
         // Navigate based on type
         if (notification.type === 'follow') {
+            // Follow notification -> go to follower's profile
             router.push({ pathname: '/user/[id]', params: { id: notification.actor_id } });
         } else if (notification.post_id) {
-            // For likes/comments, could navigate to post detail
-            // For now, navigate to actor's profile
+            // Like/Comment notification -> go to the post
+            // TODO: Navigate to post detail screen when implemented
+            // For now navigate to the post owner's profile (which shows their posts)
             router.push({ pathname: '/user/[id]', params: { id: notification.actor_id } });
         }
     };
@@ -89,6 +105,12 @@ export default function ActivityScreen() {
             case 'like':
                 return 'liked your post';
             case 'comment':
+                if (notification.content) {
+                    const truncated = notification.content.length > 50
+                        ? notification.content.slice(0, 50) + '...'
+                        : notification.content;
+                    return `commented: "${truncated}"`;
+                }
                 return 'commented on your post';
             case 'follow':
                 return 'started following you';
@@ -112,27 +134,36 @@ export default function ActivityScreen() {
 
     const renderNotification = ({ item }: { item: NotificationWithDetails }) => (
         <Pressable
-            style={[styles.notificationItem, !item.is_read && styles.unread]}
+            style={[
+                styles.notificationItem,
+                { borderBottomColor: colors.border },
+                !item.is_read && { backgroundColor: colors.backgroundSecondary }
+            ]}
             onPress={() => handleNotificationPress(item)}
         >
             <Pressable onPress={() => handleActorPress(item.actor_id)}>
                 {item.actor?.avatar_url ? (
                     <Image source={{ uri: item.actor.avatar_url }} style={styles.avatar} />
                 ) : (
-                    <View style={styles.avatarPlaceholder}>
-                        <Feather name="user" size={18} color="#666" />
+                    <View style={[styles.avatarPlaceholder, { backgroundColor: colors.backgroundTertiary }]}>
+                        <Feather name="user" size={18} color={colors.textSecondary} />
                     </View>
                 )}
             </Pressable>
 
             <View style={styles.content}>
-                <Text style={styles.text}>
-                    <Text style={styles.username}>{item.actor?.username || 'Someone'}</Text>
+                <Text style={[styles.text, { color: colors.text }]}>
+                    <Text
+                        style={[styles.username, { color: colors.text }]}
+                        onPress={() => handleActorPress(item.actor_id)}
+                    >
+                        {item.actor?.username || 'Someone'}
+                    </Text>
                     {' '}{getNotificationText(item)}
                 </Text>
                 <View style={styles.meta}>
                     {getNotificationIcon(item.type)}
-                    <Text style={styles.time}>{formatTime(item.created_at)}</Text>
+                    <Text style={[styles.time, { color: colors.textSecondary }]}>{formatTime(item.created_at)}</Text>
                 </View>
             </View>
 
@@ -144,24 +175,24 @@ export default function ActivityScreen() {
 
     if (isLoading && notifications.length === 0) {
         return (
-            <View style={styles.container}>
-                <View style={styles.header}>
-                    <Text style={styles.title}>Activity</Text>
+            <View style={[styles.container, { backgroundColor: colors.background }]}>
+                <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
+                    <Text style={[styles.title, { color: colors.text }]}>Activity</Text>
                 </View>
                 <View style={styles.loadingContainer}>
-                    <ActivityIndicator color="#fff" size="large" />
+                    <ActivityIndicator color={colors.text} size="large" />
                 </View>
             </View>
         );
     }
 
     return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.title}>Activity</Text>
+        <View style={[styles.container, { backgroundColor: colors.background }]}>
+            <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
+                <Text style={[styles.title, { color: colors.text }]}>Activity</Text>
                 {notifications.some(n => !n.is_read) && (
                     <Pressable onPress={() => user && markAllAsRead(user.id)}>
-                        <Text style={styles.markRead}>Mark all read</Text>
+                        <Text style={[styles.markRead, { color: colors.primary }]}>Mark all read</Text>
                     </Pressable>
                 )}
             </View>
@@ -174,14 +205,14 @@ export default function ActivityScreen() {
                     <RefreshControl
                         refreshing={refreshing}
                         onRefresh={onRefresh}
-                        tintColor="#fff"
+                        tintColor={colors.text}
                     />
                 }
                 ListEmptyComponent={
                     <View style={styles.emptyContainer}>
-                        <Feather name="bell-off" size={48} color="#333" />
-                        <Text style={styles.emptyTitle}>No notifications yet</Text>
-                        <Text style={styles.emptySubtitle}>
+                        <Feather name="bell-off" size={48} color={colors.textSecondary} />
+                        <Text style={[styles.emptyTitle, { color: colors.text }]}>No notifications yet</Text>
+                        <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
                             When someone likes, comments, or follows you, it'll show up here
                         </Text>
                     </View>
@@ -195,7 +226,6 @@ export default function ActivityScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#000',
     },
     header: {
         flexDirection: 'row',
@@ -204,17 +234,13 @@ const styles = StyleSheet.create({
         paddingTop: 60,
         paddingHorizontal: 16,
         paddingBottom: 12,
-        backgroundColor: '#000',
         borderBottomWidth: 0.5,
-        borderBottomColor: '#222',
     },
     title: {
         fontSize: 24,
         fontWeight: 'bold',
-        color: '#fff',
     },
     markRead: {
-        color: '#0095f6',
         fontSize: 14,
     },
     loadingContainer: {
@@ -227,10 +253,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         padding: 16,
         borderBottomWidth: 0.5,
-        borderBottomColor: '#222',
     },
     unread: {
-        backgroundColor: 'rgba(255,255,255,0.03)',
+        // Handled inline with colors.backgroundSecondary
     },
     avatar: {
         width: 44,
@@ -241,7 +266,6 @@ const styles = StyleSheet.create({
         width: 44,
         height: 44,
         borderRadius: 22,
-        backgroundColor: '#1a1a1a',
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -251,7 +275,6 @@ const styles = StyleSheet.create({
         backgroundColor: 'transparent',
     },
     text: {
-        color: '#fff',
         fontSize: 14,
         lineHeight: 20,
     },
@@ -266,7 +289,6 @@ const styles = StyleSheet.create({
         backgroundColor: 'transparent',
     },
     time: {
-        color: '#666',
         fontSize: 12,
     },
     postThumb: {
@@ -283,13 +305,11 @@ const styles = StyleSheet.create({
         paddingHorizontal: 40,
     },
     emptyTitle: {
-        color: '#fff',
         fontSize: 18,
         fontWeight: '600',
         marginTop: 16,
     },
     emptySubtitle: {
-        color: '#666',
         fontSize: 14,
         textAlign: 'center',
         marginTop: 8,
