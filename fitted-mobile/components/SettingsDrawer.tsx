@@ -27,7 +27,9 @@ import {
     TwoFactorPage,
     LoginActivityPage,
     FAQsPage,
-    ContactPage
+    ContactPage,
+    DraftsPage,
+    DraftItem,
 } from './SettingsPages';
 
 // View Types
@@ -40,7 +42,8 @@ type SettingsView =
     | '2fa'
     | 'loginActivity'
     | 'faqs'
-    | 'contact';
+    | 'contact'
+    | 'drafts';
 
 interface SettingsDrawerProps {
     visible: boolean;
@@ -151,6 +154,13 @@ export default function SettingsDrawer({ visible, onClose }: SettingsDrawerProps
                             isDark={isDark}
                         />
                         <MenuItem
+                            icon="edit-3"
+                            label="Drafts"
+                            onPress={() => setCurrentView('drafts')}
+                            colors={colors}
+                            isDark={isDark}
+                        />
+                        <MenuItem
                             icon="lock"
                             label="Privacy & Security"
                             onPress={() => setCurrentView('privacy')}
@@ -229,6 +239,12 @@ export default function SettingsDrawer({ visible, onClose }: SettingsDrawerProps
             case 'loginActivity': return <LoginActivityPage onBack={() => setCurrentView('privacy')} />;
             case 'faqs': return <FAQsPage onBack={() => setCurrentView('help')} />;
             case 'contact': return <ContactPage onBack={() => setCurrentView('help')} />;
+            case 'drafts': return (
+                <DraftsPage
+                    onBack={() => setCurrentView('menu')}
+                    onCloseDrawer={onClose}
+                />
+            );
 
             default: return renderMenu();
         }

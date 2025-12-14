@@ -18,7 +18,7 @@ import { BlurView } from 'expo-blur';
 import { Feather } from '@expo/vector-icons';
 import Animated, { FadeIn, SlideInDown, ZoomIn } from 'react-native-reanimated';
 import { useTheme } from '@/hooks/useTheme';
-import { ThemeColors } from '@/constants/Colors';
+import { ThemeColors } from '@/constants/colors';
 
 // --- BUTTON ---
 

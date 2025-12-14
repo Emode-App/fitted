@@ -3,13 +3,16 @@ import { useEffect, useState, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
+import { decode } from 'base64-arraybuffer';
+import { Alert } from 'react-native';
 
 import { useAuthStore } from '@/stores/authStore';
 import { usePostsStore } from '@/stores/postsStore';
 import { supabase } from '@/services/supabase';
 import { Post } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
-import ProfileView from '@/components/ProfileView';
+import ProfileView, { Draft } from '@/components/ProfileView';
 import SettingsDrawer from '@/components/SettingsDrawer';
 
 export default function ProfileScreen() {
@@ -25,6 +28,7 @@ export default function ProfileScreen() {
     const [refreshing, setRefreshing] = useState(false);
     const [userPosts, setUserPosts] = useState<Post[]>([]);
     const [savedPosts, setSavedPosts] = useState<Post[]>([]);
+    const [drafts, setDrafts] = useState<Draft[]>([]);
     const [stats, setStats] = useState({ followers: 0, following: 0, fits: 0 });
 
     // Fetch profile if user is null but session exists
@@ -64,7 +68,19 @@ export default function ProfileScreen() {
         setUserPosts(posts);
 
         const saved = await fetchSavedPosts(user.id);
+
         setSavedPosts(saved);
+
+        // Fetch drafts
+        const { data: draftsData, error } = await supabase
+            .from('drafts')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('updated_at', { ascending: false });
+
+        if (draftsData) {
+            setDrafts(draftsData as Draft[]);
+        }
 
         // Get follower/following counts
         const [{ count: followers }, { count: following }] = await Promise.all([
@@ -104,6 +120,8 @@ export default function ProfileScreen() {
     };
 
     const handleAiFaceUpload = async () => {
+        if (!user?.id) return;
+
         try {
             const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ['images'],
@@ -113,11 +131,70 @@ export default function ProfileScreen() {
             });
 
             if (!result.canceled && result.assets[0]) {
-                // TODO: Upload to Supabase and update user.ai_face_url
-                alert('Face photo selected! Upload feature coming soon.');
+                const uri = result.assets[0].uri;
+
+                // Read file as base64
+                const base64 = await FileSystem.readAsStringAsync(uri, {
+                    encoding: FileSystem.EncodingType.Base64,
+                });
+
+                // Upload to Supabase Storage
+                const filename = `faces/${user.id}_face.jpg`;
+                const arrayBuffer = decode(base64);
+
+                const { error: uploadError } = await supabase.storage
+                    .from('avatars')
+                    .upload(filename, arrayBuffer, {
+                        contentType: 'image/jpeg',
+                        upsert: true, // Overwrite if exists
+                    });
+
+                if (uploadError) {
+                    console.error('Face upload error:', uploadError);
+                    Alert.alert('Upload Failed', 'Could not upload face photo. Please try again.');
+                    return;
+                }
+
+                // Get public URL
+                const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(filename);
+                const publicUrl = urlData.publicUrl;
+
+                // Update user record
+                const { error: updateError } = await supabase
+                    .from('users')
+                    .update({ ai_face_url: publicUrl })
+                    .eq('id', user.id);
+
+                if (updateError) {
+                    console.error('User update error:', updateError);
+                    Alert.alert('Update Failed', 'Could not save face photo. Please try again.');
+                    return;
+                }
+
+                // Refresh local state
+                setUser({ ...user, ai_face_url: publicUrl });
+                Alert.alert('Success', 'Face photo saved! It will be used for AI styling.');
             }
         } catch (error) {
-            console.error('Error picking image:', error);
+            console.error('Error uploading face:', error);
+            Alert.alert('Error', 'Something went wrong. Please try again.');
+        }
+    };
+
+    const handleDeleteDraft = async (id: string) => {
+        try {
+            const { error } = await supabase
+                .from('drafts')
+                .delete()
+                .eq('id', id);
+
+            if (error) throw error;
+
+            setDrafts(drafts.filter(d => d.id !== id));
+            Alert.alert('Draft Deleted');
+        } catch (error) {
+            console.error('Error deleting draft:', error);
+            Alert.alert('Error', 'Could not delete draft');
         }
     };
 
@@ -141,6 +218,8 @@ export default function ProfileScreen() {
                 stats={stats}
                 onEditProfile={() => router.push('/edit-profile')}
                 onAiFaceUpload={handleAiFaceUpload}
+                onDeleteDraft={handleDeleteDraft}
+                drafts={drafts}
                 onRefresh={onRefresh}
                 refreshing={refreshing}
             />

@@ -24,16 +24,27 @@ const { width } = Dimensions.get('window');
 const GRID_SIZE = (width - 4) / 3;
 const BANNER_HEIGHT = 128;
 
+export interface Draft {
+    id: string;
+    type: 'board' | 'post';
+    thumbnail_url: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
 interface ProfileViewProps {
     user: User;
     posts: Post[];
     savedPosts?: Post[];
+    drafts?: Draft[];
     isOwnProfile: boolean;
     isFollowing?: boolean;
     onFollow?: () => void;
     onMessage?: () => void;
     onEditProfile?: () => void;
     onAiFaceUpload?: () => void;
+    onDeleteDraft?: (id: string) => void;
+    onOpenDrafts?: () => void;
     onRefresh?: () => void;
     refreshing?: boolean;
     stats: {
@@ -47,12 +58,15 @@ export default function ProfileView({
     user,
     posts,
     savedPosts = [],
+    drafts = [],
     isOwnProfile,
     isFollowing,
     onFollow,
     onMessage,
     onEditProfile,
     onAiFaceUpload,
+    onDeleteDraft,
+    onOpenDrafts,
     onRefresh,
     refreshing = false,
     stats,
@@ -78,7 +92,7 @@ export default function ProfileView({
         }
     };
 
-    const renderPostThumbnail = ({ item }: { item: Post }) => (
+    const renderPostItem = ({ item }: { item: Post }) => (
         <Pressable
             style={styles.gridItem}
             onPress={() => router.push({ pathname: '/post/[id]', params: { id: item.id } })}
@@ -337,7 +351,7 @@ export default function ProfileView({
                     data={displayPosts}
                     keyExtractor={(item) => item.id}
                     numColumns={3}
-                    renderItem={renderPostThumbnail}
+                    renderItem={renderPostItem}
                     refreshControl={
                         <RefreshControl
                             refreshing={refreshing}

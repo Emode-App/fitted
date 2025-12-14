@@ -10,22 +10,25 @@ import {
     TouchableOpacity,
     Dimensions,
     Alert,
+    Pressable,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { Asset, useWardrobeStore } from '../stores/wardrobeStore';
 import { useTheme } from '@/hooks/useTheme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const NUM_COLUMNS = 4;
-const ITEM_MARGIN = 6;
-// Calculate item size based on full screen width minus padding
-const ITEM_SIZE = (SCREEN_WIDTH - 32 - ITEM_MARGIN * (NUM_COLUMNS * 2)) / NUM_COLUMNS;
-// Better calculation: (SCREEN_WIDTH - 40 - (NUM_COLUMNS-1)*ITEM_MARGIN) / NUM_COLUMNS
+const CONTAINER_PADDING = 16;
+const GAP = 12;
+// Calculate item size: container width minus padding and gaps divided by columns
+const CONTAINER_WIDTH = SCREEN_WIDTH - 32; // margin from parent
+const ITEM_SIZE = (CONTAINER_WIDTH - (CONTAINER_PADDING * 2) - (GAP * (NUM_COLUMNS - 1))) / NUM_COLUMNS;
 
 export default function AssetGrid({ onAssetSelect }: { onAssetSelect: (asset: Asset) => void }) {
-    const { colors } = useTheme();
-    const { folders, selectedFolderId, removeAsset } = useWardrobeStore();
+    const { colors, isDark } = useTheme();
+    const { folders, selectedFolderId, removeAsset, addAsset } = useWardrobeStore();
 
     const selectedFolder = folders.find(f => f.id === selectedFolderId);
     const assets = selectedFolder?.assets || [];
@@ -45,9 +48,28 @@ export default function AssetGrid({ onAssetSelect }: { onAssetSelect: (asset: As
         );
     };
 
+    const handleAddToFolder = async () => {
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 0.8,
+        });
+
+        if (!result.canceled && result.assets && result.assets.length > 0) {
+            const newAsset: Asset = {
+                id: Math.random().toString(36).substring(7),
+                url: result.assets[0].uri,
+                dateAdded: Date.now(),
+            };
+            addAsset(selectedFolderId, newAsset);
+        }
+    };
+
     const renderAsset = ({ item }: { item: Asset }) => (
         <TouchableOpacity
-            style={[styles.assetItem, { backgroundColor: colors.backgroundSecondary }]}
+            style={[
+                styles.assetItem,
+                { backgroundColor: isDark ? '#000' : '#fff' },
+            ]}
             onPress={() => onAssetSelect(item)}
             onLongPress={() => handleLongPress(item)}
             activeOpacity={0.8}
@@ -55,53 +77,110 @@ export default function AssetGrid({ onAssetSelect }: { onAssetSelect: (asset: As
             <Image
                 source={{ uri: item.url }}
                 style={styles.assetImage}
-                contentFit="contain" // Contain usually looks better for products
+                contentFit="contain"
             />
             <View style={[styles.addOverlay, { backgroundColor: colors.primary }]}>
-                <Feather name="plus" size={12} color={colors.primaryForeground} />
+                <Feather name="plus" size={12} color="#fff" />
             </View>
         </TouchableOpacity>
     );
 
-    if (assets.length === 0) {
-        return (
-            <View style={styles.emptyContainer}>
-                <Feather name="image" size={32} color={colors.textTertiary} />
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No items yet</Text>
-                <Text style={[styles.emptySubtext, { color: colors.textTertiary }]}>
-                    Items you add will appear here
-                </Text>
-            </View>
-        );
-    }
+    // Empty state with dashed border
+    const renderEmpty = () => (
+        <View style={[styles.emptyState, isDark && { borderColor: '#3f3f46' }]}>
+            <Feather name="image" size={24} color="#9ca3af" style={{ opacity: 0.5 }} />
+            <Text style={styles.emptyText}>No items yet</Text>
+        </View>
+    );
 
     return (
-        <FlatList
-            data={assets}
-            renderItem={renderAsset}
-            keyExtractor={(item) => item.id}
-            numColumns={NUM_COLUMNS}
-            contentContainerStyle={styles.gridContainer}
-            showsVerticalScrollIndicator={false}
-            scrollEnabled={false} // Let parent scroll handle this
-        />
+        <View style={[styles.container, isDark && { backgroundColor: '#18181b' }]}>
+            {/* Header Row */}
+            <View style={styles.headerRow}>
+                <Text style={[styles.headerLabel, isDark && { color: '#71717a' }]}>
+                    {selectedFolder?.name?.toUpperCase()} ASSETS
+                </Text>
+                <Pressable style={styles.addButton} onPress={handleAddToFolder}>
+                    <Feather name="plus" size={14} color={isDark ? '#fff' : '#000'} />
+                    <Text style={[styles.addButtonText, isDark && { color: '#fff' }]}>
+                        Add to {selectedFolder?.name}
+                    </Text>
+                </Pressable>
+            </View>
+
+            {/* Assets Grid or Empty State */}
+            {assets.length === 0 ? (
+                renderEmpty()
+            ) : (
+                <FlatList
+                    data={assets}
+                    renderItem={renderAsset}
+                    keyExtractor={(item) => item.id}
+                    numColumns={NUM_COLUMNS}
+                    contentContainerStyle={styles.gridContainer}
+                    showsVerticalScrollIndicator={false}
+                    scrollEnabled={false}
+                    columnWrapperStyle={styles.columnWrapper}
+                />
+            )}
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
+    container: {
+        backgroundColor: '#f9fafb',
+        borderRadius: 16,
+        padding: CONTAINER_PADDING,
+        marginHorizontal: 16,
+        marginTop: 8,
+        minHeight: 200,
+    },
+    headerRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    headerLabel: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#9ca3af',
+        letterSpacing: 0.5,
+        fontFamily: 'Inter_700Bold',
+    },
+    addButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    addButtonText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#000',
+        fontFamily: 'Inter_700Bold',
+    },
     gridContainer: {
-        paddingHorizontal: 0,
-        alignItems: 'flex-start',
+        gap: GAP,
+    },
+    columnWrapper: {
+        gap: GAP,
     },
     assetItem: {
-        width: 75, // Approximate
-        height: 75,
-        margin: ITEM_MARGIN,
+        width: ITEM_SIZE,
+        height: ITEM_SIZE,
         borderRadius: 12,
         overflow: 'hidden',
         justifyContent: 'center',
         alignItems: 'center',
-        padding: 4,
+        padding: 8,
+        borderWidth: 1,
+        borderColor: '#f3f4f6',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 2,
+        elevation: 1,
     },
     assetImage: {
         width: '100%',
@@ -117,21 +196,20 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
-    emptyContainer: {
+    emptyState: {
+        flex: 1,
+        borderWidth: 2,
+        borderStyle: 'dashed',
+        borderColor: '#e5e7eb',
+        borderRadius: 12,
         alignItems: 'center',
-        paddingVertical: 24,
-        paddingHorizontal: 16,
+        justifyContent: 'center',
+        paddingVertical: 40,
     },
     emptyText: {
-        fontSize: 14,
-        fontWeight: '600',
-        marginTop: 8,
-        fontFamily: 'Inter_600SemiBold',
-    },
-    emptySubtext: {
         fontSize: 12,
-        marginTop: 4,
-        textAlign: 'center',
+        color: '#9ca3af',
+        marginTop: 8,
         fontFamily: 'Inter_400Regular',
     },
 });

@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, Pressable, Alert } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import { router } from 'expo-router';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
+import { supabase } from '@/services/supabase';
 
 // --- Shared Components ---
 
@@ -444,6 +447,173 @@ export const ContactPage = ({ onBack }: { onBack: () => void }) => {
     );
 };
 
+// 12. Drafts Page
+export interface DraftItem {
+    id: string;
+    type: 'board' | 'post';
+    thumbnail_url: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+interface DraftsPageProps {
+    onBack: () => void;
+    onCloseDrawer?: () => void;
+}
+
+export const DraftsPage = ({ onBack, onCloseDrawer }: DraftsPageProps) => {
+    const { colors, isDark } = useTheme();
+    const user = useAuthStore((state) => state.user);
+    const [activeTab, setActiveTab] = useState<'board' | 'post'>('board');
+    const [drafts, setDrafts] = useState<DraftItem[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    // Handle selecting a draft - navigate directly to create screen
+    const handleSelectDraft = (draft: DraftItem) => {
+        if (onCloseDrawer) onCloseDrawer();
+        router.push({ pathname: '/(tabs)/create', params: { draftId: draft.id } });
+    };
+
+    // Fetch drafts directly from Supabase
+    useEffect(() => {
+        const fetchDrafts = async () => {
+            if (!user?.id) {
+                setLoading(false);
+                return;
+            }
+
+            const { data, error } = await supabase
+                .from('drafts')
+                .select('id, type, thumbnail_url, created_at, updated_at')
+                .eq('user_id', user.id)
+                .order('updated_at', { ascending: false });
+
+            if (data) {
+                setDrafts(data as DraftItem[]);
+            }
+            if (error) {
+                console.error('Error fetching drafts:', error);
+            }
+            setLoading(false);
+        };
+
+        fetchDrafts();
+    }, [user?.id]);
+
+    const filteredDrafts = drafts.filter(d => d.type === activeTab);
+
+    const handleDelete = async (draft: DraftItem) => {
+        Alert.alert(
+            'Delete Draft',
+            'Are you sure you want to delete this draft?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        const { error } = await supabase
+                            .from('drafts')
+                            .delete()
+                            .eq('id', draft.id);
+
+                        if (!error) {
+                            setDrafts(prev => prev.filter(d => d.id !== draft.id));
+                        }
+                    }
+                },
+            ]
+        );
+    };
+
+    if (loading) {
+        return (
+            <>
+                <Header title="Drafts" onBack={onBack} />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                    <Text style={{ color: colors.textSecondary }}>Loading...</Text>
+                </View>
+            </>
+        );
+    }
+
+    return (
+        <>
+            <Header title="Drafts" onBack={onBack} />
+
+            {/* Tabs */}
+            <View style={[styles.draftsTabsRow, { borderBottomColor: colors.border }]}>
+                <Pressable
+                    style={[styles.draftsTab, activeTab === 'board' && [styles.draftsTabActive, { borderBottomColor: colors.text }]]}
+                    onPress={() => setActiveTab('board')}
+                >
+                    <Feather name="layout" size={16} color={activeTab === 'board' ? colors.text : colors.textSecondary} />
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: activeTab === 'board' ? colors.text : colors.textSecondary }}>
+                        Boards
+                    </Text>
+                </Pressable>
+                <Pressable
+                    style={[styles.draftsTab, activeTab === 'post' && [styles.draftsTabActive, { borderBottomColor: colors.text }]]}
+                    onPress={() => setActiveTab('post')}
+                >
+                    <Feather name="image" size={16} color={activeTab === 'post' ? colors.text : colors.textSecondary} />
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: activeTab === 'post' ? colors.text : colors.textSecondary }}>
+                        Posts
+                    </Text>
+                </Pressable>
+            </View>
+
+            <ScrollView style={styles.scrollContent}>
+                {filteredDrafts.length === 0 ? (
+                    <View style={{ alignItems: 'center', paddingVertical: 60 }}>
+                        <Feather name={activeTab === 'board' ? 'layout' : 'image'} size={48} color={colors.textTertiary} />
+                        <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text, marginTop: 16 }}>
+                            No {activeTab === 'board' ? 'board' : 'post'} drafts
+                        </Text>
+                        <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center', paddingHorizontal: 32 }}>
+                            {activeTab === 'board' ? 'Start building a fit to save drafts' : 'Generate a fit to save post drafts'}
+                        </Text>
+                    </View>
+                ) : (
+                    <View style={{ gap: 12 }}>
+                        {filteredDrafts.map((draft) => (
+                            <Pressable
+                                key={draft.id}
+                                style={[styles.draftItem, { backgroundColor: isDark ? '#27272a' : '#f9fafb' }]}
+                                onPress={() => handleSelectDraft(draft)}
+                                onLongPress={() => handleDelete(draft)}
+                            >
+                                <View style={[styles.draftThumb, { backgroundColor: isDark ? '#18181b' : '#e5e7eb', overflow: 'hidden' }]}>
+                                    {draft.thumbnail_url ? (
+                                        <Image
+                                            source={{ uri: draft.thumbnail_url }}
+                                            style={{ width: '100%', height: '100%' }}
+                                            contentFit="cover"
+                                        />
+                                    ) : (
+                                        <Feather name={draft.type === 'board' ? 'layout' : 'image'} size={24} color={colors.textTertiary} />
+                                    )}
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>
+                                        {draft.type === 'board' ? 'Board Draft' : 'Post Draft'}
+                                    </Text>
+                                    <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                                        {new Date(draft.updated_at).toLocaleDateString()}
+                                    </Text>
+                                </View>
+                                <Pressable onPress={() => handleDelete(draft)} hitSlop={12}>
+                                    <Feather name="trash-2" size={18} color={colors.textTertiary} />
+                                </Pressable>
+                            </Pressable>
+                        ))}
+                    </View>
+                )}
+            </ScrollView>
+        </>
+    );
+};
+
 const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
@@ -541,5 +711,37 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         textTransform: 'uppercase',
         marginBottom: 6,
-    }
+    },
+    // Drafts page styles
+    draftsTabsRow: {
+        flexDirection: 'row',
+        borderBottomWidth: 1,
+    },
+    draftsTab: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 14,
+        borderBottomWidth: 2,
+        borderBottomColor: 'transparent',
+    },
+    draftsTabActive: {
+        borderBottomWidth: 2,
+    },
+    draftItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 12,
+        borderRadius: 12,
+        gap: 12,
+    },
+    draftThumb: {
+        width: 48,
+        height: 48,
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
 });
