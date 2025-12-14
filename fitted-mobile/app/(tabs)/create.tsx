@@ -1,14 +1,18 @@
-﻿import { StyleSheet, TextInput, Pressable, Alert, ActivityIndicator, Dimensions, Keyboard, TouchableWithoutFeedback, ScrollView, View as RNView, Modal } from 'react-native';
+﻿import { StyleSheet, TextInput, Pressable, Alert, ActivityIndicator, Dimensions, Keyboard, TouchableWithoutFeedback, View as RNView, Modal } from 'react-native';
 import { useState, useRef, useEffect } from 'react';
 import ViewShot, { captureRef } from 'react-native-view-shot';
-import { Feather } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useNavigation } from '@react-navigation/native';
 import * as ImageManipulator from 'expo-image-manipulator';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, runOnJS } from 'react-native-reanimated';
-import { Gesture, GestureDetector, GestureHandlerRootView, FlatList } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, GestureHandlerRootView, FlatList, ScrollView } from 'react-native-gesture-handler';
 import { Image } from 'expo-image';
-// Removed: import { BlurView } from 'expo-blur'; - unused in snippet
+import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
+import MaskedView from '@react-native-masked-view/masked-view';
+import LoadingSpinner from '@/components/LoadingSpinner';
 
 import { Text, View } from '@/components/Themed';
 import { useAuthStore } from '@/stores/authStore';
@@ -271,6 +275,9 @@ export default function CreateScreen() {
     const [cropItem, setCropItem] = useState<CanvasItem | null>(null);
     const [showProductSearch, setShowProductSearch] = useState(false);
     const [facePhotoUri, setFacePhotoUri] = useState<string | null>(null);
+    const params = useLocalSearchParams();
+    const draftId = params.draftId as string;
+    const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
 
     // NEW: Upload/Search toggle (for top tabs)
     const [uploadMode, setUploadMode] = useState<'upload' | 'search'>('upload');
@@ -321,6 +328,7 @@ export default function CreateScreen() {
 
     // Ref for capturing canvas as image
     const canvasRef = useRef<RNView>(null);
+    const previewBoardRef = useRef<RNView>(null); // Ref for capturing the board in preview step (Step 2)
 
     // Wardrobe store action
     const addAssetToWardrobe = useWardrobeStore((state) => state.addAsset);
@@ -328,6 +336,64 @@ export default function CreateScreen() {
 
     // Camera Permissions
     const [cameraPermission, requestCameraPermission] = ImagePicker.useCameraPermissions();
+
+    const navigation = useNavigation();
+
+    // Note: Tab navigation cannot be intercepted/prevented in React Navigation
+    // The unsaved work prompt is shown when user explicitly taps "Reset" or "New Fit"
+
+    // Auto-load stored face photo from user profile
+    useEffect(() => {
+        if (user?.ai_face_url && !facePhotoUri && !draftId) {
+            setFacePhotoUri(user.ai_face_url);
+        }
+    }, [user?.ai_face_url, draftId]);
+
+    // Hydrate Draft Logic - runs when draftId param changes OR when it differs from currentDraftId
+    useEffect(() => {
+        // Skip if no draftId param or no user
+        if (!draftId || !user) return;
+
+        // Skip if we already have this draft loaded
+        if (draftId === currentDraftId) return;
+
+        const loadDraft = async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('drafts')
+                    .select('*')
+                    .eq('id', draftId)
+                    .single();
+
+                if (error) throw error;
+                if (data && data.data) {
+                    const d = data.data;
+                    // Set the current draft ID for future saves
+                    setCurrentDraftId(draftId);
+                    // Hydrate state
+                    if (d.currentStep) setCurrentStep(d.currentStep);
+                    if (d.canvasItems) setCanvasItems(d.canvasItems);
+                    if (d.caption) setCaption(d.caption);
+                    if (d.facePhotoUri) setFacePhotoUri(d.facePhotoUri);
+                    if (d.sceneDescription) setSceneDescription(d.sceneDescription);
+                    if (d.uploadMode) setUploadMode(d.uploadMode);
+                    if (d.bottomTab) setBottomTab(d.bottomTab);
+                    if (d.keepFrames !== undefined) setKeepFrames(d.keepFrames);
+                    if (d.musicTrack) setMusicTrack(d.musicTrack);
+                    if (d.itemLinks) setItemLinks(d.itemLinks);
+                    if (d.generatedImageUri) setGeneratedImageUri(d.generatedImageUri);
+                    if (d.capturedBoardUri) setCapturedBoardUri(d.capturedBoardUri);
+                    if (d.selectedBackground) setSelectedBackground(d.selectedBackground);
+
+                    Alert.alert('Draft Loaded', 'Resumed from saved draft.');
+                }
+            } catch (error) {
+                console.error('Error loading draft:', error);
+                Alert.alert('Error', 'Could not load draft.');
+            }
+        };
+        loadDraft();
+    }, [draftId, user, currentDraftId]);
 
     const handleTakePicture = async () => {
         if (!cameraPermission?.granted) {
@@ -446,7 +512,12 @@ export default function CreateScreen() {
         setCurrentStep(1);
         setCanvasItems([]);
         setCaption('');
-        setFacePhotoUri(null);
+        // Preserve the stored face from profile, don't clear it
+        if (user?.ai_face_url) {
+            setFacePhotoUri(user.ai_face_url);
+        } else {
+            setFacePhotoUri(null);
+        }
         setSceneDescription('');
         setUploadMode('upload');
         setBottomTab('items');
@@ -459,6 +530,10 @@ export default function CreateScreen() {
         setGeneratedImageUri(null);
         setCapturedBoardUri(null);
         setPreviewSlide(0);
+        setSelectedBackground(DEFAULT_BACKGROUND);
+        setCurrentDraftId(null); // Clear draft ID when starting fresh
+        // Clear the URL param so the draft doesn't re-load
+        router.setParams({ draftId: undefined });
     };
 
     // Convert image URI to base64
@@ -493,6 +568,11 @@ export default function CreateScreen() {
 
     // Handle AI outfit generation
     const handleGenerateOutfit = async () => {
+        // Debounce - prevent multiple overlapping generations
+        if (isGenerating) {
+            return;
+        }
+
         if (canvasItems.length === 0) {
             Alert.alert('Error', 'Please add at least one clothing item');
             return;
@@ -562,6 +642,109 @@ export default function CreateScreen() {
             Alert.alert('Generation Failed', error.message || 'Could not generate outfit. Please try again.');
         } finally {
             setIsGenerating(false);
+        }
+    };
+
+    const handleSaveDraft = async () => {
+        if (!user) {
+            Alert.alert('Sign In Needed', 'Please sign in to save drafts.');
+            return;
+        }
+
+        try {
+            const draftType = currentStep === 1 ? 'board' : 'post';
+
+            // Capture thumbnail
+            let thumbnailBase64 = null;
+            if (draftType === 'board' && canvasRef.current && canvasItems.length > 0) {
+                // Briefly hide controls for capture
+                setIsCapturing(true);
+                await new Promise(resolve => setTimeout(resolve, 100)); // Short delay for render
+                try {
+                    const uri = await captureRef(canvasRef, { format: 'jpg', quality: 0.5, result: 'tmpfile' });
+                    thumbnailBase64 = await imageToBase64(uri);
+                } catch (e) {
+                    console.warn('Draft thumbnail capture failed', e);
+                } finally {
+                    setIsCapturing(false);
+                }
+            } else if (draftType === 'post' && generatedImageUri) {
+                thumbnailBase64 = generatedImageUri; // Already a data URI or we can use it directly
+            }
+
+            const draftData = {
+                currentStep,
+                canvasItems,
+                caption,
+                facePhotoUri,
+                sceneDescription,
+                uploadMode,
+                bottomTab,
+                keepFrames,
+                musicTrack,
+                itemLinks,
+                generatedImageUri,
+                capturedBoardUri,
+                selectedBackground,
+            };
+
+            const payload = {
+                user_id: user.id,
+                type: draftType,
+                data: draftData,
+                thumbnail_url: thumbnailBase64, // Storing base64 directly in simpler MVP, or upload to storage if too large. For drafts, base64 thumb is okay-ish but storage is better. Let's upload thumb if it's large.
+                updated_at: new Date().toISOString(),
+            };
+
+            // For MVP, letting thumbnail be base64 if small enough, but better to upload.
+            // Let's standardise: upload thumbnail to drafts bucket or just use what we have.
+            // To save time/complexity, I'll store the text. If it's too big, Supabase might complain.
+            // Actually, let's just upload the thumbnail to 'avatars' (or a new 'drafts' bucket) to be safe? 
+            // Or just 'posts' bucket since it's temp? 'posts' is public.
+            // Let's skip thumbnail upload complexity for this specific step and just store base64 in the text field if usage is low. 
+            // Actually, `thumbnail_url` expects a URL. I should upload it.
+
+            if (thumbnailBase64) {
+                const filename = `drafts/${user.id}_${Date.now()}_thumb.jpg`;
+                // Strip data URI prefix if present (uploadImage expects raw base64)
+                let rawBase64 = thumbnailBase64;
+                if (thumbnailBase64.includes(',')) {
+                    rawBase64 = thumbnailBase64.split(',')[1];
+                }
+                const publicUrl = await uploadImage('posts', filename, rawBase64);
+                if (publicUrl) payload.thumbnail_url = publicUrl;
+            }
+
+            // Use currentDraftId to decide insert vs update
+            if (currentDraftId) {
+                // Update existing draft
+                const { error } = await supabase
+                    .from('drafts')
+                    .update(payload)
+                    .eq('id', currentDraftId);
+
+                if (error) throw error;
+                Alert.alert('Draft Updated', 'Your draft has been updated.');
+            } else {
+                // Insert new draft
+                const { data, error } = await supabase
+                    .from('drafts')
+                    .insert(payload)
+                    .select('id')
+                    .single();
+
+                if (error) throw error;
+
+                // Store the new draft ID for future saves
+                if (data?.id) {
+                    setCurrentDraftId(data.id);
+                }
+                Alert.alert('Draft Saved', 'Your progress has been saved.');
+            }
+
+        } catch (error) {
+            console.error('Save draft error:', error);
+            Alert.alert('Save Failed', 'Could not save draft.');
         }
     };
 
@@ -722,61 +905,28 @@ export default function CreateScreen() {
         ));
     };
 
-    const uploadImage = async (uri: string): Promise<string | null> => {
-        if (!uri) {
-            console.warn('uploadImage called with empty URI');
+    const uploadImage = async (bucket: string, filename: string, base64Data: string): Promise<string | null> => {
+        if (!base64Data) {
+            console.warn('uploadImage called with empty base64Data');
             return null;
         }
 
-        // Truncate log for long data URIs
-        const logUri = uri.length > 100 ? `${uri.substring(0, 100)}...` : uri;
-        console.log('Uploading image from URI:', logUri);
-
         try {
-            let arrayBuffer: ArrayBuffer;
+            const arrayBuffer = decode(base64Data);
 
-            // Check if this is a remote URL
-            if (uri.startsWith('http')) {
-                const response = await fetch(uri);
-                const blob = await response.blob();
-                arrayBuffer = await new Response(blob).arrayBuffer();
-            }
-            // Check if this is a Data URI (base64)
-            else if (uri.startsWith('data:')) {
-                const base64Data = uri.split(',')[1];
-                const { decode } = require('base64-arraybuffer');
-                arrayBuffer = decode(base64Data);
-            }
-            // Local file
-            else {
-                // Local file - verify it exists
-                const fileInfo = await FileSystem.getInfoAsync(uri);
-                if (!fileInfo.exists) {
-                    throw new Error(`File not found at ${logUri}`);
-                }
-
-                const base64Data = await FileSystem.readAsStringAsync(uri, {
-                    encoding: FileSystem.EncodingType.Base64,
-                });
-                const { decode } = require('base64-arraybuffer');
-                arrayBuffer = decode(base64Data);
-            }
-
-            const fileName = `${user?.id}/${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
             const { data, error } = await supabase.storage
-                .from('posts')
-                .upload(fileName, arrayBuffer, {
+                .from(bucket)
+                .upload(filename, arrayBuffer, {
                     contentType: 'image/jpeg',
                     upsert: false,
                 });
 
             if (error) throw error;
 
-            const { data: urlData } = supabase.storage.from('posts').getPublicUrl(fileName);
+            const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(filename);
             return urlData.publicUrl;
         } catch (error) {
             console.error('Upload error:', error);
-            // If it fails, return the original URI if it was remote? No, return null.
             return null;
         }
     };
@@ -787,9 +937,38 @@ export default function CreateScreen() {
             return;
         }
 
-        // Use generated image if available, otherwise use first canvas item
-        const imageToUpload = generatedImageUri || canvasItems[0]?.url;
-        if (!imageToUpload) {
+        if (uploading) return;
+
+        // If we are on Step 2 (Preview) and the user might have toggled "Keep Frames",
+        // we should re-capture the board image from the preview view to ensure
+        // the final post matches what they see (frames on/off).
+        let finalBoardImageUri = capturedBoardUri;
+
+        if (currentStep === 2 && previewBoardRef.current) {
+            try {
+                // We only need to re-capture if we're essentially looking at the board or if "Keep frames" matters.
+                // Use a timeout to prevent infinite hanging if captureRef fails to resolve
+                const capturePromise = captureRef(previewBoardRef, {
+                    format: 'jpg',
+                    quality: 0.9,
+                    result: 'tmpfile',
+                });
+
+                const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Capture timed out')), 2500)
+                );
+
+                const newBoardUri = await Promise.race([capturePromise, timeoutPromise]) as string;
+
+                console.log('Recaptured board from preview:', newBoardUri);
+                finalBoardImageUri = newBoardUri;
+            } catch (err) {
+                console.warn('Failed to recapture preview board (using original):', err);
+                // Fallback to original capture if this fails
+            }
+        }
+
+        if (!generatedImageUri && !finalBoardImageUri) {
             Alert.alert('Error', 'No image to publish');
             return;
         }
@@ -797,23 +976,40 @@ export default function CreateScreen() {
         setUploading(true);
 
         try {
-            // Upload the generated/selected image
-            const imageUrl = await uploadImage(imageToUpload);
+            // Upload the selected image (generated or board)
+            // If user is on slide 0 -> generated, slide 1 -> board
+            // But we actually save BOTH usually? The post schema has `generated_image` and `board_image`.
+            // We'll upload both if they exist.
 
-            if (!imageUrl) {
-                Alert.alert('Error', 'Failed to upload image');
-                setUploading(false);
-                return;
+            let publicGeneratedUrl: string | null = null;
+            let publicBoardUrl: string | null = null;
+
+            // 1. Upload Generated Image
+            if (generatedImageUri && generatedImageUri.length > 0) {
+                console.log('Processing generated image for upload...');
+                const filename = `gen_${Date.now()}.jpg`;
+                let base64 = '';
+
+                // AI generation returns a Data URI (starts with "data:image..."),
+                // while file system paths do not.
+                if (generatedImageUri.startsWith('data:')) {
+                    // Extract base64 part from Data URI
+                    base64 = generatedImageUri.split(',')[1];
+                } else {
+                    // Read file from local path
+                    console.log('Reading generated image file:', generatedImageUri);
+                    base64 = await FileSystem.readAsStringAsync(generatedImageUri, { encoding: FileSystem.EncodingType.Base64 });
+                }
+
+                publicGeneratedUrl = await uploadImage('posts', filename, base64);
             }
 
-            // Capture and upload board image if we have canvas items
-            let boardImageUrl: string | null = null;
-            if (capturedBoardUri) {
-                try {
-                    boardImageUrl = await uploadImage(capturedBoardUri);
-                } catch (captureError) {
-                    console.warn('Could not upload board image:', captureError);
-                }
+            // 2. Upload Board Image (Collage)
+            if (finalBoardImageUri && finalBoardImageUri.length > 0) {
+                console.log('Reading board image file:', finalBoardImageUri);
+                const filename = `board_${Date.now()}.jpg`;
+                const base64 = await FileSystem.readAsStringAsync(finalBoardImageUri, { encoding: FileSystem.EncodingType.Base64 });
+                publicBoardUrl = await uploadImage('posts', filename, base64);
             }
 
             // Build items array with canvas_state positions
@@ -836,8 +1032,8 @@ export default function CreateScreen() {
             // Create post with both images and items
             const { error } = await createPost({
                 user_id: user.id,
-                generated_image: imageUrl,
-                board_image: boardImageUrl || undefined,
+                generated_image: publicGeneratedUrl || undefined,
+                board_image: publicBoardUrl || undefined,
                 caption: caption.trim(),
                 items: itemsWithPositions,
                 background_config: {
@@ -857,7 +1053,11 @@ export default function CreateScreen() {
             Alert.alert('Success', 'Your fit has been posted!');
             router.push('/(tabs)');
         } catch (error: any) {
-            Alert.alert('Error', error.message || 'Failed to create post');
+            console.error('Publishing failed:', error);
+            const rawMessage = error.message || 'Failed to create post';
+            // Truncate message if it's too long (avoids displaying base64 garble)
+            const displayMessage = rawMessage.length > 200 ? rawMessage.substring(0, 200) + '...' : rawMessage;
+            Alert.alert('Error', displayMessage);
         } finally {
             setUploading(false);
         }
@@ -885,13 +1085,18 @@ export default function CreateScreen() {
                                 {currentStep === 1 ? 'BUILD FIT' : 'PREVIEW POST'}
                             </Text>
                         </View>
-                        <Pressable onPress={resetWorkflow}>
-                            <Text style={[styles.resetText, { color: colors.textSecondary }]}>Reset</Text>
-                        </Pressable>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+                            <Pressable onPress={handleSaveDraft}>
+                                <Feather name="save" size={20} color={colors.textSecondary} />
+                            </Pressable>
+                            <Pressable onPress={resetWorkflow}>
+                                <Text style={[styles.resetText, { color: colors.textSecondary }]}>Reset</Text>
+                            </Pressable>
+                        </View>
                     </View>
 
                     {/* STEP 1: Build Fit */}
-                    {currentStep === 1 && !isGenerating && (
+                    {currentStep === 1 && (
                         <ScrollView
                             style={styles.scrollContent}
                             showsVerticalScrollIndicator={false}
@@ -903,12 +1108,13 @@ export default function CreateScreen() {
                                 <View style={styles.faceSceneRow}>
                                     {/* Face Upload Section */}
                                     {facePhotoUri ? (
-                                        <View style={[styles.faceChip, { backgroundColor: '#F3E8FF' }]}>
+                                        <Pressable style={styles.faceChip} onPress={() => setFacePhotoUri(null)}>
                                             <Image source={{ uri: facePhotoUri }} style={styles.faceChipImage} />
-                                            <Pressable onPress={() => setFacePhotoUri(null)} style={styles.faceChipRemove}>
+                                            <Text style={{ fontSize: 14, fontWeight: '600', color: '#9333ea' }}>Face Added</Text>
+                                            <View style={styles.faceChipRemove}>
                                                 <Feather name="x" size={12} color="#fff" />
-                                            </Pressable>
-                                        </View>
+                                            </View>
+                                        </Pressable>
                                     ) : (
                                         <Pressable style={[styles.faceUploadButton, { backgroundColor: colors.backgroundSecondary, borderColor: colors.border }]} onPress={pickFacePhoto}>
                                             <Feather name="user" size={24} color={colors.textSecondary} />
@@ -918,12 +1124,11 @@ export default function CreateScreen() {
 
                                     {/* Scene Description Input */}
                                     <TextInput
-                                        style={[styles.sceneInputFlex, { backgroundColor: colors.backgroundSecondary, color: colors.text, borderColor: colors.border }]}
-                                        placeholder="Describe scene (e.g. 'Standing in NYC')"
+                                        style={[styles.sceneInputFlex, { color: colors.text }]}
+                                        placeholder="Describe scene (e.g. 'Standing in Tokyo')"
                                         placeholderTextColor={colors.placeholder}
                                         value={sceneDescription}
                                         onChangeText={setSceneDescription}
-                                        multiline
                                     />
                                 </View>
                             )}
@@ -950,6 +1155,7 @@ export default function CreateScreen() {
                             {(uploadMode === 'upload' || canvasItems.length > 0) && (
                                 <View style={styles.canvasContainer}>
                                     <RNView
+
                                         ref={canvasRef}
                                         collapsable={false}
                                         style={[
@@ -966,7 +1172,7 @@ export default function CreateScreen() {
                                             />
                                         )}
 
-                                        {/* Canvas items */}
+                                        {/* Canvas Items */}
                                         {canvasItems.map((item) => (
                                             <DraggableImage
                                                 key={item.id}
@@ -982,24 +1188,47 @@ export default function CreateScreen() {
                                         {/* Empty State - Tap to Upload */}
                                         {canvasItems.length === 0 && (
                                             <View style={styles.emptyStateContainer}>
-                                                <Text style={[styles.emptySubtext, { marginBottom: 32 }]}>Start your fit check</Text>
+                                                <Text style={styles.emptySubtextBold}>Start your fit check</Text>
 
-                                                <View style={{ flexDirection: 'row', gap: 24 }}>
+                                                <View style={{ flexDirection: 'row', gap: 24, marginTop: 32 }}>
                                                     <Pressable style={{ alignItems: 'center' }} onPress={pickImage}>
                                                         <View style={styles.uploadCircle}>
-                                                            <Feather name="image" size={32} color="#999" />
+                                                            <Feather name="image" size={32} color="#6b7280" />
                                                         </View>
-                                                        <Text style={styles.emptyText}>Upload</Text>
+                                                        <Text style={styles.emptyTextBold}>Upload</Text>
                                                     </Pressable>
 
                                                     <Pressable style={{ alignItems: 'center' }} onPress={handleTakePicture}>
                                                         <View style={styles.uploadCircle}>
-                                                            <Feather name="camera" size={32} color="#999" />
+                                                            <Feather name="camera" size={32} color="#6b7280" />
                                                         </View>
-                                                        <Text style={styles.emptyText}>Camera</Text>
+                                                        <Text style={styles.emptyTextBold}>Camera</Text>
                                                     </Pressable>
                                                 </View>
                                             </View>
+                                        )}
+
+
+                                        {/* Loading Overlay - Outside capture ref but inside wrapper */}
+                                        {isGenerating && (
+                                            <BlurView intensity={20} style={StyleSheet.absoluteFill} tint="light">
+                                                <View style={styles.canvasLoadingOverlay}>
+                                                    <LoadingSpinner size={48} />
+                                                    <MaskedView
+                                                        style={styles.gradientTextContainer}
+                                                        maskElement={
+                                                            <Text style={styles.loadingTextMask}>Fitted is cooking...</Text>
+                                                        }
+                                                    >
+                                                        <LinearGradient
+                                                            colors={['#9333EA', '#EC4899', '#6366F1']}
+                                                            start={{ x: 0, y: 0 }}
+                                                            end={{ x: 1, y: 0 }}
+                                                            style={styles.gradientTextFill}
+                                                        />
+                                                    </MaskedView>
+                                                </View>
+                                            </BlurView>
                                         )}
                                     </RNView>
 
@@ -1050,30 +1279,32 @@ export default function CreateScreen() {
                                                 <Text style={{ color: colors.textSecondary, marginTop: 12 }}>Searching...</Text>
                                             </View>
                                         ) : searchResults.length > 0 ? (
-                                            /* Search Results - 2 column grid matching modal exactly */
+                                            /* Search Results - 2 column grid */
                                             <View style={styles.searchResultsGrid}>
                                                 {searchResults.map((item, index) => (
                                                     <Pressable
                                                         key={`${item.name}-${index}`}
-                                                        style={[styles.productCard, { backgroundColor: colors.backgroundSecondary }]}
+                                                        style={styles.productCard}
                                                         onPress={() => handleProductSelect(item)}
                                                     >
-                                                        <View style={[styles.imageContainer, { backgroundColor: '#fff' }]}>
-                                                            <Image
-                                                                source={{ uri: getProductImageUrl(item) }}
-                                                                style={styles.productImage}
-                                                                contentFit="contain"
-                                                            />
-                                                        </View>
-                                                        <View style={styles.productInfo}>
-                                                            <Text style={[styles.productBrand, { color: colors.textSecondary }]}>{item.brand}</Text>
-                                                            <Text style={[styles.productName, { color: colors.text }]} numberOfLines={2}>{item.name}</Text>
-                                                            {item.price > 0 && (
-                                                                <Text style={[styles.productPrice, { color: colors.primary }]}>${item.price}</Text>
-                                                            )}
-                                                        </View>
-                                                        <View style={[styles.productAddButton, { backgroundColor: colors.primary }]}>
-                                                            <Feather name="plus" size={16} color="#fff" />
+                                                        <View style={[styles.productCardInner, { backgroundColor: colors.backgroundSecondary }]}>
+                                                            <View style={[styles.imageContainer, { backgroundColor: '#fff' }]}>
+                                                                <Image
+                                                                    source={{ uri: getProductImageUrl(item) }}
+                                                                    style={styles.productImage}
+                                                                    contentFit="contain"
+                                                                />
+                                                            </View>
+                                                            <View style={styles.productInfo}>
+                                                                <Text style={[styles.productBrand, { color: colors.textSecondary }]}>{item.brand}</Text>
+                                                                <Text style={[styles.productName, { color: colors.text }]} numberOfLines={2}>{item.name}</Text>
+                                                                {item.price > 0 && (
+                                                                    <Text style={[styles.productPrice, { color: colors.primary }]}>${item.price}</Text>
+                                                                )}
+                                                            </View>
+                                                            <View style={[styles.productAddButton, { backgroundColor: colors.primary }]}>
+                                                                <Feather name="plus" size={16} color="#fff" />
+                                                            </View>
                                                         </View>
                                                     </Pressable>
                                                 ))}
@@ -1142,9 +1373,25 @@ export default function CreateScreen() {
                             {/* Items Tab Content */}
                             {(uploadMode === 'upload' || canvasItems.length > 0) && bottomTab === 'items' && (
                                 <View style={styles.wardrobeSection}>
-                                    <Text style={[styles.sectionLabel, { color: colors.text }]}>Wardrobe</Text>
                                     <FolderCarousel />
                                     <AssetGrid onAssetSelect={handleAssetSelect} />
+
+                                    {/* Generate Fit Button - Items Tab */}
+                                    <Pressable
+                                        style={[(canvasItems.length === 0 || isGenerating) && styles.generateButtonDisabled]}
+                                        onPress={handleGenerateOutfit}
+                                        disabled={canvasItems.length === 0 || isGenerating}
+                                    >
+                                        <LinearGradient
+                                            colors={['#9333EA', '#4F46E5']}
+                                            start={{ x: 0, y: 0 }}
+                                            end={{ x: 1, y: 0 }}
+                                            style={styles.generateButton}
+                                        >
+                                            <Text style={styles.generateButtonIcon}>{isGenerating ? '⏳' : '✨'}</Text>
+                                            <Text style={styles.generateButtonText}>{isGenerating ? 'Generating...' : 'Generate fit'}</Text>
+                                        </LinearGradient>
+                                    </Pressable>
                                 </View>
                             )}
 
@@ -1155,31 +1402,40 @@ export default function CreateScreen() {
                                         {BACKGROUND_OPTIONS.map((bg) => (
                                             <Pressable
                                                 key={bg.id}
-                                                style={[
-                                                    styles.backgroundCard,
-                                                    { backgroundColor: bg.color || '#f5f5f5' },
-                                                    selectedBackground.id === bg.id && styles.backgroundCardSelected
-                                                ]}
+                                                style={styles.backgroundCard}
                                                 onPress={() => setSelectedBackground(bg)}
                                             >
-                                                {bg.type === 'image' && bg.imageSource && (
-                                                    <Image source={bg.imageSource} style={styles.backgroundCardImage} contentFit="cover" />
-                                                )}
-                                                <Text style={[styles.backgroundCardLabel, { color: bg.color === '#000000' ? '#fff' : '#000' }]}>
-                                                    {bg.name}
-                                                </Text>
+                                                <View style={[
+                                                    styles.backgroundCardInner,
+                                                    { backgroundColor: bg.color || '#f5f5f5' },
+                                                    selectedBackground.id === bg.id && styles.backgroundCardSelected
+                                                ]}>
+                                                    {bg.type === 'image' && bg.imageSource && (
+                                                        <Image source={bg.imageSource} style={styles.backgroundCardImage} contentFit="cover" />
+                                                    )}
+                                                    <Text style={[styles.backgroundCardLabel, { color: bg.color === '#000000' ? '#fff' : '#000' }]}>
+                                                        {bg.name}
+                                                    </Text>
+                                                </View>
                                             </Pressable>
                                         ))}
                                     </View>
 
-                                    {/* Generate Fit Button */}
+                                    {/* Generate Fit Button - Canvas Tab */}
                                     <Pressable
-                                        style={[styles.generateButton, canvasItems.length === 0 && styles.generateButtonDisabled]}
+                                        style={[(canvasItems.length === 0 || isGenerating) && styles.generateButtonDisabled]}
                                         onPress={handleGenerateOutfit}
-                                        disabled={canvasItems.length === 0}
+                                        disabled={canvasItems.length === 0 || isGenerating}
                                     >
-                                        <Text style={styles.generateButtonIcon}>✨</Text>
-                                        <Text style={styles.generateButtonText}>Generate fit</Text>
+                                        <LinearGradient
+                                            colors={['#9333EA', '#4F46E5']}
+                                            start={{ x: 0, y: 0 }}
+                                            end={{ x: 1, y: 0 }}
+                                            style={styles.generateButton}
+                                        >
+                                            <Text style={styles.generateButtonIcon}>{isGenerating ? '⏳' : '✨'}</Text>
+                                            <Text style={styles.generateButtonText}>{isGenerating ? 'Generating...' : 'Generate fit'}</Text>
+                                        </LinearGradient>
                                     </Pressable>
 
 
@@ -1188,15 +1444,6 @@ export default function CreateScreen() {
                         </ScrollView>
                     )}
 
-                    {/* Loading State */}
-                    {isGenerating && (
-                        <View style={styles.loadingContainer}>
-                            <View style={styles.loadingCard}>
-                                <ActivityIndicator size="large" color="#9333EA" />
-                                <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Fitted is cooking...</Text>
-                            </View>
-                        </View>
-                    )}
 
                     {/* STEP 2: Preview Post */}
                     {currentStep === 2 && !isGenerating && (
@@ -1233,84 +1480,84 @@ export default function CreateScreen() {
                                     keyExtractor={(_, idx) => idx.toString()}
                                     renderItem={({ item }) => (
                                         <View style={{ width: CANVAS_WIDTH, height: CANVAS_WIDTH, overflow: 'hidden' }}>
-                                            <View style={styles.canvasContainer}>
-                                                <View style={[
-                                                    styles.canvas,
-                                                    selectedBackground.type === 'color' && { backgroundColor: selectedBackground.color }
+                                            <RNView
+                                                ref={item.type === 'board' ? previewBoardRef : undefined}
+                                                collapsable={false}
+                                                style={[styles.previewCanvas,
+                                                selectedBackground.type === 'color' && { backgroundColor: selectedBackground.color }
                                                 ]}>
-                                                    {selectedBackground.type === 'image' && selectedBackground.imageSource && (
-                                                        <Image
-                                                            source={selectedBackground.imageSource}
-                                                            style={styles.canvasBackgroundImage}
-                                                            contentFit="cover"
-                                                        />
-                                                    )}
-                                                    {item.type === 'generated' && item.image ? (
-                                                        <Image
-                                                            source={{ uri: item.image }}
-                                                            style={{ width: '100%', height: '100%' }}
-                                                            contentFit="cover"
-                                                        />
-                                                    ) : (
-                                                        canvasItems.map((canvasItem) => (
-                                                            <View key={canvasItem.id} style={[
-                                                                styles.previewItemContainer,
-                                                                {
-                                                                    left: canvasItem.x,
-                                                                    top: canvasItem.y,
-                                                                    transform: [
-                                                                        { scale: canvasItem.scale },
-                                                                        { rotate: `${canvasItem.rotation}rad` }
-                                                                    ]
-                                                                }
-                                                            ]}>
-                                                                {keepFrames && canvasItem.usePolaroid ? (
-                                                                    <View style={{ width: 180, height: 180 }}>
-                                                                        {/* Image renders first (behind) */}
-                                                                        <View style={{ position: 'absolute', top: 15, left: 15, right: 15, bottom: 35, overflow: 'hidden' }}>
-                                                                            <Image
-                                                                                source={{ uri: canvasItem.url }}
-                                                                                style={{ width: '100%', height: '100%' }}
-                                                                                contentFit="contain"
-                                                                            />
-                                                                        </View>
-                                                                        {/* Frame renders second (on top) */}
+                                                {selectedBackground.type === 'image' && selectedBackground.imageSource && (
+                                                    <Image
+                                                        source={selectedBackground.imageSource}
+                                                        style={styles.canvasBackgroundImage}
+                                                        contentFit="cover"
+                                                    />
+                                                )}
+                                                {item.type === 'generated' && item.image ? (
+                                                    <Image
+                                                        source={{ uri: item.image }}
+                                                        style={{ width: '100%', height: '100%' }}
+                                                        contentFit="cover"
+                                                    />
+                                                ) : (
+                                                    canvasItems.map((canvasItem) => (
+                                                        <View key={canvasItem.id} style={[
+                                                            styles.previewItemContainer,
+                                                            {
+                                                                left: canvasItem.x,
+                                                                top: canvasItem.y,
+                                                                transform: [
+                                                                    { scale: canvasItem.scale },
+                                                                    { rotate: `${canvasItem.rotation}rad` }
+                                                                ]
+                                                            }
+                                                        ]}>
+                                                            {keepFrames && canvasItem.usePolaroid ? (
+                                                                <View style={{ width: 180, height: 180 }}>
+                                                                    {/* Image renders first (behind) */}
+                                                                    <View style={{ position: 'absolute', top: 15, left: 15, right: 15, bottom: 35, overflow: 'hidden' }}>
                                                                         <Image
-                                                                            source={POLAROID_FRAME}
-                                                                            style={{ position: 'absolute', width: '100%', height: '100%' }}
+                                                                            source={{ uri: canvasItem.url }}
+                                                                            style={{ width: '100%', height: '100%' }}
                                                                             contentFit="contain"
                                                                         />
                                                                     </View>
-                                                                ) : (
+                                                                    {/* Frame renders second (on top) */}
                                                                     <Image
-                                                                        source={{ uri: canvasItem.url }}
-                                                                        style={{ width: 150, height: 150 }}
+                                                                        source={POLAROID_FRAME}
+                                                                        style={{ position: 'absolute', width: '100%', height: '100%' }}
                                                                         contentFit="contain"
                                                                     />
-                                                                )}
-                                                            </View>
-                                                        ))
-                                                    )}
-                                                </View>
-                                            </View>
+                                                                </View>
+                                                            ) : (
+                                                                <Image
+                                                                    source={{ uri: canvasItem.url }}
+                                                                    style={{ width: 150, height: 150 }}
+                                                                    contentFit="contain"
+                                                                />
+                                                            )}
+                                                        </View>
+                                                    ))
+                                                )}
+                                            </RNView>
                                         </View>
                                     )}
                                 />
+
+                                {/* Pagination Dots - positioned on the preview image */}
+                                <View style={styles.paginationOverlay}>
+                                    <View style={[styles.paginationDotSmall, previewSlide === 0 && styles.paginationDotSmallActive]} />
+                                    <View style={[styles.paginationDotSmall, previewSlide === 1 && styles.paginationDotSmallActive]} />
+                                </View>
                             </View>
 
-                            {/* Pagination Dots */}
-                            <View style={styles.paginationContainer}>
-                                <View style={[styles.paginationDot, previewSlide === 0 && styles.paginationDotActive]} />
-                                <View style={[styles.paginationDot, previewSlide === 1 && styles.paginationDotActive]} />
-                            </View>
-
-                            {/* Keep Frames Toggle */}
-                            <View style={styles.keepFramesRow}>
-                                <Pressable style={styles.checkbox} onPress={() => setKeepFrames(!keepFrames)}>
-                                    {keepFrames && <Feather name="check" size={14} color="#fff" />}
-                                </Pressable>
-                                <Text style={[styles.keepFramesText, { color: colors.text }]}>Keep frames?</Text>
-                            </View>
+                            {/* Keep Frames Toggle - smaller with shadow */}
+                            <Pressable style={styles.keepFramesPillSmall} onPress={() => setKeepFrames(!keepFrames)}>
+                                <View style={[styles.checkboxGreenSmall, keepFrames && styles.checkboxGreenActive]}>
+                                    {keepFrames && <Feather name="check" size={10} color="#fff" />}
+                                </View>
+                                <Text style={styles.keepFramesTextSmall}>Keep frames?</Text>
+                            </Pressable>
 
                             {/* Caption */}
                             <View style={styles.captionSection}>
@@ -1397,19 +1644,19 @@ export default function CreateScreen() {
                                         style={[styles.shareButton, shareToInstagram && styles.shareButtonActive]}
                                         onPress={() => setShareToInstagram(!shareToInstagram)}
                                     >
-                                        <Feather name="instagram" size={24} color={shareToInstagram ? colors.primary : colors.text} />
+                                        <Ionicons name="logo-instagram" size={24} color={shareToInstagram ? colors.primary : colors.text} />
                                     </Pressable>
                                     <Pressable
                                         style={[styles.shareButton, shareToTikTok && styles.shareButtonActive]}
                                         onPress={() => setShareToTikTok(!shareToTikTok)}
                                     >
-                                        <Text style={{ fontSize: 20 }}>♪</Text>
+                                        <Ionicons name="logo-tiktok" size={24} color={shareToTikTok ? colors.primary : colors.text} />
                                     </Pressable>
                                     <Pressable
                                         style={[styles.shareButton, shareToTwitter && styles.shareButtonActive]}
                                         onPress={() => setShareToTwitter(!shareToTwitter)}
                                     >
-                                        <Text style={{ fontSize: 18, fontWeight: 'bold', color: shareToTwitter ? colors.primary : colors.text }}>𝕏</Text>
+                                        <Ionicons name="logo-twitter" size={24} color={shareToTwitter ? colors.primary : colors.text} />
                                     </Pressable>
                                 </View>
                             </View>
@@ -1437,14 +1684,16 @@ export default function CreateScreen() {
             </TouchableWithoutFeedback>
 
             {/* Crop Modal */}
-            {cropItem && (
-                <CropModal
-                    visible={!!cropItem}
-                    imageUri={cropItem.originalUrl}
-                    onClose={() => setCropItem(null)}
-                    onCropComplete={handleCropComplete}
-                />
-            )}
+            {
+                cropItem && (
+                    <CropModal
+                        visible={!!cropItem}
+                        imageUri={cropItem.originalUrl}
+                        onClose={() => setCropItem(null)}
+                        onCropComplete={handleCropComplete}
+                    />
+                )
+            }
 
             {/* Product Search Modal */}
             <ProductSearchModal
@@ -1515,7 +1764,7 @@ export default function CreateScreen() {
                     </Pressable>
                 </Pressable>
             </Modal>
-        </GestureHandlerRootView>
+        </GestureHandlerRootView >
     );
 }
 
@@ -1556,14 +1805,25 @@ const styles = StyleSheet.create({
     },
     canvasContainer: {
         position: 'relative',
-        // No padding - edge-to-edge canvas
+        paddingHorizontal: 16,
         backgroundColor: 'transparent',
     },
     canvas: {
+        width: CANVAS_WIDTH - 32,
+        height: CANVAS_WIDTH - 32,
+        backgroundColor: '#fff',
+        // borderRadius: 16, // Removed to prevent rounded corners on export
+        borderWidth: 2,
+        borderColor: '#d1d5db',
+        position: 'relative',
+        overflow: 'hidden',
+
+    },
+    previewCanvas: {
         width: CANVAS_WIDTH,
         height: CANVAS_WIDTH,
-        backgroundColor: '#111',
-        // No borderRadius - sharp square corners
+        backgroundColor: '#fff',
+        // No borderRadius for square preview
         position: 'relative',
         overflow: 'hidden',
     },
@@ -1616,10 +1876,22 @@ const styles = StyleSheet.create({
         fontSize: 16,
         marginTop: 12,
     },
+    emptyTextBold: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#4B5563',
+        marginTop: 8,
+    },
     emptySubtext: {
         color: '#555',
         fontSize: 14,
         marginTop: 4,
+    },
+    emptySubtextBold: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: '#1F2937',
+        marginTop: 16,
     },
     tools: {
         flexDirection: 'row',
@@ -1661,6 +1933,13 @@ const styles = StyleSheet.create({
         paddingTop: 8,
         paddingBottom: 12,
         backgroundColor: 'transparent',
+    },
+    wardrobeTitle: {
+        fontSize: 20,
+        fontWeight: '900',
+        fontFamily: 'Inter_900Black',
+        paddingHorizontal: 16,
+        marginBottom: 4,
     },
     sectionLabel: {
         fontSize: 14,
@@ -1811,11 +2090,101 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
         gap: 8,
     },
+    paginationPill: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.3)',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 16,
+        gap: 6,
+        marginTop: 8,
+        alignSelf: 'center',
+    },
     paginationDot: {
         width: 8,
         height: 8,
         borderRadius: 4,
         backgroundColor: '#555',
+    },
+    paginationOverlay: {
+        position: 'absolute',
+        bottom: 16,
+        left: 0,
+        right: 0,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 6,
+    },
+    paginationDotSmall: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: 'rgba(255,255,255,0.5)',
+    },
+    paginationDotSmallActive: {
+        backgroundColor: '#fff',
+    },
+    keepFramesPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        alignSelf: 'center',
+        backgroundColor: '#f3f4f6',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 24,
+        gap: 8,
+        marginTop: 16,
+    },
+    keepFramesPillSmall: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        alignSelf: 'center',
+        backgroundColor: '#fff',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 20,
+        gap: 6,
+        marginTop: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    checkboxGreen: {
+        width: 20,
+        height: 20,
+        borderRadius: 4,
+        borderWidth: 2,
+        borderColor: '#22c55e',
+        backgroundColor: 'transparent',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    checkboxGreenSmall: {
+        width: 16,
+        height: 16,
+        borderRadius: 3,
+        borderWidth: 2,
+        borderColor: '#22c55e',
+        backgroundColor: 'transparent',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    checkboxGreenActive: {
+        backgroundColor: '#22c55e',
+        borderColor: '#22c55e',
+    },
+    keepFramesTextSmall: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#6b7280',
+        fontFamily: 'Inter_700Bold',
     },
     // Preview item container for positioning
     previewItemContainer: {
@@ -1850,6 +2219,7 @@ const styles = StyleSheet.create({
     resetText: {
         fontSize: 14,
         fontWeight: '500',
+        color: '#6b7280',
     },
     chipRow: {
         flexDirection: 'row',
@@ -1886,8 +2256,8 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         marginHorizontal: 16,
         marginVertical: 8,
-        backgroundColor: '#F1F1F1',
-        borderRadius: 10,
+        backgroundColor: '#f3f4f6',
+        borderRadius: 12,
         padding: 4,
     },
     toggleButton: {
@@ -1900,31 +2270,30 @@ const styles = StyleSheet.create({
         backgroundColor: '#fff',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
+        shadowOpacity: 0.08,
         shadowRadius: 2,
         elevation: 2,
     },
     toggleText: {
         fontSize: 14,
-        fontWeight: '500',
-        color: '#888',
+        fontWeight: '600',
+        color: '#6b7280',
     },
     toggleTextActive: {
         color: '#000',
-        fontWeight: '600',
+        fontWeight: '700',
     },
     canvasEmpty: {
+        backgroundColor: '#f3f4f6',
         borderWidth: 2,
         borderStyle: 'dashed',
-        borderColor: '#444',
+        borderColor: '#d1d5db',
     },
     uploadCircle: {
         width: 64,
         height: 64,
         borderRadius: 32,
-        borderWidth: 2,
-        borderStyle: 'dashed',
-        borderColor: '#666',
+        backgroundColor: '#e5e7eb',
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 12,
@@ -1932,8 +2301,8 @@ const styles = StyleSheet.create({
     floatingActions: {
         position: 'absolute',
         bottom: 16,
-        right: 16,
-        flexDirection: 'row',
+        right: 24,
+        flexDirection: 'column',
         gap: 8,
     },
     floatingButton: {
@@ -1944,16 +2313,18 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-        elevation: 4,
+        shadowOpacity: 0.15,
+        shadowRadius: 6,
+        elevation: 5,
+        borderWidth: 1,
+        borderColor: '#f3f4f6',
     },
     tabSwitcher: {
         flexDirection: 'row',
         marginHorizontal: 16,
         marginTop: 12,
         borderBottomWidth: 1,
-        borderBottomColor: '#E5E5E5',
+        borderBottomColor: '#f3f4f6',
     },
     tabButton: {
         flex: 1,
@@ -1967,30 +2338,35 @@ const styles = StyleSheet.create({
     },
     tabText: {
         fontSize: 14,
-        fontWeight: '500',
-        color: '#888',
+        fontWeight: '600',
+        color: '#9ca3af',
     },
     tabTextActive: {
         color: '#000',
-        fontWeight: '600',
+        fontWeight: '700',
     },
     backgroundGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        padding: 12,
-        gap: 8,
+        padding: 16,
     },
     backgroundCard: {
-        width: (SCREEN_WIDTH - 48) / 3,
+        flexBasis: '25%', // 4 columns like grid-cols-4
+        padding: 4, // gap between items
         aspectRatio: 1,
+    },
+    backgroundCardInner: {
+        flex: 1,
         borderRadius: 12,
-        justifyContent: 'center',
+        justifyContent: 'flex-end',
         alignItems: 'center',
         overflow: 'hidden',
+        borderWidth: 2,
+        borderColor: '#e5e7eb',
     },
     backgroundCardSelected: {
-        borderWidth: 3,
-        borderColor: '#9333EA',
+        borderColor: '#000',
+        transform: [{ scale: 0.95 }],
     },
     backgroundCardImage: {
         position: 'absolute',
@@ -1998,9 +2374,14 @@ const styles = StyleSheet.create({
         height: '100%',
     },
     backgroundCardLabel: {
-        fontSize: 11,
-        fontWeight: '600',
+        fontSize: 9,
+        fontWeight: '700',
         textAlign: 'center',
+        backgroundColor: 'rgba(255,255,255,0.8)',
+        paddingHorizontal: 4,
+        paddingVertical: 2,
+        marginBottom: 4,
+        borderRadius: 4,
     },
     generateButton: {
         flexDirection: 'row',
@@ -2008,8 +2389,8 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         marginHorizontal: 16,
         marginVertical: 16,
-        paddingVertical: 16,
-        borderRadius: 12,
+        height: 56,
+        borderRadius: 16,
         backgroundColor: '#9333EA',
         gap: 8,
     },
@@ -2029,14 +2410,40 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    canvasLoadingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(255, 255, 255, 0.85)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        //borderRadius: 16,
+    },
     loadingCard: {
         padding: 40,
         alignItems: 'center',
         gap: 16,
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: 16,
     },
     loadingText: {
         fontSize: 16,
         fontWeight: '500',
+        color: '#6b7280',
+    },
+    gradientTextContainer: {
+        marginTop: 16,
+        width: 200,
+        height: 28,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    loadingTextMask: {
+        fontSize: 20,
+        fontWeight: '700',
+        textAlign: 'center',
+    },
+    gradientTextFill: {
+        width: 200,
+        height: 28,
     },
     paginationDotActive: {
         backgroundColor: '#9333EA',
@@ -2139,21 +2546,23 @@ const styles = StyleSheet.create({
     linkedItemName: {
         fontSize: 13,
     },
-    // Search results styles (matching modal exactly)
+    // Search results styles - simple 2 column grid
     searchResultsGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        justifyContent: 'space-between',
     },
     productCard: {
-        width: ITEM_WIDTH,
+        flexBasis: '50%', // 2 columns like grid-cols-2
+        padding: 6, // gap between items
+    },
+    productCardInner: {
+        flex: 1,
         borderRadius: 12,
-        marginBottom: 16,
         overflow: 'hidden',
     },
     imageContainer: {
         width: '100%',
-        height: ITEM_WIDTH * 0.8,
+        aspectRatio: 1.25, // 5:4 ratio (replaces ITEM_WIDTH * 0.8)
         borderTopLeftRadius: 12,
         borderTopRightRadius: 12,
     },
@@ -2199,20 +2608,22 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
     },
     faceChip: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
-        position: 'relative',
-        overflow: 'hidden',
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 24,
+        backgroundColor: '#faf5ff',
+        borderWidth: 1,
+        borderColor: '#d8b4fe',
+        gap: 8,
     },
     faceChipImage: {
-        width: '100%',
-        height: '100%',
+        width: 32,
+        height: 32,
+        borderRadius: 16,
     },
     faceChipRemove: {
-        position: 'absolute',
-        top: 0,
-        right: 0,
         width: 20,
         height: 20,
         borderRadius: 10,
@@ -2236,13 +2647,11 @@ const styles = StyleSheet.create({
     },
     sceneInputFlex: {
         flex: 1,
-        height: 64,
-        borderRadius: 12,
-        borderWidth: 1,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        fontSize: 14,
-        textAlignVertical: 'top',
+        height: 40,
+        borderRadius: 20,
+        paddingHorizontal: 16,
+        fontSize: 12,
+        backgroundColor: '#f9fafb',
     },
     // Music button styles
     musicButton: {
