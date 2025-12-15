@@ -199,15 +199,42 @@ export const usePostsStore = create<PostsState>((set, get) => ({
                 // Create notification for post owner (if not liking own post)
                 // Use upsert to prevent duplicates
                 if (post.user_id && post.user_id !== currentUserId) {
-                    await supabase.from('notifications').upsert({
-                        user_id: post.user_id,
-                        actor_id: currentUserId,
-                        type: 'like',
-                        post_id: postId,
-                    }, {
-                        onConflict: 'user_id,actor_id,type,post_id',
-                        ignoreDuplicates: true,
-                    });
+                    // Check for existing notification (upsert fails with partial index)
+                    const { data: existingNotif } = await supabase
+                        .from('notifications')
+                        .select('id')
+                        .eq('user_id', post.user_id)
+                        .eq('actor_id', currentUserId)
+                        .eq('type', 'like')
+                        .eq('post_id', postId)
+                        .maybeSingle();
+
+                    if (existingNotif) {
+                        // Update existing
+                        const { error: updateError } = await supabase
+                            .from('notifications')
+                            .update({
+                                is_read: false,
+                                created_at: new Date().toISOString()
+                            })
+                            .eq('id', existingNotif.id);
+
+                        if (updateError) console.error('Notification update error:', updateError);
+                    } else {
+                        // Insert new
+                        const { error: insertError } = await supabase
+                            .from('notifications')
+                            .insert({
+                                user_id: post.user_id,
+                                actor_id: currentUserId,
+                                type: 'like',
+                                post_id: postId,
+                                is_read: false,
+                                created_at: new Date().toISOString()
+                            });
+
+                        if (insertError) console.error('Notification insert error:', insertError);
+                    }
                 }
             }
 

@@ -1,7 +1,7 @@
 import { StyleSheet, ActivityIndicator, View } from 'react-native';
 import { useEffect, useState, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
@@ -15,8 +15,11 @@ import { useTheme } from '@/hooks/useTheme';
 import ProfileView, { Draft } from '@/components/ProfileView';
 import SettingsDrawer from '@/components/SettingsDrawer';
 
+type SettingsView = 'menu' | 'dressingRoom' | 'drafts' | 'appearance' | 'notifications' | 'privacy' | 'help';
+
 export default function ProfileScreen() {
     const { colors } = useTheme();
+    const params = useLocalSearchParams();
     const user = useAuthStore((state) => state.user);
     const session = useAuthStore((state) => state.session);
     const setUser = useAuthStore((state) => state.setUser);
@@ -24,12 +27,26 @@ export default function ProfileScreen() {
     const fetchSavedPosts = usePostsStore((state) => state.fetchSavedPosts);
 
     const [showSettings, setShowSettings] = useState(false);
+    const [settingsInitialView, setSettingsInitialView] = useState<SettingsView>('menu');
     const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [userPosts, setUserPosts] = useState<Post[]>([]);
     const [savedPosts, setSavedPosts] = useState<Post[]>([]);
     const [drafts, setDrafts] = useState<Draft[]>([]);
     const [stats, setStats] = useState({ followers: 0, following: 0, fits: 0 });
+
+    // Handle URL params to open settings directly
+    useEffect(() => {
+        const openSettings = params.openSettings as string;
+        const settingsView = params.settingsView as SettingsView;
+
+        if (openSettings === 'true') {
+            setSettingsInitialView(settingsView || 'menu');
+            setShowSettings(true);
+            // Clear the params
+            router.setParams({ openSettings: '', settingsView: '' });
+        }
+    }, [params.openSettings, params.settingsView]);
 
     // Fetch profile if user is null but session exists
     useEffect(() => {
@@ -225,7 +242,11 @@ export default function ProfileScreen() {
             />
             <SettingsDrawer
                 visible={showSettings}
-                onClose={() => setShowSettings(false)}
+                onClose={() => {
+                    setShowSettings(false);
+                    setSettingsInitialView('menu'); // Reset for next open
+                }}
+                initialView={settingsInitialView}
             />
         </>
     );

@@ -6,6 +6,8 @@ import { router } from 'expo-router';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
+import DressingRoom from '@/components/DressingRoom';
+import { useMarketplaceStore } from '@/stores/marketplaceStore';
 
 // --- Shared Components ---
 
@@ -744,4 +746,146 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    footer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        padding: 16,
+        borderTopWidth: 1,
+    },
 });
+
+// 12. Dressing Room
+export const DressingRoomPage = ({ onBack }: { onBack: () => void }) => {
+    return (
+        <>
+            <Header title="Dressing Room" onBack={onBack} />
+            <DressingRoom />
+        </>
+    );
+};
+
+// 13. Shopping Cart
+export const CartPage = ({ onBack }: { onBack: () => void }) => {
+    const { colors, isDark } = useTheme();
+    const { user } = useAuthStore();
+    const { cartItems, removeFromCart, isLoadingCart } = useMarketplaceStore();
+
+    const total = cartItems.reduce((sum, item) => sum + (item.price || 0), 0);
+
+    const handleRemove = async (productId: string) => {
+        if (!user?.id) return;
+        Alert.alert(
+            'Remove Item',
+            'Remove this item from your cart?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Remove',
+                    style: 'destructive',
+                    onPress: async () => await removeFromCart(productId, user.id)
+                }
+            ]
+        );
+    };
+
+    const handleCheckout = () => {
+        Alert.alert('Checkout', ` Proceed to checkout? Total: $${total.toFixed(2)}`, [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Pay Now', onPress: () => Alert.alert('Success', 'Order placed successfully!') }
+        ]);
+    };
+
+    if (isLoadingCart) {
+        return (
+            <>
+                <Header title="Shopping Cart" onBack={onBack} />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                    <Text style={{ color: colors.textSecondary }}>Loading cart...</Text>
+                </View>
+            </>
+        );
+    }
+
+    return (
+        <>
+            <Header title="Shopping Cart" onBack={onBack} />
+            <ScrollView style={styles.scrollContent}>
+                {cartItems.length === 0 ? (
+                    <View style={{ alignItems: 'center', paddingVertical: 60 }}>
+                        <Feather name="shopping-cart" size={48} color={colors.textTertiary} />
+                        <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text, marginTop: 16 }}>
+                            Your cart is empty
+                        </Text>
+                        <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8 }}>
+                            Start adding items to build your fit
+                        </Text>
+                    </View>
+                ) : (
+                    <View style={{ gap: 16, paddingBottom: 100 }}>
+                        {cartItems.map((item) => (
+                            <View
+                                key={item.id}
+                                style={[
+                                    styles.draftItem,
+                                    { backgroundColor: isDark ? '#27272a' : '#f9fafb', alignItems: 'flex-start' }
+                                ]}
+                            >
+                                <View style={[styles.draftThumb, { width: 80, height: 80 }]}>
+                                    <Image
+                                        source={{ uri: item.image_urls?.[0] }}
+                                        style={{ width: '100%', height: '100%' }}
+                                        contentFit="cover"
+                                    />
+                                </View>
+                                <View style={{ flex: 1, gap: 4 }}>
+                                    <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={2}>
+                                        {item.name}
+                                    </Text>
+                                    <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                                        Size: {(item.sizes && item.sizes.length > 0) ? item.sizes[0] : 'N/A'}
+                                    </Text>
+                                    <Text style={{ fontSize: 15, fontWeight: '700', color: colors.primary, marginTop: 4 }}>
+                                        ${item.price?.toFixed(2)}
+                                    </Text>
+                                </View>
+                                <Pressable
+                                    onPress={() => handleRemove(item.id)}
+                                    hitSlop={12}
+                                    style={{ padding: 4 }}
+                                >
+                                    <Feather name="trash-2" size={18} color={colors.textTertiary} />
+                                </Pressable>
+                            </View>
+                        ))}
+                    </View>
+                )}
+            </ScrollView>
+
+            {/* Footer Summary */}
+            {cartItems.length > 0 && (
+                <View style={[
+                    styles.footer,
+                    {
+                        backgroundColor: colors.background,
+                        borderTopColor: colors.border,
+                        paddingVertical: 16,
+                        paddingHorizontal: 20
+                    }
+                ]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 16 }}>
+                        <Text style={{ fontSize: 16, color: colors.textSecondary }}>Total</Text>
+                        <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>${total.toFixed(2)}</Text>
+                    </View>
+                    <Pressable
+                        style={[styles.button, { backgroundColor: colors.primary, width: '100%' }]}
+                        onPress={handleCheckout}
+                    >
+                        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Checkout</Text>
+                    </Pressable>
+                </View>
+            )}
+        </>
+    );
+};

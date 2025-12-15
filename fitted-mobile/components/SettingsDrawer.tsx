@@ -19,6 +19,7 @@ import { router } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
+import { useMarketplaceStore } from '@/stores/marketplaceStore';
 import {
     PrivacyPage,
     NotificationsPage,
@@ -29,6 +30,8 @@ import {
     FAQsPage,
     ContactPage,
     DraftsPage,
+    DressingRoomPage,
+    CartPage,
     DraftItem,
 } from './SettingsPages';
 
@@ -43,21 +46,28 @@ type SettingsView =
     | 'loginActivity'
     | 'faqs'
     | 'contact'
-    | 'drafts';
+    | 'drafts'
+    | 'drafts'
+    | 'dressingRoom'
+    | 'cart';
 
 interface SettingsDrawerProps {
     visible: boolean;
     onClose: () => void;
+    initialView?: SettingsView;
 }
 
 const { width } = Dimensions.get('window');
 const DRAWER_WIDTH_PCT = 0.85;
 const DRAWER_MAX_WIDTH = 400;
 
-export default function SettingsDrawer({ visible, onClose }: SettingsDrawerProps) {
-    const [currentView, setCurrentView] = useState<SettingsView>('menu');
+export default function SettingsDrawer({ visible, onClose, initialView = 'menu' }: SettingsDrawerProps) {
+    const [currentView, setCurrentView] = useState<SettingsView>(initialView);
     const { colors, isDark } = useTheme();
     const signOut = useAuthStore((state) => state.signOut);
+    const user = useAuthStore((state) => state.user);
+    const updateProfile = useAuthStore((state) => state.updateProfile);
+    const { dressingRoomBadgeCount, cartItems } = useMarketplaceStore();
 
     // Animation states
     const [internalVisible, setInternalVisible] = useState(false);
@@ -68,8 +78,8 @@ export default function SettingsDrawer({ visible, onClose }: SettingsDrawerProps
     useEffect(() => {
         if (visible) {
             setInternalVisible(true);
-            // Reset view to menu when opening
-            setCurrentView('menu');
+            // Use initialView when opening, or menu if not specified
+            setCurrentView(initialView);
 
             Animated.parallel([
                 Animated.timing(slideAnim, {
@@ -144,6 +154,22 @@ export default function SettingsDrawer({ visible, onClose }: SettingsDrawerProps
                     <Text style={[styles.sectionTitle, { color: isDark ? '#71717a' : '#9ca3af' }]}>Account</Text>
                     <View style={{ gap: 4 }}>
                         <MenuItem
+                            icon="shopping-bag"
+                            label="Dressing Room"
+                            onPress={() => setCurrentView('dressingRoom')}
+                            colors={colors}
+                            isDark={isDark}
+                            badge={dressingRoomBadgeCount}
+                        />
+                        <MenuItem // Cart
+                            icon="shopping-cart"
+                            label="Shopping Cart"
+                            onPress={() => setCurrentView('cart')}
+                            colors={colors}
+                            isDark={isDark}
+                            badge={cartItems.length}
+                        />
+                        <MenuItem
                             icon="user"
                             label="Edit Profile"
                             onPress={() => {
@@ -179,10 +205,37 @@ export default function SettingsDrawer({ visible, onClose }: SettingsDrawerProps
                     {/* Business Switcher */}
                     <TouchableOpacity
                         style={[styles.businessItem, { backgroundColor: isDark ? '#27272a' : '#f9fafb' }]}
-                        onPress={handleBusinessSwitch}
+                        onPress={async () => {
+                            const isBusiness = user?.is_business_account;
+                            const newStatus = !isBusiness;
+
+                            Alert.alert(
+                                'Switch Account Type',
+                                `Are you sure you want to switch to a ${newStatus ? 'Business' : 'Personal'} Account?`,
+                                [
+                                    { text: 'Cancel', style: 'cancel' },
+                                    {
+                                        text: 'Confirm',
+                                        style: 'default',
+                                        onPress: async () => {
+                                            await updateProfile({ is_business_account: newStatus });
+                                            // Close drawer to reflect changes in profile view if needed, or keep open.
+                                            // Keeping open is fine, but maybe toast would be nice? 
+                                            // For now just toggle.
+                                        }
+                                    }
+                                ]
+                            );
+                        }}
                     >
-                        <Feather name="briefcase" size={20} color={isDark ? '#60a5fa' : '#2563eb'} />
-                        <Text style={{ fontSize: 15, fontWeight: '500', color: isDark ? '#60a5fa' : '#2563eb' }}>Switch to Business Account</Text>
+                        <Feather
+                            name={user?.is_business_account ? "user" : "briefcase"}
+                            size={20}
+                            color={isDark ? '#60a5fa' : '#2563eb'}
+                        />
+                        <Text style={{ fontSize: 15, fontWeight: '500', color: isDark ? '#60a5fa' : '#2563eb' }}>
+                            {user?.is_business_account ? 'Switch to Personal Account' : 'Switch to Business Account'}
+                        </Text>
                     </TouchableOpacity>
                 </View>
 
@@ -245,6 +298,8 @@ export default function SettingsDrawer({ visible, onClose }: SettingsDrawerProps
                     onCloseDrawer={onClose}
                 />
             );
+            case 'dressingRoom': return <DressingRoomPage onBack={() => setCurrentView('menu')} />;
+            case 'cart': return <CartPage onBack={() => setCurrentView('menu')} />;
 
             default: return renderMenu();
         }
@@ -294,13 +349,15 @@ function MenuItem({
     label,
     onPress,
     colors,
-    isDark
+    isDark,
+    badge
 }: {
     icon: string;
     label: string;
     onPress: () => void;
     colors: any;
     isDark: boolean;
+    badge?: number;
 }) {
     return (
         <TouchableOpacity
@@ -311,6 +368,19 @@ function MenuItem({
             <View style={styles.menuItemLeft}>
                 <Feather name={icon as any} size={20} color={isDark ? '#d4d4d8' : '#374151'} />
                 <Text style={[styles.menuItemLabel, { color: colors.text }]}>{label}</Text>
+                {badge !== undefined && badge > 0 && (
+                    <View style={{
+                        backgroundColor: '#ef4444',
+                        paddingHorizontal: 6,
+                        paddingVertical: 2,
+                        borderRadius: 10,
+                        marginLeft: 8
+                    }}>
+                        <Text style={{ color: 'white', fontSize: 10, fontWeight: 'bold' }}>
+                            {badge > 99 ? '99+' : badge}
+                        </Text>
+                    </View>
+                )}
             </View>
             <Feather name="chevron-right" size={16} color={isDark ? '#52525b' : '#d1d5db'} />
         </TouchableOpacity>

@@ -10,12 +10,14 @@ import {
     Modal,
     Linking,
     Alert,
+    Share,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 
 import PostItem from '@/components/PostItem';
+import CommentsModal from '@/components/CommentsModal';
 import { useTheme } from '@/hooks/useTheme';
 import { supabase } from '@/services/supabase';
 import { searchProducts } from '@/services/aiService';
@@ -31,6 +33,9 @@ export default function PostDetailScreen() {
     const { colors } = useTheme();
     const user = useAuthStore((state) => state.user);
     const deletePost = usePostsStore((state) => state.deletePost);
+    const toggleLike = usePostsStore((state) => state.toggleLike);
+    const toggleSave = usePostsStore((state) => state.toggleSave);
+    const setCurrentUserId = usePostsStore((state) => state.setCurrentUserId);
 
     const [post, setPost] = useState<Post | null>(null);
     const [loading, setLoading] = useState(true);
@@ -40,12 +45,18 @@ export default function PostDetailScreen() {
     const [brandCollections, setBrandCollections] = useState<Record<string, ClothingItem[]>>({});
     const [loadingBrands, setLoadingBrands] = useState<string[]>([]);
 
-    // Shop modal
     const [selectedItem, setSelectedItem] = useState<ClothingItem | null>(null);
+    const [showComments, setShowComments] = useState(false);
+
+    useEffect(() => {
+        if (user?.id) {
+            setCurrentUserId(user.id);
+        }
+    }, [user?.id]);
 
     useEffect(() => {
         fetchPost();
-    }, [id]);
+    }, [id, user?.id]); // Re-fetch when user loads to verify 'is_liked' status
 
     useEffect(() => {
         if (post?.items) {
@@ -55,28 +66,184 @@ export default function PostDetailScreen() {
 
     const fetchPost = async () => {
         if (!id) return;
+        const postId = Array.isArray(id) ? id[0] : id;
 
         try {
             setLoading(true);
             setError(null);
 
+            // Fetch post with user info
             const { data, error: fetchError } = await supabase
                 .from('posts')
                 .select(`
                     *,
                     user:users!posts_user_id_fkey(*)
                 `)
-                .eq('id', id)
+                .eq('id', postId)
                 .single();
 
             if (fetchError) throw fetchError;
 
-            setPost(data);
+            // Count actual likes from likes table
+            const { count: likesCount } = await supabase
+                .from('likes')
+                .select('*', { count: 'exact', head: true })
+                .eq('post_id', postId);
+
+            // Check if current user liked this post
+            let isLiked = false;
+            let isSaved = false;
+
+            if (user?.id) {
+                // Check like status using count/head for efficiency and reliability
+                const { count: userLikeCount } = await supabase
+                    .from('likes')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('post_id', postId)
+                    .eq('user_id', user.id);
+
+                isLiked = (userLikeCount || 0) > 0;
+
+                const { count: userSaveCount } = await supabase
+                    .from('saved_posts')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('post_id', postId)
+                    .eq('user_id', user.id);
+
+                isSaved = (userSaveCount || 0) > 0;
+            }
+
+            setPost({
+                ...data,
+                likes_count: likesCount || 0,
+                is_liked: isLiked,
+                is_saved: isSaved,
+            });
         } catch (err: any) {
             console.error('Error fetching post:', err);
             setError(err.message || 'Failed to load post');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleShare = async () => {
+        if (!post) return;
+        try {
+            await Share.share({
+                message: `Check out this fit by ${post.user?.username || 'user'}: ${post.caption || ''}`,
+                url: `fitted://post/${post.id}`, // Deep link if applicable
+            });
+        } catch (error) {
+            console.error('Error sharing:', error);
+        }
+    };
+
+    const handleLike = async () => {
+        if (!post || !user?.id) return;
+
+        // Optimistic update
+        const wasLiked = post.is_liked;
+        setPost(prev => prev ? {
+            ...prev,
+            is_liked: !wasLiked,
+            likes_count: Math.max(0, (prev.likes_count || 0) + (wasLiked ? -1 : 1))
+        } : null);
+
+        try {
+            if (wasLiked) {
+                await supabase
+                    .from('likes')
+                    .delete()
+                    .eq('post_id', post.id)
+                    .eq('user_id', user.id);
+
+                // Remove notification if unliking
+                if (post.user_id && post.user_id !== user.id) {
+                    await supabase
+                        .from('notifications')
+                        .delete()
+                        .eq('user_id', post.user_id)
+                        .eq('actor_id', user.id)
+                        .eq('type', 'like')
+                        .eq('post_id', post.id);
+                }
+            } else {
+                await supabase
+                    .from('likes')
+                    .insert({ post_id: post.id, user_id: user.id });
+
+
+                // Create notification for post owner
+                if (post.user_id && post.user_id !== user.id) {
+                    try {
+                        const { data: existingNotif } = await supabase
+                            .from('notifications')
+                            .select('id')
+                            .eq('user_id', post.user_id)
+                            .eq('actor_id', user.id)
+                            .eq('type', 'like')
+                            .eq('post_id', post.id)
+                            .maybeSingle();
+
+                        if (existingNotif) {
+                            const { error: updateError } = await supabase
+                                .from('notifications')
+                                .update({
+                                    is_read: false,
+                                    created_at: new Date().toISOString()
+                                })
+                                .eq('id', existingNotif.id);
+                            if (updateError) console.error('Notification update error:', updateError);
+                        } else {
+                            const { error: insertError } = await supabase.from('notifications').insert({
+                                user_id: post.user_id,
+                                actor_id: user.id,
+                                type: 'like',
+                                post_id: post.id,
+                                is_read: false,
+                                created_at: new Date().toISOString(),
+                            });
+                            if (insertError) console.error('Notification insert error:', insertError);
+                        }
+                    } catch (innerError) {
+                        console.error('Notification creation exception:', innerError);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error toggling like:', error);
+            // Revert on error
+            setPost(prev => prev ? {
+                ...prev,
+                is_liked: wasLiked,
+                likes_count: Math.max(0, (prev.likes_count || 0) + (wasLiked ? 1 : -1))
+            } : null);
+        }
+    };
+
+
+    const handleSave = async () => {
+        if (!post || !user?.id) return;
+
+        const wasSaved = post.is_saved;
+        setPost(prev => prev ? { ...prev, is_saved: !wasSaved } : null);
+
+        try {
+            if (wasSaved) {
+                await supabase
+                    .from('saved_posts')
+                    .delete()
+                    .eq('post_id', post.id)
+                    .eq('user_id', user.id);
+            } else {
+                await supabase
+                    .from('saved_posts')
+                    .insert({ post_id: post.id, user_id: user.id });
+            }
+        } catch (error) {
+            console.error('Error toggling save:', error);
+            setPost(prev => prev ? { ...prev, is_saved: wasSaved } : null);
         }
     };
 
@@ -182,10 +349,10 @@ export default function PostDetailScreen() {
                 {/* Post Content */}
                 <PostItem
                     post={post}
-                    onLike={() => { }}
-                    onComment={() => { }}
-                    onShare={() => { }}
-                    onSave={() => { }}
+                    onLike={handleLike}
+                    onComment={() => setShowComments(true)}
+                    onShare={handleShare}
+                    onSave={handleSave}
                     onUserPress={() => router.push(`/user/${post.user_id}`)}
                     onDelete={async () => {
                         await deletePost(post.id);
@@ -284,9 +451,6 @@ export default function PostDetailScreen() {
                                 <Text style={[styles.modalBrand, { color: colors.textSecondary }]}>
                                     {selectedItem.brand}
                                 </Text>
-                                <Text style={[styles.modalName, { color: colors.text }]}>
-                                    {selectedItem.name}
-                                </Text>
                                 <Text style={[styles.modalPrice, { color: colors.primary }]}>
                                     ${selectedItem.price}
                                 </Text>
@@ -309,6 +473,16 @@ export default function PostDetailScreen() {
                     </Pressable>
                 </Pressable>
             </Modal>
+
+            {/* Comments Modal */}
+            {post && (
+                <CommentsModal
+                    visible={showComments}
+                    onClose={() => setShowComments(false)}
+                    postId={post.id}
+                    postOwnerId={post.user_id}
+                />
+            )}
         </View>
     );
 }

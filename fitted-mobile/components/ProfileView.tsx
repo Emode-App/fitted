@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -16,9 +16,12 @@ import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
 
 import { useTheme } from '@/hooks/useTheme';
-import { User, Post } from '@/types';
+import { User, Post, Product } from '@/types';
 import StylistModal from '@/components/StylistModal';
-import { LinearGradient } from 'expo-linear-gradient';
+import { useMarketplaceStore } from '@/stores/marketplaceStore';
+import ProductCard from '@/components/ProductCard';
+import ProductDetailModal from '@/components/ProductDetailModal';
+import ProductUploadModal from './ProductUploadModal';
 
 const { width } = Dimensions.get('window');
 const GRID_SIZE = (width - 4) / 3;
@@ -72,10 +75,29 @@ export default function ProfileView({
     stats,
 }: ProfileViewProps) {
     const { colors, isDark } = useTheme();
-    const [activeTab, setActiveTab] = useState<'posts' | 'saved'>('posts');
+    const [activeTab, setActiveTab] = useState<'posts' | 'saved' | 'shop'>('posts');
     const [showStylistModal, setShowStylistModal] = useState(false);
+    const [showUploadModal, setShowUploadModal] = useState(false);
 
-    const displayPosts = activeTab === 'posts' ? posts : savedPosts;
+    // Marketplace state
+    const { products, isLoadingProducts, fetchSellerProducts, deleteProduct } = useMarketplaceStore();
+    const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+
+    // Fetch products when entering shop tab or user changes
+    useEffect(() => {
+        if (activeTab === 'shop' && user.id) {
+            fetchSellerProducts(user.id);
+        }
+    }, [activeTab, user.id]);
+
+    // Reset tab if business account is turned off
+    useEffect(() => {
+        if (!user.is_business_account && activeTab === 'shop') {
+            setActiveTab('posts');
+        }
+    }, [user.is_business_account]);
+
+    const displayData = activeTab === 'posts' ? posts : activeTab === 'saved' ? savedPosts : products;
 
     const handleOpenLink = async (link: string) => {
         if (link) {
@@ -92,23 +114,49 @@ export default function ProfileView({
         }
     };
 
-    const renderPostItem = ({ item }: { item: Post }) => (
-        <Pressable
-            style={styles.gridItem}
-            onPress={() => router.push({ pathname: '/post/[id]', params: { id: item.id } })}
-        >
-            <Image
-                source={{ uri: item.generated_image }}
-                style={styles.gridImage}
-                contentFit="cover"
-            />
-            {item.is_liked && (
-                <View style={styles.likedIndicator}>
-                    <Text style={{ fontSize: 10 }}>🔥</Text>
-                </View>
-            )}
-        </Pressable>
-    );
+    const handleDeleteProduct = async (productId: string) => {
+        try {
+            await deleteProduct(productId);
+            Alert.alert('Success', 'Product deleted successfully.');
+        } catch (error) {
+            Alert.alert('Error', 'Failed to delete product. Please try again.');
+        }
+    };
+
+    const renderItem = ({ item }: { item: Post | Product }) => {
+        if (activeTab === 'shop') {
+            // It's a product - use flex size for proper 2-column grid like DressingRoomPreview
+            const product = item as Product;
+            return (
+                <ProductCard
+                    product={product}
+                    onPress={() => setSelectedProduct(product)}
+                    size="flex"
+                    onDelete={isOwnProfile ? () => handleDeleteProduct(product.id) : undefined}
+                />
+            );
+        }
+
+        // It's a post
+        const post = item as Post;
+        return (
+            <Pressable
+                style={styles.gridItem}
+                onPress={() => router.push({ pathname: '/post/[id]', params: { id: post.id } })}
+            >
+                <Image
+                    source={{ uri: post.generated_image }}
+                    style={styles.gridImage}
+                    contentFit="cover"
+                />
+                {post.is_liked && (
+                    <View style={styles.likedIndicator}>
+                        <Text style={{ fontSize: 10 }}>🔥</Text>
+                    </View>
+                )}
+            </Pressable>
+        );
+    };
 
     const ListHeader = () => (
         <>
@@ -185,6 +233,12 @@ export default function ProfileView({
                             <Text style={[styles.username, { color: colors.text }]}>{user.username}</Text>
                             {user.is_verified_stylist && (
                                 <MaterialCommunityIcons name="check-decagram" size={20} color="#3b82f6" style={{ marginLeft: 6 }} />
+                            )}
+                            {user.is_business_account && (
+                                <Feather name="shopping-bag" size={18} color="#3b82f6" style={{ marginLeft: 6 }} />
+                            )}
+                            {user.is_verified_boutique && (
+                                <Ionicons name="shield-checkmark" size={18} color="#22c55e" style={{ marginLeft: 6 }} />
                             )}
                         </View>
 
@@ -318,15 +372,28 @@ export default function ProfileView({
                 )}
 
                 {/* Tabs (Own Profile) or Grid Header (Other Users) */}
-                {isOwnProfile ? (
+                {isOwnProfile || user.is_business_account ? (
                     <View style={[styles.tabsRow, { borderBottomColor: colors.border }]}>
                         <Pressable
                             style={[styles.tabButton, activeTab === 'posts' && [styles.tabButtonActive, { borderBottomColor: colors.text }]]}
                             onPress={() => setActiveTab('posts')}
                         >
                             <Feather name="grid" size={16} color={activeTab === 'posts' ? colors.text : colors.textSecondary} />
-                            <Text style={[styles.tabText, { color: activeTab === 'posts' ? colors.text : colors.textSecondary }]}>My Fits</Text>
+                            <Text style={[styles.tabText, { color: activeTab === 'posts' ? colors.text : colors.textSecondary }]}>
+                                {isOwnProfile ? 'My Fits' : 'Fits'}
+                            </Text>
                         </Pressable>
+
+                        {user.is_business_account && (
+                            <Pressable
+                                style={[styles.tabButton, activeTab === 'shop' && [styles.tabButtonActive, { borderBottomColor: colors.text }]]}
+                                onPress={() => setActiveTab('shop')}
+                            >
+                                <Feather name="shopping-bag" size={16} color={activeTab === 'shop' ? colors.text : colors.textSecondary} />
+                                <Text style={[styles.tabText, { color: activeTab === 'shop' ? colors.text : colors.textSecondary }]}>Shop</Text>
+                            </Pressable>
+                        )}
+
                         <Pressable
                             style={[styles.tabButton, activeTab === 'saved' && [styles.tabButtonActive, { borderBottomColor: colors.text }]]}
                             onPress={() => setActiveTab('saved')}
@@ -340,6 +407,21 @@ export default function ProfileView({
                         <Feather name="grid" size={20} color={colors.text} />
                     </View>
                 )}
+
+                {/* Shop Tab Sub-header for Product Stats/Add Button */}
+                {activeTab === 'shop' && (
+                    <View style={[styles.shopHeader, { paddingTop: 16, paddingHorizontal: 4 }]}>
+                        <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '500' }}>
+                            {products.length} product{products.length !== 1 ? 's' : ''}
+                        </Text>
+                        {isOwnProfile && (
+                            <Pressable style={[styles.addButton, { backgroundColor: colors.primary }]} onPress={() => setShowUploadModal(true)}>
+                                <Feather name="plus" size={14} color="#fff" />
+                                <Text style={styles.addButtonText}>Add</Text>
+                            </Pressable>
+                        )}
+                    </View>
+                )}
             </View>
         </>
     );
@@ -348,10 +430,11 @@ export default function ProfileView({
         <>
             <View style={[styles.container, { backgroundColor: colors.background }]}>
                 <FlatList
-                    data={displayPosts}
+                    data={displayData}
                     keyExtractor={(item) => item.id}
-                    numColumns={3}
-                    renderItem={renderPostItem}
+                    numColumns={activeTab === 'shop' ? 2 : 3}
+                    key={activeTab} // Force re-render when changing numColumns
+                    renderItem={renderItem}
                     refreshControl={
                         <RefreshControl
                             refreshing={refreshing}
@@ -363,16 +446,30 @@ export default function ProfileView({
                     ListHeaderComponent={ListHeader}
                     ListEmptyComponent={
                         <View style={styles.emptyGrid}>
-                            <Feather name={activeTab === 'posts' ? 'camera' : 'bookmark'} size={48} color={colors.textTertiary} />
+                            <Feather
+                                name={activeTab === 'posts' ? 'camera' : activeTab === 'saved' ? 'bookmark' : 'shopping-bag'}
+                                size={48}
+                                color={colors.textTertiary}
+                            />
                             <Text style={[styles.emptyText, { color: colors.text }]}>
-                                {activeTab === 'posts' ? 'No fits yet' : 'No saved posts'}
+                                {activeTab === 'posts' ? 'No fits yet' : activeTab === 'saved' ? 'No saved posts' : 'No products'}
                             </Text>
                             <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
-                                {activeTab === 'posts' ? 'Create your first fit!' : 'Save posts to see them here'}
+                                {activeTab === 'posts' ? 'Create your first fit!' : activeTab === 'saved' ? 'Save posts to see them here' :
+                                    isOwnProfile ? 'Start selling your items!' : 'This shop is empty'}
                             </Text>
+                            {activeTab === 'shop' && isOwnProfile && (
+                                <Pressable style={[styles.emptyAddButton, { backgroundColor: colors.primary, marginTop: 16 }]} onPress={() => setShowUploadModal(true)}>
+                                    <Feather name="plus" size={18} color="#fff" />
+                                    <Text style={styles.emptyAddButtonText}>Add Product</Text>
+                                </Pressable>
+                            )}
                         </View>
                     }
                     showsVerticalScrollIndicator={false}
+                    contentContainerStyle={{ paddingBottom: 0 }}
+                    columnWrapperStyle={activeTab === 'shop' ? { gap: 12, marginBottom: 12, paddingHorizontal: 16 } : undefined}
+                    ListHeaderComponentStyle={activeTab === 'shop' ? { marginBottom: 16 } : undefined}
                 />
             </View>
 
@@ -380,6 +477,22 @@ export default function ProfileView({
             <StylistModal
                 visible={showStylistModal}
                 onClose={() => setShowStylistModal(false)}
+            />
+
+            {/* Product Upload Modal */}
+            <ProductUploadModal
+                visible={showUploadModal}
+                onClose={() => setShowUploadModal(false)}
+                onSuccess={() => {
+                    if (user.id) fetchSellerProducts(user.id);
+                }}
+            />
+
+            {/* Product Detail Modal */}
+            <ProductDetailModal
+                visible={!!selectedProduct}
+                product={selectedProduct}
+                onClose={() => setSelectedProduct(null)}
             />
         </>
     );
@@ -718,5 +831,38 @@ const styles = StyleSheet.create({
         fontSize: 14,
         marginTop: 8,
         fontFamily: 'Inter_400Regular',
+    },
+    shopHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    addButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8,
+        gap: 4,
+    },
+    addButtonText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '600',
+        fontFamily: 'Inter_600SemiBold',
+    },
+    emptyAddButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: 10,
+        gap: 8,
+    },
+    emptyAddButtonText: {
+        color: '#fff',
+        fontSize: 15,
+        fontWeight: '700',
+        fontFamily: 'Inter_700Bold',
     },
 });

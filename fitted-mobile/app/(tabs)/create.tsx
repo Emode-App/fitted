@@ -349,6 +349,32 @@ export default function CreateScreen() {
         }
     }, [user?.ai_face_url, draftId]);
 
+    // Handle product added from marketplace via URL params
+    useEffect(() => {
+        const addProductUrl = params.addProductUrl as string;
+        const addProductName = params.addProductName as string;
+        const addProductId = params.addProductId as string;
+
+        if (addProductUrl && addProductId) {
+            // Add the product to canvas
+            const newItem: CanvasItem = {
+                id: addProductId + '_' + Date.now().toString(),
+                url: addProductUrl,
+                originalUrl: addProductUrl,
+                x: CANVAS_WIDTH / 2 - 75,
+                y: 150,
+                usePolaroid: true,
+                scale: 1,
+                rotation: 0,
+                itemName: addProductName,
+            };
+            setCanvasItems(prev => [...prev, newItem]);
+
+            // Clear the params to avoid re-adding on subsequent renders
+            router.setParams({ addProductUrl: '', addProductName: '', addProductId: '' });
+        }
+    }, [params.addProductUrl, params.addProductId]);
+
     // Hydrate Draft Logic - runs when draftId param changes OR when it differs from currentDraftId
     useEffect(() => {
         // Skip if no draftId param or no user

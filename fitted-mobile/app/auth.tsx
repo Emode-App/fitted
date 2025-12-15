@@ -102,7 +102,7 @@ export default function LoginScreen() {
                         onPress={handleSubmit}
                         disabled={loading}
                     >
-                        <RNText style={[styles.buttonText, { color: colors.primaryText }]}>
+                        <RNText style={[styles.buttonText, { color: colors.primaryForeground }]}>
                             {loading ? 'Loading...' : (isLogin ? 'Sign In' : 'Create Account')}
                         </RNText>
                     </Pressable>

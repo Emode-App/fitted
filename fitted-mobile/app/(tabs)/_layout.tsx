@@ -5,12 +5,22 @@ import { Feather } from '@expo/vector-icons';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useTheme } from '@/hooks/useTheme';
 import { useNotificationsStore } from '@/stores/notificationsStore';
+import { useAuthStore } from '@/stores/authStore';
 import SettingsDrawer from '@/components/SettingsDrawer';
 
 export default function TabLayout() {
     const { colors, isDark } = useTheme();
     const unreadCount = useNotificationsStore((state) => state.unreadCount);
+    const fetchNotifications = useNotificationsStore((state) => state.fetchNotifications);
+    const { user } = useAuthStore();
     const [showSettings, setShowSettings] = useState(false);
+
+    // Initial fetch for red dot
+    React.useEffect(() => {
+        if (user?.id) {
+            fetchNotifications(user.id);
+        }
+    }, [user?.id]);
 
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>

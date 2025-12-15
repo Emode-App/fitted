@@ -4,7 +4,8 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '@/hooks/useTheme';
-import { User } from '@/types';
+import { User, Product } from '@/types';
+import ProductCard from '@/components/ProductCard';
 
 // Constants
 const { width } = Dimensions.get('window');
@@ -30,9 +31,11 @@ interface SearchResultsProps {
     query: string;
     results: User[];
     brandResults?: User[];
+    productResults?: Product[];
     loading: boolean;
     onViewHashtag: (tag: string) => void;
     onViewProfile: (userId: string) => void;
+    onViewProduct?: (product: Product) => void;
 }
 
 // --- Components ---
@@ -163,7 +166,7 @@ export const TrendingGrid = ({ onViewTrend }: TrendingGridProps) => {
 };
 
 // 4. Search Results
-export const SearchResults = ({ query, results, brandResults = [], loading, onViewHashtag, onViewProfile }: SearchResultsProps) => {
+export const SearchResults = ({ query, results, brandResults = [], productResults = [], loading, onViewHashtag, onViewProfile, onViewProduct }: SearchResultsProps) => {
     const { colors, isDark } = useTheme();
     const formattedTag = query.startsWith('#') ? query : `#${query}`;
 
@@ -176,49 +179,72 @@ export const SearchResults = ({ query, results, brandResults = [], loading, onVi
     }
 
     return (
-        <View style={styles.resultsContainer}>
-            {/* Hashtag Option */}
-            <Pressable
-                style={[
-                    styles.hashtagRow,
-                    {
-                        backgroundColor: isDark ? '#18181b' : '#ffffff',
-                        borderColor: isDark ? '#27272a' : '#f3f4f6'
-                    }
-                ]}
-                onPress={() => onViewHashtag(formattedTag)}
-            >
-                <View style={[styles.hashIconCircle, { backgroundColor: isDark ? '#27272a' : '#f3f4f6' }]}>
-                    <Feather name="hash" size={20} color={colors.text} />
-                </View>
-                <View>
-                    <Text style={[styles.hashMainText, { color: colors.text }]}>{formattedTag}</Text>
-                    <Text style={[styles.hashSubText, { color: colors.textSecondary }]}>Go to hashtag</Text>
-                </View>
-            </Pressable>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }}>
+            <View style={styles.resultsContainer}>
+                {/* Hashtag Option */}
+                <Pressable
+                    style={[
+                        styles.hashtagRow,
+                        {
+                            backgroundColor: isDark ? '#18181b' : '#ffffff',
+                            borderColor: isDark ? '#27272a' : '#f3f4f6'
+                        }
+                    ]}
+                    onPress={() => onViewHashtag(formattedTag)}
+                >
+                    <View style={[styles.hashIconCircle, { backgroundColor: isDark ? '#27272a' : '#f3f4f6' }]}>
+                        <Feather name="hash" size={20} color={colors.text} />
+                    </View>
+                    <View>
+                        <Text style={[styles.hashMainText, { color: colors.text }]}>{formattedTag}</Text>
+                        <Text style={[styles.hashSubText, { color: colors.textSecondary }]}>Go to hashtag</Text>
+                    </View>
+                </Pressable>
 
-            {/* Brands Section */}
-            {brandResults.length > 0 && (
-                <View style={{ marginBottom: 16 }}>
-                    <Text style={[styles.resultsHeader, { color: colors.textSecondary }]}>BRANDS</Text>
-                    {brandResults.map(user => (
-                        <UserResultRow key={user.id} user={user} onViewProfile={onViewProfile} />
-                    ))}
-                </View>
-            )}
-
-            {/* Accounts Section */}
-            <View>
-                <Text style={[styles.resultsHeader, { color: colors.textSecondary }]}>ACCOUNTS</Text>
-                {results.length === 0 && brandResults.length === 0 ? (
-                    <Text style={{ fontSize: 14, color: colors.textSecondary, paddingLeft: 8 }}>No accounts found.</Text>
-                ) : (
-                    results.map(user => (
-                        <UserResultRow key={user.id} user={user} onViewProfile={onViewProfile} />
-                    ))
+                {/* Products Section */}
+                {productResults.length > 0 && onViewProduct && (
+                    <View style={{ marginBottom: 24 }}>
+                        <Text style={[styles.resultsHeader, { color: colors.textSecondary }]}>ITEMS</Text>
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={{ gap: 12, paddingRight: 16 }}
+                        >
+                            {productResults.map(product => (
+                                <ProductCard
+                                    key={product.id}
+                                    product={product}
+                                    onPress={() => onViewProduct(product)}
+                                    size="small"
+                                />
+                            ))}
+                        </ScrollView>
+                    </View>
                 )}
+
+                {/* Brands Section */}
+                {brandResults.length > 0 && (
+                    <View style={{ marginBottom: 16 }}>
+                        <Text style={[styles.resultsHeader, { color: colors.textSecondary }]}>BRANDS</Text>
+                        {brandResults.map(user => (
+                            <UserResultRow key={user.id} user={user} onViewProfile={onViewProfile} />
+                        ))}
+                    </View>
+                )}
+
+                {/* Accounts Section */}
+                <View>
+                    <Text style={[styles.resultsHeader, { color: colors.textSecondary }]}>ACCOUNTS</Text>
+                    {results.length === 0 && brandResults.length === 0 && productResults.length === 0 ? (
+                        <Text style={{ fontSize: 14, color: colors.textSecondary, paddingLeft: 8 }}>No results found.</Text>
+                    ) : (
+                        results.map(user => (
+                            <UserResultRow key={user.id} user={user} onViewProfile={onViewProfile} />
+                        ))
+                    )}
+                </View>
             </View>
-        </View>
+        </ScrollView>
     );
 };
 

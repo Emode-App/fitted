@@ -16,6 +16,8 @@ export interface User {
     location: string;
     website?: string;
     is_business_account?: boolean;
+    is_verified_boutique?: boolean; // Green shield for verified brands
+    visitor_count?: number; // Shop visitor count
     stats: {
         followers: number;
         following: number;
@@ -31,6 +33,34 @@ export interface User {
         url?: string;
     };
     created_at?: string;
+}
+
+// Marketplace Types
+export interface Product {
+    id: string;
+    seller_id: string;
+    seller?: User;
+    name: string;
+    description: string;
+    price: number;
+    sizes: string[]; // e.g., ["S", "M", "L", "XL"]
+    image_urls: string[];
+    tags?: string[]; // e.g., ["secondhand", "streetwear"]
+    external_links?: {
+        website?: string;
+        instagram?: string;
+        tiktok?: string;
+    };
+    is_active: boolean;
+    created_at: string;
+}
+
+export interface DressingRoomItem {
+    id: string;
+    user_id: string;
+    product_id: string;
+    product?: Product;
+    added_at: string;
 }
 
 export interface ClothingItem {

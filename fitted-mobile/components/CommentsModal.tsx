@@ -8,6 +8,7 @@ import { Text } from '@/components/Themed';
 import MentionText from '@/components/MentionText';
 import { supabase } from '@/services/supabase';
 import { useAuthStore } from '@/stores/authStore';
+import { useTheme } from '@/hooks/useTheme';
 import { Comment, User } from '@/types';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -25,6 +26,7 @@ interface CommentWithUser extends Comment {
 }
 
 export default function CommentsModal({ postId, postOwnerId, visible, onClose }: CommentsModalProps) {
+    const { colors, isDark } = useTheme();
     const [comments, setComments] = useState<CommentWithUser[]>([]);
     const [loading, setLoading] = useState(false);
     const [newComment, setNewComment] = useState('');
@@ -49,7 +51,6 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
             },
             onPanResponderRelease: (_, gestureState) => {
                 if (gestureState.dy > 80 || gestureState.vy > 0.3) {
-                    // Close modal - animate down then call onClose
                     Animated.timing(translateY, {
                         toValue: MODAL_HEIGHT,
                         duration: 150,
@@ -58,7 +59,6 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                         onClose();
                     });
                 } else {
-                    // Snap back
                     Animated.timing(translateY, {
                         toValue: 0,
                         duration: 150,
@@ -93,7 +93,6 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
             if (!error && data) {
                 setComments(data as CommentWithUser[]);
 
-                // Fetch which comments the current user has liked
                 if (user?.id && data.length > 0) {
                     const commentIds = data.map(c => c.id);
                     const { data: likedData } = await supabase
@@ -120,27 +119,28 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
 
         setSubmitting(true);
         try {
-            const { error } = await supabase.from('comments').insert({
+            const { data: commentData, error } = await supabase.from('comments').insert({
                 post_id: postId,
                 user_id: user.id,
                 text: newComment.trim(),
-            });
+            })
+                .select()
+                .single();
 
-            if (!error) {
+            if (!error && commentData) {
                 setNewComment('');
                 fetchComments();
 
-                // Create notification for post owner (if not commenting on own post)
                 if (postOwnerId && postOwnerId !== user.id) {
                     await supabase.from('notifications').insert({
                         user_id: postOwnerId,
                         actor_id: user.id,
                         type: 'comment',
                         post_id: postId,
-                        content: newComment.trim().slice(0, 100), // Store first 100 chars
+                        comment_id: commentData.id,
+                        content: newComment.trim().slice(0, 100),
                     });
                 }
-
             }
         } catch (err) {
             console.error('Error posting comment:', err);
@@ -175,7 +175,6 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
 
         const isLiked = likedComments.has(commentId);
 
-        // Optimistic update
         setLikedComments(prev => {
             const newSet = new Set(prev);
             if (isLiked) {
@@ -186,7 +185,6 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
             return newSet;
         });
 
-        // Update local comment likes count
         setComments(prev => prev.map(c =>
             c.id === commentId
                 ? { ...c, likes_count: (c.likes_count || 0) + (isLiked ? -1 : 1) }
@@ -206,7 +204,6 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                     .insert({ comment_id: commentId, user_id: user.id });
             }
         } catch (error) {
-            // Revert on error
             setLikedComments(prev => {
                 const newSet = new Set(prev);
                 if (isLiked) {
@@ -230,20 +227,22 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                 {item.user?.avatar_url ? (
                     <Image source={{ uri: item.user.avatar_url }} style={styles.avatar} />
                 ) : (
-                    <View style={styles.avatarPlaceholder}>
-                        <Feather name="user" size={14} color="#666" />
+                    <View style={[styles.avatarPlaceholder, { backgroundColor: colors.backgroundSecondary }]}>
+                        <Feather name="user" size={14} color={colors.textSecondary} />
                     </View>
                 )}
             </Pressable>
             <View style={styles.commentContent}>
-                <Text style={styles.commentText}>
-                    <Text style={styles.username} onPress={() => handleCommentUserPress(item.user?.id)}>{item.user?.username || 'User'} </Text>
-                    <MentionText text={item.text} style={styles.commentBodyText} />
+                <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }}>
+                    <Text style={{ fontWeight: '600' }} onPress={() => handleCommentUserPress(item.user?.id)}>{item.user?.username || 'User'} </Text>
+                    <MentionText text={item.text} style={{ color: colors.text }} />
                 </Text>
                 <View style={styles.commentMeta}>
-                    <Text style={styles.timestamp}>{formatTime(item.created_at)}</Text>
+                    <Text style={{ fontSize: 12, color: colors.textSecondary }}>{formatTime(item.created_at)}</Text>
                     {(item.likes_count || 0) > 0 && (
-                        <Text style={styles.likesCount}>{item.likes_count} like{(item.likes_count || 0) !== 1 ? 's' : ''}</Text>
+                        <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600' }}>
+                            {item.likes_count} like{(item.likes_count || 0) !== 1 ? 's' : ''}
+                        </Text>
                     )}
                 </View>
             </View>
@@ -251,7 +250,7 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                 <Feather
                     name="heart"
                     size={14}
-                    color={likedComments.has(item.id) ? '#ff3b5c' : '#666'}
+                    color={likedComments.has(item.id) ? '#ff3b5c' : colors.textTertiary}
                     fill={likedComments.has(item.id) ? '#ff3b5c' : 'transparent'}
                 />
             </Pressable>
@@ -274,26 +273,29 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                     <Animated.View
                         style={[
                             styles.modal,
-                            { transform: [{ translateY }] }
+                            {
+                                backgroundColor: colors.background,
+                                transform: [{ translateY }]
+                            }
                         ]}
                     >
                         {/* Drag Handle */}
                         <View {...panResponder.panHandlers} style={styles.dragHandleContainer}>
-                            <View style={styles.dragHandle} />
+                            <View style={[styles.dragHandle, { backgroundColor: colors.border }]} />
                         </View>
 
                         {/* Header */}
-                        <View style={styles.header}>
-                            <Text style={styles.title}>Comments</Text>
+                        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+                            <Text style={[styles.title, { color: colors.text }]}>Comments</Text>
                             <Pressable onPress={onClose} style={styles.closeButton}>
-                                <Feather name="x" size={24} color="#fff" />
+                                <Feather name="x" size={24} color={colors.text} />
                             </Pressable>
                         </View>
 
                         {/* Comments List */}
                         {loading ? (
                             <View style={styles.loadingContainer}>
-                                <ActivityIndicator color="#fff" />
+                                <ActivityIndicator color={colors.text} />
                             </View>
                         ) : (
                             <FlatList
@@ -304,33 +306,44 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                                 contentContainerStyle={styles.listContent}
                                 ListEmptyComponent={
                                     <View style={styles.emptyContainer}>
-                                        <Text style={styles.emptyText}>No comments yet</Text>
-                                        <Text style={styles.emptySubtext}>Be the first to comment!</Text>
+                                        <Text style={[styles.emptyText, { color: colors.text }]}>No comments yet</Text>
+                                        <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>Be the first to comment!</Text>
                                     </View>
                                 }
                             />
                         )}
 
                         {/* Input */}
-                        <View style={styles.inputContainer}>
+                        <View style={[styles.inputContainer, { borderTopColor: colors.border }]}>
                             <TextInput
-                                style={styles.input}
+                                style={[
+                                    styles.input,
+                                    {
+                                        backgroundColor: colors.input,
+                                        color: colors.text,
+                                        borderColor: colors.inputBorder
+                                    }
+                                ]}
                                 placeholder="Add a comment..."
-                                placeholderTextColor="#666"
+                                placeholderTextColor={colors.placeholder}
                                 value={newComment}
                                 onChangeText={setNewComment}
                                 multiline
                                 maxLength={500}
                             />
                             <Pressable
-                                style={[styles.sendButton, (!newComment.trim() || submitting) && styles.sendButtonDisabled]}
+                                style={[
+                                    styles.sendButton,
+                                    { backgroundColor: colors.primary },
+                                    (!newComment.trim() || submitting) && { opacity: 0.5, backgroundColor: colors.border }
+                                ]}
                                 onPress={handleSubmit}
                                 disabled={!newComment.trim() || submitting}
                             >
                                 {submitting ? (
-                                    <ActivityIndicator color="#000" size="small" />
+                                    <ActivityIndicator color={colors.primaryForeground} size="small" />
                                 ) : (
-                                    <Feather name="send" size={18} color="#000" />
+                                    <Feather name="send" size={18} color={colors.primaryForeground} />
                                 )}
                             </Pressable>
                         </View>
@@ -359,10 +372,17 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
     },
     modal: {
-        backgroundColor: '#111',
         borderTopLeftRadius: 20,
         borderTopRightRadius: 20,
         height: MODAL_HEIGHT,
+        shadowColor: "#000",
+        shadowOffset: {
+            width: 0,
+            height: -2,
+        },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
+        elevation: 5,
     },
     dragHandleContainer: {
         alignItems: 'center',
@@ -371,7 +391,6 @@ const styles = StyleSheet.create({
     dragHandle: {
         width: 40,
         height: 4,
-        backgroundColor: '#444',
         borderRadius: 2,
     },
     header: {
@@ -381,18 +400,15 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         paddingVertical: 12,
         borderBottomWidth: 0.5,
-        borderBottomColor: '#333',
     },
     title: {
         fontSize: 16,
         fontWeight: '600',
-        color: '#fff',
     },
     closeButton: {
         position: 'absolute',
         right: 16,
-        top: 0,
-        bottom: 0,
+        top: 12,
         justifyContent: 'center',
     },
     loadingContainer: {
@@ -422,35 +438,17 @@ const styles = StyleSheet.create({
         width: 32,
         height: 32,
         borderRadius: 16,
-        backgroundColor: '#222',
         justifyContent: 'center',
         alignItems: 'center',
     },
     commentContent: {
         flex: 1,
     },
-    commentText: {
-        fontSize: 14,
-        color: '#fff',
-        lineHeight: 20,
-    },
-    username: {
-        fontWeight: '600',
-    },
-    timestamp: {
-        fontSize: 12,
-        color: '#666',
-    },
     commentMeta: {
         flexDirection: 'row',
         alignItems: 'center',
         marginTop: 4,
         gap: 12,
-    },
-    likesCount: {
-        fontSize: 12,
-        color: '#666',
-        fontWeight: '600',
     },
     likeButton: {
         padding: 8,
@@ -461,11 +459,10 @@ const styles = StyleSheet.create({
         paddingVertical: 40,
     },
     emptyText: {
-        color: '#fff',
         fontSize: 16,
+        fontWeight: '600',
     },
     emptySubtext: {
-        color: '#666',
         fontSize: 14,
         marginTop: 4,
     },
@@ -473,33 +470,24 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         padding: 12,
-        paddingBottom: 30,
+        paddingBottom: 30, // For iOS home indicator
         borderTopWidth: 0.5,
-        borderTopColor: '#333',
     },
     input: {
         flex: 1,
-        backgroundColor: '#222',
         borderRadius: 20,
         paddingHorizontal: 16,
         paddingVertical: 10,
-        color: '#fff',
         fontSize: 14,
         maxHeight: 100,
+        borderWidth: 1,
     },
     sendButton: {
         width: 36,
         height: 36,
         borderRadius: 18,
-        backgroundColor: '#fff',
         justifyContent: 'center',
         alignItems: 'center',
         marginLeft: 8,
-    },
-    sendButtonDisabled: {
-        opacity: 0.5,
-    },
-    commentBodyText: {
-        color: '#fff',
     },
 });

@@ -7,9 +7,11 @@ import { Feather } from '@expo/vector-icons';
 
 import { supabase } from '@/services/supabase';
 import { useAuthStore } from '@/stores/authStore';
-import { Post, User } from '@/types';
+import { useMarketplaceStore } from '@/stores/marketplaceStore';
+import { Post, User, Product } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
 import { ExploreHeader, FeaturedStylists, TrendingGrid, SearchResults } from '@/components/ExploreComponents';
+import ProductDetailModal from '@/components/ProductDetailModal';
 
 const { width } = Dimensions.get('window');
 const GRID_SIZE = width / 3;
@@ -17,6 +19,7 @@ const GRID_SIZE = width / 3;
 export default function ExploreScreen() {
     const { colors, isDark } = useTheme();
     const user = useAuthStore((state) => state.user);
+    const { searchProducts } = useMarketplaceStore();
 
     // State
     const [searchQuery, setSearchQuery] = useState('');
@@ -27,6 +30,10 @@ export default function ExploreScreen() {
     const [searching, setSearching] = useState(false);
     const [userResults, setUserResults] = useState<User[]>([]);
     const [brandResults, setBrandResults] = useState<User[]>([]);
+    const [productResults, setProductResults] = useState<Product[]>([]);
+
+    // Product Modal State
+    const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
     // Loading State
     const [refreshing, setRefreshing] = useState(false);
@@ -55,7 +62,7 @@ export default function ExploreScreen() {
         const { data } = await supabase
             .from('posts')
             .select('*')
-            .order('likes_count', { ascending: false })
+            .order('created_at', { ascending: false })
             .limit(30);
 
         if (data) setPosts(data);
@@ -78,14 +85,15 @@ export default function ExploreScreen() {
         if (query.trim().length < 2) {
             setUserResults([]);
             setBrandResults([]);
+            setProductResults([]);
             setSearching(false);
             return;
         }
 
         setSearching(true);
 
-        // Parallel search for Accounts and Brands
-        const [accountsRes, brandsRes] = await Promise.all([
+        // Parallel search for Accounts, Brands, and Products
+        const [accountsRes, brandsRes, products] = await Promise.all([
             // Accounts
             supabase
                 .from('users')
@@ -100,11 +108,15 @@ export default function ExploreScreen() {
                 .select('*')
                 .or(`username.ilike.%${query}%,handle.ilike.%${query}%`)
                 .eq('is_business_account', true)
-                .limit(5)
+                .limit(5),
+
+            // Products
+            searchProducts(query)
         ]);
 
         if (accountsRes.data) setUserResults(accountsRes.data);
         if (brandsRes.data) setBrandResults(brandsRes.data);
+        setProductResults(products);
 
         setSearching(false);
     };
@@ -191,9 +203,11 @@ export default function ExploreScreen() {
                         query={searchQuery}
                         results={userResults}
                         brandResults={brandResults}
+                        productResults={productResults}
                         loading={searching}
                         onViewHashtag={handleViewHashtag}
                         onViewProfile={handleViewProfile}
+                        onViewProduct={setSelectedProduct}
                     />
                 </View>
             ) : (
@@ -204,19 +218,20 @@ export default function ExploreScreen() {
                     renderItem={renderPostThumbnail}
                     numColumns={3}
                     ListHeaderComponent={renderHeader}
-                    contentContainerStyle={{ paddingBottom: 100 }}
+                    contentContainerStyle={{ paddingBottom: 0 }}
                     refreshControl={
                         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />
                     }
-                    // columnWrapperStyle={{ gap: 0 }} // Removed gap
                     style={{ marginHorizontal: 0 }}
-                // Actually, the spec says -mx-4 for grid. Let's adjust.
-                // The FlatList is the main container now. 
-                // Header has padding. Grid items need to be full width relative to screen.
-                // But we have padding on the whole screen usually? 
-                // Let's reset FlatList style to touch edges and handle padding inside Header.
                 />
             )}
+
+            {/* Product Detail Modal */}
+            <ProductDetailModal
+                product={selectedProduct}
+                visible={!!selectedProduct}
+                onClose={() => setSelectedProduct(null)}
+            />
         </View>
     );
 }

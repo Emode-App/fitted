@@ -45,9 +45,10 @@ export default function ActivityScreen() {
     useFocusEffect(
         useCallback(() => {
             if (user?.id) {
-                fetchNotifications(user.id);
-                // Mark all as read when viewing the activity screen
-                markAllAsRead(user.id);
+                // Fetch first, then mark as read to ensure we have data and avoid race conditions
+                fetchNotifications(user.id).then(() => {
+                    markAllAsRead(user.id);
+                });
             }
         }, [user])
     );

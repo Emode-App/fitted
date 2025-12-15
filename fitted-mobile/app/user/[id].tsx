@@ -25,6 +25,13 @@ export default function UserProfileScreen() {
 
     const isOwnProfile = currentUser?.id === id;
 
+    // Redirect to own profile tab if viewing own profile
+    useEffect(() => {
+        if (isOwnProfile && !loading) {
+            router.replace('/(tabs)/profile');
+        }
+    }, [isOwnProfile, loading]);
+
     useEffect(() => {
         if (id) {
             fetchUserData();
@@ -171,10 +178,15 @@ export default function UserProfileScreen() {
         );
     }
 
-    // If viewing own profile, redirect to profile tab
+    // Show loading while redirecting to own profile
     if (isOwnProfile) {
-        router.replace('/(tabs)/profile');
-        return null;
+        return (
+            <View style={[styles.container, { backgroundColor: colors.background }]}>
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator color={colors.text} size="large" />
+                </View>
+            </View>
+        );
     }
 
     return (
