@@ -1,10 +1,11 @@
-import { StyleSheet, FlatList, Pressable, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Modal as RNModal, PanResponder } from 'react-native';
+import { StyleSheet, FlatList, Pressable, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Modal as RNModal, PanResponder, Alert } from 'react-native';
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
 import { BlurView } from 'expo-blur';
+import * as ImagePicker from 'expo-image-picker';
 
 import { Text, View } from '@/components/Themed';
 import { useMessagesStore } from '@/stores/messagesStore';
@@ -14,8 +15,13 @@ import { User, Message } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
 import { Input, Button } from '@/components/Shared';
 import StylistModal from '@/components/StylistModal';
+import PaymentRequestModal from '@/components/PaymentRequestModal';
+import PaymentCard from '@/components/PaymentCard';
+import OutfitDeliveryCard from '@/components/OutfitDeliveryCard';
+import StripeConnectOnboarding from '@/components/StripeConnectOnboarding';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { fetchPaymentIntent, checkConnectStatus, getStylistStripeAccountId } from '@/services/stripeService';
 
 export default function MessagesScreen() {
     const { colors } = useTheme();
@@ -27,6 +33,9 @@ export default function MessagesScreen() {
     const fetchConversations = useMessagesStore((state) => state.fetchConversations);
     const fetchMessages = useMessagesStore((state) => state.fetchMessages);
     const sendMessage = useMessagesStore((state) => state.sendMessage);
+    const sendPaymentRequest = useMessagesStore((state) => state.sendPaymentRequest);
+    const respondToPayment = useMessagesStore((state) => state.respondToPayment);
+    const sendFacePhoto = useMessagesStore((state) => state.sendFacePhoto);
     const setActiveConversation = useMessagesStore((state) => state.setActiveConversation);
     const createConversation = useMessagesStore((state) => state.createConversation);
 
@@ -37,6 +46,9 @@ export default function MessagesScreen() {
     const [searching, setSearching] = useState(false);
     const [conversationSearch, setConversationSearch] = useState('');
     const [showStylistModal, setShowStylistModal] = useState(false);
+    const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [showConnectOnboarding, setShowConnectOnboarding] = useState(false);
+    const [paymentProcessing, setPaymentProcessing] = useState(false);
     const flatListRef = useRef<FlatList>(null);
 
     // Filter conversations by search
@@ -71,6 +83,196 @@ export default function MessagesScreen() {
         setTimeout(() => {
             flatListRef.current?.scrollToEnd();
         }, 100);
+    };
+
+    const handleSendPaymentRequest = async (amount: number, description: string) => {
+        if (!user || !activeConversation) return;
+        await sendPaymentRequest(activeConversation.id, user.id, amount, description);
+        setTimeout(() => {
+            flatListRef.current?.scrollToEnd();
+        }, 100);
+    };
+
+    const handlePaymentAccept = async (messageId: string) => {
+        if (!user || !activeConversation || paymentProcessing) return;
+
+        // Find the message to get the amount and stylist info
+        const paymentMessage = messages.find(m => m.id === messageId);
+        if (!paymentMessage?.payment_request) return;
+
+        const amount = paymentMessage.payment_request.amount;
+        const stylistId = paymentMessage.sender_id;
+        const description = paymentMessage.payment_request.description || 'Styling session';
+
+        setPaymentProcessing(true);
+        try {
+            // Get the stylist's Stripe account ID
+            const stylistStripeAccountId = await getStylistStripeAccountId(stylistId);
+
+            if (!stylistStripeAccountId) {
+                // Stylist hasn't connected Stripe yet — fall back to simulated payment
+                Alert.alert(
+                    'Payment Processing',
+                    'The stylist has not yet connected their payment account. Processing as a simulated payment for now.',
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                            text: 'Continue (Test)',
+                            onPress: async () => {
+                                await respondToPayment(messageId, activeConversation.id, user.id, 'accept');
+                            },
+                        },
+                    ]
+                );
+                return;
+            }
+
+            // Try to use Stripe PaymentSheet (only available in dev builds)
+            let useStripe = false;
+            try {
+                const stripeMod = require('@stripe/stripe-react-native');
+                if (stripeMod?.useStripe) {
+                    useStripe = true;
+                }
+            } catch {
+                // Not available in Expo Go
+            }
+
+            if (useStripe) {
+                // Real Stripe flow
+                const { initPaymentSheet, presentPaymentSheet } = require('@stripe/stripe-react-native');
+
+                // Fetch PaymentIntent from server
+                const paymentData = await fetchPaymentIntent(
+                    amount,
+                    stylistStripeAccountId,
+                    activeConversation.id,
+                    description
+                );
+
+                // Initialize PaymentSheet
+                const { error: initError } = await initPaymentSheet({
+                    paymentIntentClientSecret: paymentData.clientSecret,
+                    customerId: paymentData.customerId,
+                    customerEphemeralKeySecret: paymentData.ephemeralKey,
+                    merchantDisplayName: 'Emode',
+                    allowsDelayedPaymentMethods: false,
+                });
+
+                if (initError) {
+                    Alert.alert('Error', initError.message);
+                    return;
+                }
+
+                // Present PaymentSheet
+                const { error: presentError } = await presentPaymentSheet();
+
+                if (presentError) {
+                    if (presentError.code !== 'Canceled') {
+                        Alert.alert('Payment Failed', presentError.message);
+                    }
+                    return;
+                }
+
+                // Payment succeeded! Update the message status
+                await respondToPayment(messageId, activeConversation.id, user.id, 'accept');
+                Alert.alert('Payment Successful! 💰', `$${amount.toFixed(2)} has been sent to the stylist.`);
+            } else {
+                // Expo Go fallback — simulated payment
+                Alert.alert(
+                    'Development Mode',
+                    `Real payments require a development build. Process $${amount.toFixed(2)} as a test payment?`,
+                    [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                            text: 'Pay (Test)',
+                            onPress: async () => {
+                                await respondToPayment(messageId, activeConversation.id, user.id, 'accept');
+                            },
+                        },
+                    ]
+                );
+            }
+        } catch (error: any) {
+            console.error('Payment error:', error);
+            Alert.alert('Payment Error', error.message || 'Failed to process payment.');
+        } finally {
+            setPaymentProcessing(false);
+        }
+    };
+
+    const handlePaymentDecline = async (messageId: string) => {
+        if (!user || !activeConversation) return;
+        await respondToPayment(messageId, activeConversation.id, user.id, 'decline');
+    };
+
+    // Navigate stylist to create screen with client context
+    const handleCreateOutfit = () => {
+        if (!activeConversation) return;
+        const clientId = activeConversation.otherUser?.id;
+        const clientName = activeConversation.otherUser?.username || 'Client';
+
+        // Look for the most recent shared face photo in the conversation
+        const faceMessage = [...messages].reverse().find(m => m.shared_face_url);
+        const clientFaceUrl = faceMessage?.shared_face_url || activeConversation.otherUser?.ai_face_url || '';
+
+        router.push({
+            pathname: '/(tabs)/create',
+            params: {
+                forConversation: activeConversation.id,
+                forClientId: clientId,
+                forClientName: clientName,
+                forClientFaceUrl: clientFaceUrl,
+            }
+        });
+    };
+
+    // Client shares their face photo for styling
+    const handleShareFace = async () => {
+        if (!user || !activeConversation) return;
+
+        // If user has an AI face photo already, offer to use it or pick new
+        if (user.ai_face_url) {
+            Alert.alert(
+                'Share Face Photo',
+                'Use your saved face photo or pick a new one?',
+                [
+                    {
+                        text: 'Use Saved',
+                        onPress: () => sendFacePhoto(activeConversation.id, user.id, user.ai_face_url!),
+                    },
+                    {
+                        text: 'Pick New',
+                        onPress: () => pickAndShareFace(),
+                    },
+                    { text: 'Cancel', style: 'cancel' },
+                ]
+            );
+        } else {
+            pickAndShareFace();
+        }
+    };
+
+    const pickAndShareFace = async () => {
+        if (!user || !activeConversation) return;
+
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission needed', 'Please grant photo library access');
+            return;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.8,
+        });
+
+        if (!result.canceled && result.assets[0]) {
+            // For now, send the local URI — in production this would upload first
+            await sendFacePhoto(activeConversation.id, user.id, result.assets[0].uri);
+        }
     };
 
     const formatTime = (timestamp: string): string => {
@@ -149,8 +351,101 @@ export default function MessagesScreen() {
         },
     }), []);
 
+    // Render a single message — PaymentCard, OutfitDeliveryCard, FaceShare, or regular bubble
+    const renderMessage = ({ item }: { item: Message & { sender: User } }) => {
+        const isOwn = item.sender_id === user?.id;
+
+        // Payment request message → render PaymentCard
+        if (item.payment_request) {
+            return (
+                <PaymentCard
+                    paymentRequest={item.payment_request}
+                    isOwnMessage={isOwn}
+                    onAccept={() => handlePaymentAccept(item.id)}
+                    onDecline={() => handlePaymentDecline(item.id)}
+                    onCreateOutfit={handleCreateOutfit}
+                    onShareFace={handleShareFace}
+                    timestamp={item.created_at}
+                />
+            );
+        }
+
+        // Outfit delivery message → render OutfitDeliveryCard
+        if (item.styling_delivery) {
+            return (
+                <OutfitDeliveryCard
+                    delivery={item.styling_delivery}
+                    isOwnMessage={isOwn}
+                    timestamp={item.created_at}
+                    onSaveToProfile={() => {
+                        // TODO: implement save to profile (re-post)
+                        Alert.alert('Coming Soon', 'Save to profile will be available soon!');
+                    }}
+                />
+            );
+        }
+
+        // Face photo share → render face share card
+        if (item.shared_face_url) {
+            return (
+                <View style={[
+                    styles.faceShareCard,
+                    {
+                        alignSelf: isOwn ? 'flex-end' : 'flex-start',
+                        backgroundColor: isDark ? 'rgba(139, 92, 246, 0.08)' : 'rgba(139, 92, 246, 0.06)',
+                        borderColor: 'rgba(139, 92, 246, 0.2)',
+                    }
+                ]}>
+                    <View style={styles.faceShareHeader}>
+                        <View style={[styles.faceShareIcon, { backgroundColor: 'rgba(139, 92, 246, 0.12)' }]}>
+                            <Feather name="camera" size={14} color="#8b5cf6" />
+                        </View>
+                        <Text style={[styles.faceShareLabel, { color: colors.textSecondary }]}>
+                            {isOwn ? 'You shared your face photo' : 'Shared face photo for styling'}
+                        </Text>
+                    </View>
+                    <Image
+                        source={{ uri: item.shared_face_url }}
+                        style={styles.faceShareImage}
+                        contentFit="cover"
+                    />
+                    <Text style={[styles.messageTime, { color: colors.textTertiary, alignSelf: 'flex-end', marginTop: 6 }]}>
+                        {formatTime(item.created_at)}
+                    </Text>
+                </View>
+            );
+        }
+
+        // Regular text message
+        return (
+            <View style={[
+                styles.messageBubble,
+                isOwn
+                    ? { backgroundColor: colors.primary, borderBottomRightRadius: 4, alignSelf: 'flex-end' }
+                    : { backgroundColor: colors.backgroundSecondary, borderBottomLeftRadius: 4, alignSelf: 'flex-start' }
+            ]}>
+                <Text style={[
+                    styles.messageText,
+                    isOwn ? { color: colors.primaryForeground } : { color: colors.text }
+                ]}>
+                    {item.text}
+                </Text>
+                <Text style={[
+                    styles.messageTime,
+                    isOwn ? { color: colors.primaryForeground, opacity: 0.7 } : { color: colors.textSecondary }
+                ]}>
+                    {formatTime(item.created_at)}
+                </Text>
+            </View>
+        );
+    };
+
+    const { isDark } = useTheme();
+
     // Chat View
     if (activeConversation) {
+        const isStylist = user?.is_verified_stylist === true;
+
         return (
             <KeyboardAvoidingView
                 style={[styles.container, { backgroundColor: colors.background }]}
@@ -182,30 +477,7 @@ export default function MessagesScreen() {
                     keyExtractor={(item) => item.id}
                     style={styles.messagesList}
                     contentContainerStyle={styles.messagesContent}
-                    renderItem={({ item }) => {
-                        const isOwn = item.sender_id === user?.id;
-                        return (
-                            <View style={[
-                                styles.messageBubble,
-                                isOwn
-                                    ? { backgroundColor: colors.primary, borderBottomRightRadius: 4, alignSelf: 'flex-end' }
-                                    : { backgroundColor: colors.backgroundSecondary, borderBottomLeftRadius: 4, alignSelf: 'flex-start' }
-                            ]}>
-                                <Text style={[
-                                    styles.messageText,
-                                    isOwn ? { color: colors.primaryForeground } : { color: colors.text }
-                                ]}>
-                                    {item.text}
-                                </Text>
-                                <Text style={[
-                                    styles.messageTime,
-                                    isOwn ? { color: colors.primaryForeground, opacity: 0.7 } : { color: colors.textSecondary }
-                                ]}>
-                                    {formatTime(item.created_at)}
-                                </Text>
-                            </View>
-                        );
-                    }}
+                    renderItem={renderMessage}
                     onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
                     ListEmptyComponent={
                         <View style={styles.emptyMessages}>
@@ -217,6 +489,31 @@ export default function MessagesScreen() {
 
                 {/* Input */}
                 <View style={[styles.inputContainer, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
+                    {/* Payment Request Button — Only for verified stylists */}
+                    {isStylist && (
+                        <Pressable
+                            style={[styles.paymentButton]}
+                            onPress={async () => {
+                                // Check if stylist has connected Stripe before allowing payment requests
+                                if (user) {
+                                    const status = await checkConnectStatus(user.id);
+                                    if (!status.onboardingComplete) {
+                                        setShowConnectOnboarding(true);
+                                        return;
+                                    }
+                                }
+                                setShowPaymentModal(true);
+                            }}
+                        >
+                            <LinearGradient
+                                colors={['#10b981', '#059669']}
+                                style={styles.paymentButtonGradient}
+                            >
+                                <MaterialCommunityIcons name="currency-usd" size={20} color="#fff" />
+                            </LinearGradient>
+                        </Pressable>
+                    )}
+
                     <TextInput
                         style={[styles.messageInput, {
                             backgroundColor: colors.backgroundSecondary,
@@ -238,6 +535,14 @@ export default function MessagesScreen() {
                         <Feather name="send" size={20} color={newMessage.trim() ? colors.primaryForeground : colors.textTertiary} />
                     </Pressable>
                 </View>
+
+                {/* Payment Request Modal */}
+                <PaymentRequestModal
+                    visible={showPaymentModal}
+                    onClose={() => setShowPaymentModal(false)}
+                    onSend={handleSendPaymentRequest}
+                    recipientName={activeConversation.otherUser?.username || 'User'}
+                />
             </KeyboardAvoidingView>
         );
     }
@@ -315,7 +620,14 @@ export default function MessagesScreen() {
                                         )}
                                     </View>
                                     <Text style={[styles.lastMessage, { color: colors.textSecondary }]} numberOfLines={1}>
-                                        {item.lastMessage?.text || 'Start a conversation'}
+                                        {item.lastMessage?.styling_delivery
+                                            ? '🎨 Outfit delivered'
+                                            : item.lastMessage?.shared_face_url
+                                                ? '📸 Face photo shared'
+                                                : item.lastMessage?.payment_request
+                                                    ? `💰 $${item.lastMessage.payment_request.amount.toFixed(2)} — ${item.lastMessage.payment_request.status}`
+                                                    : item.lastMessage?.text || 'Start a conversation'
+                                        }
                                     </Text>
                                 </View>
                             </Pressable>
@@ -408,6 +720,17 @@ export default function MessagesScreen() {
                 visible={showStylistModal}
                 onClose={() => setShowStylistModal(false)}
             />
+
+            {/* Stripe Connect Onboarding Modal */}
+            <StripeConnectOnboarding
+                visible={showConnectOnboarding}
+                onClose={() => setShowConnectOnboarding(false)}
+                onComplete={() => {
+                    setShowConnectOnboarding(false);
+                    // After Connect onboarding, open the payment modal
+                    setShowPaymentModal(true);
+                }}
+            />
         </>
     );
 }
@@ -462,6 +785,43 @@ const styles = StyleSheet.create({
     inputContainer: { flexDirection: 'row', alignItems: 'center', padding: 12, borderTopWidth: 1 },
     messageInput: { flex: 1, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, maxHeight: 100, borderWidth: 1, fontFamily: 'Inter_400Regular', paddingTop: 10 },
     sendButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginLeft: 8 },
+
+    // Payment Button
+    paymentButton: { marginRight: 8 },
+    paymentButtonGradient: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+
+    // Face Share Card
+    faceShareCard: {
+        maxWidth: '70%',
+        borderRadius: 16,
+        borderWidth: 1,
+        padding: 12,
+        marginBottom: 8,
+    },
+    faceShareHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 8,
+        gap: 8,
+    },
+    faceShareIcon: {
+        width: 26,
+        height: 26,
+        borderRadius: 13,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    faceShareLabel: {
+        fontSize: 12,
+        fontWeight: '500',
+        fontFamily: 'Inter_500Medium',
+        flex: 1,
+    },
+    faceShareImage: {
+        width: '100%',
+        aspectRatio: 1,
+        borderRadius: 12,
+    },
 
     // Modal
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },

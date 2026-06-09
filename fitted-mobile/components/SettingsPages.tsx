@@ -1,13 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, Pressable, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, Pressable, Alert, ActivityIndicator, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
+import QRCode from 'react-native-qrcode-svg';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
 import DressingRoom from '@/components/DressingRoom';
 import { useMarketplaceStore } from '@/stores/marketplaceStore';
+
+interface LoginSession {
+    id: string;
+    device_name: string;
+    device_type: string;
+    platform: string;
+    logged_in_at: string;
+}
 
 // --- Shared Components ---
 
@@ -120,37 +129,250 @@ export const PrivacyPage = ({ onBack, onNavigate }: { onBack: () => void; onNavi
 // 5. Two-Factor Auth
 export const TwoFactorPage = ({ onBack }: { onBack: () => void }) => {
     const { colors, isDark } = useTheme();
-    const [smsEnabled, setSmsEnabled] = useState(false);
-    const [authAppEnabled, setAuthAppEnabled] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [isEnrolled, setIsEnrolled] = useState(false);
+    const [enrolledFactorId, setEnrolledFactorId] = useState<string | null>(null);
+    const [step, setStep] = useState<'idle' | 'qr' | 'verify'>('idle');
+    const [qrUri, setQrUri] = useState('');
+    const [secret, setSecret] = useState('');
+    const [pendingFactorId, setPendingFactorId] = useState<string | null>(null);
+    const [code, setCode] = useState('');
+    const [error, setError] = useState<string | null>(null);
+    const [actionLoading, setActionLoading] = useState(false);
+
+    useEffect(() => {
+        (async () => {
+            const { data } = await supabase.auth.mfa.listFactors();
+            const verified = (data?.totp ?? []).find((f: any) => f.status === 'verified');
+            if (verified) {
+                setIsEnrolled(true);
+                setEnrolledFactorId(verified.id);
+            }
+            setLoading(false);
+        })();
+    }, []);
+
+    const handleEnroll = async () => {
+        setActionLoading(true);
+        setError(null);
+        try {
+            const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp' });
+            if (error) throw error;
+            setQrUri(data.totp.uri);
+            setSecret(data.totp.secret);
+            setPendingFactorId(data.id);
+            setStep('qr');
+        } catch (e: any) {
+            setError(e.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleVerify = async () => {
+        if (!pendingFactorId || code.length !== 6) return;
+        setActionLoading(true);
+        setError(null);
+        try {
+            const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: pendingFactorId, code });
+            if (error) throw error;
+            setIsEnrolled(true);
+            setEnrolledFactorId(pendingFactorId);
+            setStep('idle');
+            setCode('');
+        } catch (e: any) {
+            setError(e.message);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleDisable = () => {
+        Alert.alert(
+            'Disable Two-Factor Auth',
+            'This will remove authenticator app protection from your account.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Disable', style: 'destructive',
+                    onPress: async () => {
+                        if (!enrolledFactorId) return;
+                        setActionLoading(true);
+                        const { error } = await supabase.auth.mfa.unenroll({ factorId: enrolledFactorId });
+                        if (error) setError(error.message);
+                        else { setIsEnrolled(false); setEnrolledFactorId(null); }
+                        setActionLoading(false);
+                    }
+                }
+            ]
+        );
+    };
+
+    const handleCancelEnroll = async () => {
+        if (pendingFactorId) await supabase.auth.mfa.unenroll({ factorId: pendingFactorId });
+        setPendingFactorId(null);
+        setStep('idle');
+        setCode('');
+        setError(null);
+    };
+
+    if (loading) {
+        return (
+            <>
+                <Header title="Two-Factor Auth" onBack={onBack} />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                    <ActivityIndicator color={colors.text} />
+                </View>
+            </>
+        );
+    }
 
     return (
         <>
             <Header title="Two-Factor Auth" onBack={onBack} />
-            <ScrollView style={styles.scrollContent}>
+            <ScrollView style={styles.scrollContent} keyboardShouldPersistTaps="handled">
+                {/* Hero */}
                 <View style={{ alignItems: 'center', marginVertical: 32 }}>
-                    <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: isDark ? '#1e3a8a' : '#dbeafe', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-                        <Feather name="shield" size={40} color="#2563eb" />
+                    <View style={{
+                        width: 80, height: 80, borderRadius: 40,
+                        backgroundColor: isEnrolled ? (isDark ? '#14532d' : '#dcfce7') : (isDark ? '#1e3a8a' : '#dbeafe'),
+                        alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+                    }}>
+                        <Feather name="shield" size={40} color={isEnrolled ? '#22c55e' : '#2563eb'} />
                     </View>
-                    <Text style={{ fontSize: 20, fontWeight: '700', color: colors.text, marginBottom: 8 }}>Add extra security</Text>
+                    <Text style={{ fontSize: 20, fontWeight: '700', color: colors.text, marginBottom: 8 }}>
+                        {isEnrolled ? '2FA is Active' : 'Add extra security'}
+                    </Text>
                     <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center', paddingHorizontal: 32 }}>
-                        Protect your account with an additional layer of security.
+                        {isEnrolled
+                            ? 'Your account is protected with an authenticator app.'
+                            : 'Protect your account with an additional layer of security.'}
                     </Text>
                 </View>
 
-                <View style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6' }]}>
-                    <ToggleRow
-                        label="Text Message"
-                        subtext="...8832"
-                        value={smsEnabled}
-                        onValueChange={setSmsEnabled}
-                    />
-                    <ToggleRow
-                        label="Authenticator App"
-                        subtext="Recommended"
-                        value={authAppEnabled}
-                        onValueChange={setAuthAppEnabled}
-                    />
-                </View>
+                {/* Idle: status card */}
+                {step === 'idle' && (
+                    <View style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6', padding: 16 }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                                <Feather name="smartphone" size={20} color={colors.textSecondary} />
+                                <View>
+                                    <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>Authenticator App</Text>
+                                    <Text style={{ fontSize: 12, color: isEnrolled ? '#22c55e' : colors.textSecondary }}>
+                                        {isEnrolled ? 'Enabled' : 'Not set up'}
+                                    </Text>
+                                </View>
+                            </View>
+                            {isEnrolled ? (
+                                <TouchableOpacity onPress={handleDisable} disabled={actionLoading}>
+                                    <Text style={{ fontSize: 13, color: '#ef4444', fontWeight: '600' }}>
+                                        {actionLoading ? '...' : 'Disable'}
+                                    </Text>
+                                </TouchableOpacity>
+                            ) : (
+                                <TouchableOpacity onPress={handleEnroll} disabled={actionLoading}>
+                                    <Text style={{ fontSize: 13, color: '#2563eb', fontWeight: '600' }}>
+                                        {actionLoading ? '...' : 'Set Up'}
+                                    </Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </View>
+                )}
+
+                {/* QR code step */}
+                {step === 'qr' && (
+                    <View style={{ gap: 20 }}>
+                        <View style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6', padding: 20, alignItems: 'center', gap: 16 }]}>
+                            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, textAlign: 'center' }}>
+                                Scan with your authenticator app
+                            </Text>
+                            <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center' }}>
+                                Use Google Authenticator, Authy, or any TOTP app
+                            </Text>
+                            <View style={{ backgroundColor: '#ffffff', padding: 16, borderRadius: 12 }}>
+                                <QRCode value={qrUri} size={180} />
+                            </View>
+                            <Text style={{ fontSize: 12, color: colors.textSecondary, textAlign: 'center' }}>
+                                Can't scan? Enter this code manually:
+                            </Text>
+                            <View style={{ backgroundColor: isDark ? '#27272a' : '#f3f4f6', borderRadius: 8, padding: 12, width: '100%' }}>
+                                <Text style={{
+                                    fontSize: 13,
+                                    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+                                    fontWeight: '600', color: colors.text, textAlign: 'center', letterSpacing: 2,
+                                }}>
+                                    {secret}
+                                </Text>
+                            </View>
+                        </View>
+                        <TouchableOpacity
+                            style={[styles.button, { backgroundColor: isDark ? '#ffffff' : '#000000' }]}
+                            onPress={() => setStep('verify')}
+                        >
+                            <Text style={{ color: isDark ? '#000000' : '#ffffff', fontWeight: '600' }}>Next: Enter Code</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={handleCancelEnroll} style={{ alignItems: 'center', padding: 12 }}>
+                            <Text style={{ color: colors.textSecondary }}>Cancel</Text>
+                        </TouchableOpacity>
+                    </View>
+                )}
+
+                {/* Verify step */}
+                {step === 'verify' && (
+                    <View style={{ gap: 20 }}>
+                        <View style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6', padding: 20, gap: 16 }]}>
+                            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>Enter the 6-digit code</Text>
+                            <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                                Open your authenticator app and enter the code shown
+                            </Text>
+                            <TextInput
+                                style={[styles.input, {
+                                    backgroundColor: isDark ? '#27272a' : '#f9fafb',
+                                    color: colors.text,
+                                    borderColor: isDark ? '#3f3f46' : '#e5e7eb',
+                                    textAlign: 'center', fontSize: 28, letterSpacing: 12, fontWeight: '700',
+                                }]}
+                                value={code}
+                                onChangeText={t => { setCode(t.replace(/\D/g, '').slice(0, 6)); setError(null); }}
+                                keyboardType="number-pad"
+                                maxLength={6}
+                                placeholder="000000"
+                                placeholderTextColor={colors.placeholder}
+                                autoFocus
+                            />
+                            {error && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <Feather name="alert-circle" size={14} color="#ef4444" />
+                                    <Text style={{ color: '#ef4444', fontSize: 13 }}>{error}</Text>
+                                </View>
+                            )}
+                        </View>
+                        <TouchableOpacity
+                            style={[styles.button, {
+                                backgroundColor: code.length === 6
+                                    ? (isDark ? '#ffffff' : '#000000')
+                                    : (isDark ? '#3f3f46' : '#e5e7eb'),
+                            }]}
+                            onPress={handleVerify}
+                            disabled={code.length !== 6 || actionLoading}
+                        >
+                            {actionLoading
+                                ? <ActivityIndicator color={code.length === 6 ? (isDark ? '#000' : '#fff') : colors.textSecondary} />
+                                : <Text style={{ color: code.length === 6 ? (isDark ? '#000000' : '#ffffff') : colors.textSecondary, fontWeight: '600' }}>
+                                    Enable 2FA
+                                </Text>
+                            }
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { setStep('qr'); setError(null); setCode(''); }} style={{ alignItems: 'center', padding: 12 }}>
+                            <Text style={{ color: colors.textSecondary }}>Back to QR Code</Text>
+                        </TouchableOpacity>
+                    </View>
+                )}
+
+                {error && step === 'idle' && (
+                    <Text style={{ color: '#ef4444', fontSize: 13, textAlign: 'center', marginTop: 16 }}>{error}</Text>
+                )}
             </ScrollView>
         </>
     );
@@ -159,31 +381,151 @@ export const TwoFactorPage = ({ onBack }: { onBack: () => void }) => {
 // 6. Login Activity
 export const LoginActivityPage = ({ onBack }: { onBack: () => void }) => {
     const { colors, isDark } = useTheme();
+    const { user, currentSessionId, signOut } = useAuthStore();
+    const [sessions, setSessions] = useState<LoginSession[]>([]);
+    const [loading, setLoading] = useState(true);
 
-    const SessionItem = ({ name, time, isActive, isPhone }: { name: string, time: string, isActive?: boolean, isPhone?: boolean }) => (
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: isDark ? '#27272a' : '#f3f4f6' }}>
-            <Feather name={isPhone ? "smartphone" : "monitor"} size={24} color={colors.textSecondary} style={{ marginRight: 16 }} />
-            <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>{name}</Text>
-                <Text style={{ fontSize: 13, color: isActive ? '#10b981' : colors.textSecondary, fontWeight: isActive ? '700' : '400' }}>
-                    {isActive ? 'Active now' : time}
-                </Text>
-            </View>
-            {!isActive && (
-                <TouchableOpacity>
-                    <Text style={{ fontSize: 13, color: '#ef4444', fontWeight: '600' }}>Log Out</Text>
-                </TouchableOpacity>
-            )}
-        </View>
-    );
+    useEffect(() => {
+        (async () => {
+            if (!user?.id) { setLoading(false); return; }
+            const { data } = await supabase
+                .from('login_sessions')
+                .select('*')
+                .eq('user_id', user.id)
+                .order('logged_in_at', { ascending: false })
+                .limit(20);
+            if (data) setSessions(data as LoginSession[]);
+            setLoading(false);
+        })();
+    }, [user?.id]);
+
+    const handleRemoveSession = (session: LoginSession) => {
+        if (session.id === currentSessionId) {
+            Alert.alert('Log Out', 'Log out of this device?', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Log Out', style: 'destructive', onPress: () => signOut() },
+            ]);
+        } else {
+            Alert.alert('Remove Session', `Remove login record for ${session.device_name}?`, [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Remove', style: 'destructive',
+                    onPress: async () => {
+                        await supabase.from('login_sessions').delete().eq('id', session.id);
+                        setSessions(prev => prev.filter(s => s.id !== session.id));
+                    },
+                },
+            ]);
+        }
+    };
+
+    const formatTime = (ts: string) => {
+        const diff = Date.now() - new Date(ts).getTime();
+        const mins = Math.floor(diff / 60000);
+        const hrs = Math.floor(diff / 3600000);
+        const days = Math.floor(diff / 86400000);
+        if (mins < 2) return 'Just now';
+        if (mins < 60) return `${mins}m ago`;
+        if (hrs < 24) return `${hrs}h ago`;
+        if (days === 1) return 'Yesterday';
+        return new Date(ts).toLocaleDateString();
+    };
+
+    if (loading) {
+        return (
+            <>
+                <Header title="Login Activity" onBack={onBack} />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                    <ActivityIndicator color={colors.text} />
+                </View>
+            </>
+        );
+    }
+
+    if (sessions.length === 0) {
+        return (
+            <>
+                <Header title="Login Activity" onBack={onBack} />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 }}>
+                    <Feather name="monitor" size={48} color={colors.textTertiary} />
+                    <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text, marginTop: 16 }}>No sessions recorded</Text>
+                    <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center', marginTop: 8 }}>
+                        Login activity will appear here after your next sign-in.
+                    </Text>
+                </View>
+            </>
+        );
+    }
 
     return (
         <>
             <Header title="Login Activity" onBack={onBack} />
             <ScrollView style={styles.scrollContent}>
-                <SessionItem name="iPhone 15 Pro" time="Active now" isActive isPhone />
-                <SessionItem name="MacBook Air" time="2 hours ago" />
-                <SessionItem name="Chrome on Windows" time="Yesterday" />
+                <Text style={[styles.sectionTitle, { color: isDark ? '#71717a' : '#9ca3af', marginBottom: 16 }]}>
+                    Recent Sign-ins
+                </Text>
+                {sessions.map((session) => {
+                    const isCurrent = session.id === currentSessionId;
+                    const isPhone = session.device_type === 'phone';
+                    return (
+                        <View
+                            key={session.id}
+                            style={{
+                                flexDirection: 'row', alignItems: 'center',
+                                paddingVertical: 16, borderBottomWidth: 1,
+                                borderBottomColor: isDark ? '#27272a' : '#f3f4f6',
+                            }}
+                        >
+                            <View style={{
+                                width: 40, height: 40, borderRadius: 20,
+                                backgroundColor: isCurrent
+                                    ? (isDark ? '#14532d' : '#dcfce7')
+                                    : (isDark ? '#27272a' : '#f3f4f6'),
+                                alignItems: 'center', justifyContent: 'center', marginRight: 14,
+                            }}>
+                                <Feather
+                                    name={isPhone ? 'smartphone' : 'monitor'}
+                                    size={18}
+                                    color={isCurrent ? '#22c55e' : colors.textSecondary}
+                                />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                    <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>
+                                        {session.device_name}
+                                    </Text>
+                                    {isCurrent && (
+                                        <View style={{
+                                            backgroundColor: isDark ? '#14532d' : '#dcfce7',
+                                            borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
+                                        }}>
+                                            <Text style={{ fontSize: 10, fontWeight: '700', color: '#16a34a' }}>THIS DEVICE</Text>
+                                        </View>
+                                    )}
+                                </View>
+                                <Text style={{
+                                    fontSize: 13,
+                                    color: isCurrent ? '#10b981' : colors.textSecondary,
+                                    fontWeight: isCurrent ? '600' : '400', marginTop: 2,
+                                }}>
+                                    {isCurrent ? 'Active now' : formatTime(session.logged_in_at)}
+                                </Text>
+                                <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 1 }}>
+                                    {session.platform === 'ios' ? 'iOS' : session.platform === 'android' ? 'Android' : session.platform}
+                                </Text>
+                            </View>
+                            <TouchableOpacity onPress={() => handleRemoveSession(session)} hitSlop={12}>
+                                <Text style={{
+                                    fontSize: 13,
+                                    color: isCurrent ? '#ef4444' : colors.textSecondary,
+                                    fontWeight: '600',
+                                }}>
+                                    {isCurrent ? 'Log Out' : 'Remove'}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    );
+                })}
             </ScrollView>
         </>
     );
@@ -230,7 +572,7 @@ export const NotificationsPage = ({ onBack }: { onBack: () => void }) => {
 export const AppearancePage = ({ onBack }: { onBack: () => void }) => {
     const { colors, isDark, mode, setMode } = useTheme();
 
-    const ThemeButton = ({ id, label, icon }: { id: string; label: string; icon: string }) => {
+    const ThemeButton = ({ id, label, icon, swatch }: { id: string; label: string; icon?: string; swatch?: string }) => {
         const isSelected = mode === id;
         return (
             <Pressable
@@ -243,7 +585,11 @@ export const AppearancePage = ({ onBack }: { onBack: () => void }) => {
                 ]}
                 onPress={() => setMode(id as any)}
             >
-                <Feather name={icon as any} size={24} color={isSelected ? colors.text : colors.textSecondary} />
+                {swatch ? (
+                    <View style={[styles.themeSwatch, { backgroundColor: swatch }]} />
+                ) : (
+                    <Feather name={icon as any} size={24} color={isSelected ? colors.text : colors.textSecondary} />
+                )}
                 <Text style={{ fontSize: 13, fontWeight: '600', color: isSelected ? colors.text : colors.textSecondary }}>{label}</Text>
             </Pressable>
         );
@@ -257,6 +603,7 @@ export const AppearancePage = ({ onBack }: { onBack: () => void }) => {
                     <ThemeButton id="light" label="Light" icon="sun" />
                     <ThemeButton id="dark" label="Dark" icon="moon" />
                     <ThemeButton id="system" label="System" icon="monitor" />
+                    <ThemeButton id="emode" label="Emode" swatch="#F5F2EC" />
                 </View>
             </ScrollView>
         </>
@@ -686,15 +1033,24 @@ const styles = StyleSheet.create({
     },
     themeContainer: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         gap: 16,
     },
     themeButton: {
-        flex: 1,
+        flexBasis: '47%',
+        flexGrow: 1,
         padding: 16,
         borderRadius: 12,
         borderWidth: 1,
         alignItems: 'center',
         gap: 12,
+    },
+    themeSwatch: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#e4e4e7',
     },
     input: {
         borderRadius: 12,

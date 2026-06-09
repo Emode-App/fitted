@@ -9,10 +9,29 @@ import { useTheme } from '@/hooks/useTheme';
 import { useMarketplaceStore } from '@/stores/marketplaceStore';
 import { useAuthStore } from '@/stores/authStore';
 import { Product } from '@/types';
+import TutorialModal, { useFirstVisitTutorial, TutorialStep } from '@/components/TutorialModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ITEM_SIZE = (SCREEN_WIDTH - 48) / 2;
 const IMAGE_SIZE = SCREEN_WIDTH - 32; // Square image container
+
+const AI_TRYON_TUTORIAL_STEPS: TutorialStep[] = [
+    {
+        icon: 'user',
+        title: 'Your AI Double',
+        body: 'Add a face photo in your profile so the AI can render outfits directly on you.',
+    },
+    {
+        icon: 'cpu',
+        title: 'Pick & Generate',
+        body: "Select pieces from your dressing room and we'll generate a realistic try-on of the full outfit.",
+    },
+    {
+        icon: 'shopping-bag',
+        title: 'Shop The Look',
+        body: 'Like what you see? Add pieces straight to your cart from this preview.',
+    },
+];
 
 interface DressingRoomPreviewProps {
     visible: boolean;
@@ -37,6 +56,9 @@ export default function DressingRoomPreview({ visible, onClose }: DressingRoomPr
 
     // Local uploaded images (not from marketplace)
     const [uploadedImages, setUploadedImages] = useState<{ id: string; uri: string; name: string }[]>([]);
+
+    // First-time AI try-on tutorial
+    const { visible: showTryOnTutorial, dismiss: dismissTryOnTutorial } = useFirstVisitTutorial('has_seen_ai_tryon_tutorial', visible);
 
     const formatPrice = (price: number) => `$${price.toFixed(2)}`;
 
@@ -298,6 +320,13 @@ export default function DressingRoomPreview({ visible, onClose }: DressingRoomPr
                         </LinearGradient>
                     </Pressable>
                 </View>
+
+                <TutorialModal
+                    visible={showTryOnTutorial}
+                    onDismiss={dismissTryOnTutorial}
+                    title="AI Try-On"
+                    steps={AI_TRYON_TUTORIAL_STEPS}
+                />
             </View>
         </Modal>
     );

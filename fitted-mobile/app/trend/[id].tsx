@@ -75,7 +75,7 @@ export default function TrendDetailScreen() {
                 {/* Description */}
                 <View style={[styles.descriptionContainer, { backgroundColor: colors.background }]}>
                     <Text style={[styles.descriptionText, { color: colors.textSecondary }]}>
-                        Explore the latest looks defining the <Text style={{ color: colors.text, fontWeight: '700' }}>{name}</Text> aesthetic, curated by the Fitted community.
+                        Explore the latest looks defining the <Text style={{ color: colors.text, fontWeight: '700' }}>{name}</Text> aesthetic, curated by the Emode community.
                     </Text>
                 </View>
 

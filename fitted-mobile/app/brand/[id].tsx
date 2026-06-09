@@ -91,7 +91,7 @@ export default function BrandDetailScreen() {
                 <View style={[styles.heroContainer, { backgroundColor: colors.backgroundSecondary }]}>
                     <Text style={[styles.heroBrandName, { color: colors.text }]}>{brandName}</Text>
                     <Text style={[styles.heroDescription, { color: colors.textSecondary }]}>
-                        Discover the latest collection and trending items from {brandName} on Fitted.
+                        Discover the latest collection and trending items from {brandName} on Emode.
                     </Text>
                 </View>
 

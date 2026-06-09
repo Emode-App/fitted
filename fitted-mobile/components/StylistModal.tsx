@@ -6,6 +6,7 @@ import {
     Modal,
     Pressable,
     ActivityIndicator,
+    Alert,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -14,6 +15,11 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
+import {
+    purchaseStylistSubscription,
+    restorePurchases,
+    syncSubscriptionToSupabase,
+} from '@/services/revenueCatService';
 
 interface StylistModalProps {
     visible: boolean;
@@ -25,6 +31,7 @@ export default function StylistModal({ visible, onClose }: StylistModalProps) {
     const user = useAuthStore((state) => state.user);
     const setUser = useAuthStore((state) => state.setUser);
     const [loading, setLoading] = useState(false);
+    const [restoring, setRestoring] = useState(false);
 
     const benefits = [
         'Blue Verified Badge on profile',
@@ -37,27 +44,90 @@ export default function StylistModal({ visible, onClose }: StylistModalProps) {
 
         setLoading(true);
         try {
-            // TODO: Integrate actual payment processing (Stripe, RevenueCat, etc.)
-            // For now, we'll just update the user's stylist status
+            const { success, error } = await purchaseStylistSubscription();
 
-            const { error } = await supabase
-                .from('users')
-                .update({ is_verified_stylist: true })
-                .eq('id', user.id);
-
-            if (error) {
-                console.error('Error updating stylist status:', error);
-                alert('Failed to process verification. Please try again.');
-            } else {
-                setUser({ ...user, is_verified_stylist: true });
-                alert('Congratulations! You are now a Verified Stylist! 🎉');
-                onClose();
+            if (error === 'cancelled') {
+                // User cancelled — do nothing
+                return;
             }
-        } catch (error) {
-            console.error('Error:', error);
-            alert('An error occurred. Please try again.');
+
+            if (!success) {
+                // If RevenueCat isn't available (Expo Go), fall back to direct DB update for testing
+                if (error?.includes('not available')) {
+                    Alert.alert(
+                        'Development Mode',
+                        'In-app purchases require a development build. Enable stylist mode for testing?',
+                        [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                                text: 'Enable for Testing',
+                                onPress: async () => {
+                                    const { error: dbError } = await supabase
+                                        .from('users')
+                                        .update({ is_verified_stylist: true, subscription_status: 'active' })
+                                        .eq('id', user.id);
+
+                                    if (!dbError) {
+                                        setUser({ ...user, is_verified_stylist: true, subscription_status: 'active' });
+                                        Alert.alert('✅ Enabled', 'Stylist mode enabled for testing. In production, this will require a real subscription.');
+                                        onClose();
+                                    } else {
+                                        Alert.alert('Error', 'Failed to enable testing mode.');
+                                    }
+                                },
+                            },
+                        ]
+                    );
+                    return;
+                }
+
+                Alert.alert('Purchase Failed', error || 'Unable to complete purchase. Please try again.');
+                return;
+            }
+
+            // Purchase succeeded — sync to Supabase
+            await syncSubscriptionToSupabase(user.id, 'stylist', true);
+            setUser({ ...user, is_verified_stylist: true, subscription_status: 'active' });
+
+            Alert.alert('Congratulations! 🎉', 'You are now a Verified Stylist! You can start accepting styling requests.');
+            onClose();
+        } catch (error: any) {
+            console.error('Purchase error:', error);
+            Alert.alert('Error', error.message || 'An error occurred. Please try again.');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleRestore = async () => {
+        if (!user) return;
+        setRestoring(true);
+
+        try {
+            const { success, activeEntitlements, error } = await restorePurchases();
+
+            if (!success) {
+                if (error?.includes('not available')) {
+                    Alert.alert('Not Available', 'In-app purchases require a development build.');
+                } else {
+                    Alert.alert('Restore Failed', error || 'Could not restore purchases.');
+                }
+                return;
+            }
+
+            const hasStylist = activeEntitlements.includes('verified_stylist');
+            if (hasStylist) {
+                await syncSubscriptionToSupabase(user.id, 'stylist', true);
+                setUser({ ...user, is_verified_stylist: true, subscription_status: 'active' });
+                Alert.alert('Restored!', 'Your Stylist subscription has been restored.');
+                onClose();
+            } else {
+                Alert.alert('No Subscription', 'No active Stylist subscription found on this account.');
+            }
+        } catch (error: any) {
+            Alert.alert('Error', error.message || 'Failed to restore purchases.');
+        } finally {
+            setRestoring(false);
         }
     };
 
@@ -118,20 +188,36 @@ export default function StylistModal({ visible, onClose }: StylistModalProps) {
                     </View>
 
                     {/* Purchase button with gradient */}
-                    <Pressable onPress={handlePurchase} disabled={loading} style={styles.purchaseButtonWrapper}>
+                    <Pressable onPress={handlePurchase} disabled={loading || restoring} style={styles.purchaseButtonWrapper}>
                         <LinearGradient
                             colors={['#a855f7', '#7c3aed']}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 1, y: 0 }}
-                            style={[styles.purchaseButton, loading && styles.purchaseButtonDisabled]}
+                            style={[styles.purchaseButton, (loading || restoring) && styles.purchaseButtonDisabled]}
                         >
                             {loading ? (
                                 <ActivityIndicator color="#fff" />
                             ) : (
-                                <Text style={styles.purchaseButtonText}>Purchase Verification</Text>
+                                <Text style={styles.purchaseButtonText}>Subscribe Now</Text>
                             )}
                         </LinearGradient>
                     </Pressable>
+
+                    {/* Restore purchases link */}
+                    <Pressable onPress={handleRestore} disabled={loading || restoring} style={styles.restoreButton}>
+                        {restoring ? (
+                            <ActivityIndicator color={colors.textTertiary} size="small" />
+                        ) : (
+                            <Text style={[styles.restoreText, { color: colors.textTertiary }]}>
+                                Restore Purchases
+                            </Text>
+                        )}
+                    </Pressable>
+
+                    {/* Legal note */}
+                    <Text style={[styles.legalText, { color: colors.textTertiary }]}>
+                        Subscription renews monthly. Cancel anytime in your device settings.
+                    </Text>
                 </View>
             </View>
         </Modal>
@@ -258,5 +344,19 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '600',
         fontFamily: 'Inter_700Bold',
+    },
+    restoreButton: {
+        marginTop: 12,
+        padding: 8,
+    },
+    restoreText: {
+        fontSize: 13,
+        textDecorationLine: 'underline',
+    },
+    legalText: {
+        fontSize: 10,
+        textAlign: 'center',
+        marginTop: 8,
+        lineHeight: 14,
     },
 });

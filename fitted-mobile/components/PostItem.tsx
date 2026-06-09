@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
-import { StyleSheet, Pressable, Image, Dimensions, View as RNView, Text as RNText, FlatList, Modal, Linking, Alert } from 'react-native';
+import { StyleSheet, Pressable, Image, Dimensions, View as RNView, Text as RNText, FlatList, Modal, Linking, Alert, Share } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
+import * as Haptics from 'expo-haptics';
 
 import MentionText from '@/components/MentionText';
 import { Post, ClothingItem } from '@/types';
@@ -22,7 +23,7 @@ interface PostItemProps {
     currentUserId?: string;
 }
 
-// Item Link Modal Component
+// Item Link Modal — shows the tapped item's details with a link circle for its purchase link
 function ItemLinkModal({
     visible,
     item,
@@ -36,48 +37,46 @@ function ItemLinkModal({
 
     if (!item) return null;
 
-    const handleViewOnStockX = async () => {
-        if (item.purchase_link) {
-            try {
-                const canOpen = await Linking.canOpenURL(item.purchase_link);
-                if (canOpen) {
-                    await Linking.openURL(item.purchase_link);
-                } else {
-                    Alert.alert('Cannot Open Link', 'Unable to open this URL on your device.');
-                }
-            } catch (error) {
-                console.error('Error opening link:', error);
-                Alert.alert('Error', 'Failed to open the link.');
-            }
-        }
+    const openLink = async (url: string) => {
+        const fullUrl = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+        try { await Linking.openURL(fullUrl); } catch {}
     };
 
     return (
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <Pressable style={styles.modalOverlay} onPress={onClose}>
-                <Pressable style={[styles.modalContent, { backgroundColor: colors.background }]} onPress={(e) => e.stopPropagation()}>
-                    {/* Item Image */}
+                <Pressable style={[styles.modalContent, { backgroundColor: colors.background }]} onPress={e => e.stopPropagation()}>
+                    {/* Item image */}
                     <ExpoImage
                         source={{ uri: item.image_url }}
                         style={styles.modalItemImage}
                         contentFit="contain"
                     />
 
-                    {/* Item Details */}
+                    {/* Item details */}
                     <RNText style={[styles.modalBrand, { color: colors.textSecondary }]}>{item.brand}</RNText>
                     <RNText style={[styles.modalName, { color: colors.text }]}>{item.name}</RNText>
-                    <RNText style={[styles.modalPrice, { color: colors.primary }]}>${item.price}</RNText>
+                    {item.price > 0 && (
+                        <RNText style={[styles.modalPrice, { color: colors.primary }]}>${item.price}</RNText>
+                    )}
 
-                    {/* Action Button */}
-                    <Pressable
-                        style={[styles.modalButton, { backgroundColor: colors.primary }]}
-                        onPress={handleViewOnStockX}
-                    >
-                        <Feather name="external-link" size={18} color="#fff" />
-                        <RNText style={styles.modalButtonText}>View on StockX</RNText>
-                    </Pressable>
+                    {/* Link circle(s) for this item — one per purchase URL, max 5 */}
+                    {item.purchase_link && (
+                        <RNView style={styles.linksRow}>
+                            {item.purchase_link.split(',').map(s => s.trim()).filter(Boolean).slice(0, 5).map((url, idx) => (
+                                <Pressable
+                                    key={idx}
+                                    style={({ pressed }) => [styles.linkWrapper, { opacity: pressed ? 0.7 : 1 }]}
+                                    onPress={() => openLink(url)}
+                                >
+                                    <RNView style={[styles.linkCircle, { backgroundColor: colors.backgroundSecondary, borderColor: colors.border }]}>
+                                        <RNText style={styles.linkEmoji}>🔗</RNText>
+                                    </RNView>
+                                </Pressable>
+                            ))}
+                        </RNView>
+                    )}
 
-                    {/* Close Button */}
                     <Pressable style={styles.modalCloseButton} onPress={onClose}>
                         <RNText style={[styles.modalCloseText, { color: colors.textTertiary }]}>Close</RNText>
                     </Pressable>
@@ -104,8 +103,6 @@ export default function PostItem({ post, onLike, onComment, onShare, onSave, onU
     // Menu modal state
     const [menuVisible, setMenuVisible] = useState(false);
     const isOwnPost = currentUserId && post.user_id === currentUserId;
-
-
 
     const handleItemPress = (item: ClothingItem) => {
         setSelectedItem(item);
@@ -572,8 +569,16 @@ const styles = StyleSheet.create({
     modalContent: {
         borderTopLeftRadius: 20,
         borderTopRightRadius: 20,
-        padding: 20,
+        paddingHorizontal: 24,
+        paddingTop: 24,
+        paddingBottom: 8,
         alignItems: 'center',
+    },
+    modalTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+        marginBottom: 20,
+        letterSpacing: 0.3,
     },
     modalItemImage: {
         width: 150,
@@ -596,22 +601,34 @@ const styles = StyleSheet.create({
         fontSize: 20,
         fontWeight: '700',
         marginTop: 8,
+        marginBottom: 4,
     },
-    modalButton: {
+    linksRow: {
         flexDirection: 'row',
+        gap: 16,
+        justifyContent: 'center',
+        marginBottom: 8,
+    },
+    linkWrapper: {
         alignItems: 'center',
-        paddingHorizontal: 24,
-        paddingVertical: 14,
-        borderRadius: 12,
-        gap: 8,
-        marginTop: 20,
-        width: '100%',
+        gap: 6,
+        width: 64,
+    },
+    linkCircle: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        borderWidth: 1.5,
+        alignItems: 'center',
         justifyContent: 'center',
     },
-    modalButtonText: {
-        color: '#fff',
-        fontSize: 16,
-        fontWeight: '600',
+    linkEmoji: {
+        fontSize: 22,
+    },
+    linkLabel: {
+        fontSize: 11,
+        textAlign: 'center',
+        width: 64,
     },
     modalCloseButton: {
         paddingVertical: 16,

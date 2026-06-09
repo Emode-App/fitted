@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { Tabs } from 'expo-router';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
@@ -34,7 +34,7 @@ export default function TabLayout() {
                         </View>
                     )}
                 </Pressable>
-                <Text style={[styles.logo, { color: colors.text }]}>FITTED.</Text>
+                <Text style={[styles.logo, { color: colors.text }]}>EMODE.</Text>
                 <Pressable style={styles.headerButton} onPress={() => setShowSettings(true)}>
                     <Feather name="menu" size={24} color={colors.text} />
                 </Pressable>

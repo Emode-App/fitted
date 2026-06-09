@@ -48,7 +48,7 @@ export default function ProductSearchModal({
     const [searched, setSearched] = useState(false);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
 
-    const RECENT_SEARCHES_KEY = 'fitted_recent_product_searches';
+    const RECENT_SEARCHES_KEY = 'emode_recent_product_searches';
     const MAX_RECENT_SEARCHES = 8;
 
     // Load recent searches on mount

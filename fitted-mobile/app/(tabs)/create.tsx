@@ -1,4 +1,4 @@
-﻿import { StyleSheet, TextInput, Pressable, Alert, ActivityIndicator, Dimensions, Keyboard, TouchableWithoutFeedback, View as RNView, Modal } from 'react-native';
+import { StyleSheet, TextInput, Pressable, Alert, ActivityIndicator, Dimensions, Keyboard, TouchableWithoutFeedback, View as RNView, Modal } from 'react-native';
 import { useState, useRef, useEffect } from 'react';
 import ViewShot, { captureRef } from 'react-native-view-shot';
 import { Feather, Ionicons } from '@expo/vector-icons';
@@ -6,7 +6,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
 import * as ImageManipulator from 'expo-image-manipulator';
-import Animated, { useSharedValue, useAnimatedStyle, withSpring, runOnJS } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, withSequence, runOnJS } from 'react-native-reanimated';
 import { Gesture, GestureDetector, GestureHandlerRootView, FlatList, ScrollView } from 'react-native-gesture-handler';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,6 +19,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
 import { BACKGROUND_OPTIONS, DEFAULT_BACKGROUND, BackgroundOption, POLAROID_FRAME } from '@/constants/backgrounds';
 import CropModal from '@/components/CropModal';
+import TutorialModal, { useFirstVisitTutorial, TutorialStep } from '@/components/TutorialModal';
 import ProductSearchModal from '@/components/ProductSearchModal';
 import FolderCarousel from '@/components/FolderCarousel';
 import AssetGrid from '@/components/AssetGrid';
@@ -27,6 +28,9 @@ import { Asset, useWardrobeStore } from '@/stores/wardrobeStore';
 import { useTheme } from '@/hooks/useTheme';
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as MediaLibrary from 'expo-media-library';
+import { useMessagesStore } from '@/stores/messagesStore';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 // Removed legacy shared component import that might conflict if not used exactly as before
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -49,6 +53,24 @@ interface MusicTrack {
     duration: string;
     previewUrl?: string; // For future audio playback
 }
+
+const CANVAS_TUTORIAL_STEPS: TutorialStep[] = [
+    {
+        icon: 'search',
+        title: 'Find Your Pieces',
+        body: 'Search for any clothing item or upload photos from your camera roll to add to the canvas.',
+    },
+    {
+        icon: 'move',
+        title: 'Arrange Your Fit',
+        body: 'Drag, pinch to resize, and rotate items to build your outfit exactly how you want it.',
+    },
+    {
+        icon: 'zap',
+        title: 'Generate & Post',
+        body: 'Hit generate for an AI-rendered look, then share it to your feed or save it to your wardrobe.',
+    },
+];
 
 const PLACEHOLDER_MUSIC_TRACKS: MusicTrack[] = [
     { id: '1', name: 'No Music', artist: 'Silent', duration: '0:00' },
@@ -225,6 +247,43 @@ function DraggableImage({
     );
 }
 
+// Preview item — always 180×180 so position never shifts when toggling frames.
+// Plays a damped swing animation whenever the frame state changes.
+function PreviewItem({ canvasItem, keepFrames }: { canvasItem: CanvasItem; keepFrames: boolean }) {
+    const swing = useSharedValue(0);
+    const mounted = useRef(false);
+
+    useEffect(() => {
+        if (!mounted.current) { mounted.current = true; return; }
+        swing.value = withSequence(
+            withTiming( 0.22, { duration: 70 }),
+            withTiming(-0.15, { duration: 100 }),
+            withTiming( 0.09, { duration: 90 }),
+            withTiming(-0.04, { duration: 80 }),
+            withTiming( 0,    { duration: 70 }),
+        );
+    }, [keepFrames]);
+
+    const swingStyle = useAnimatedStyle(() => ({
+        transform: [{ rotate: `${swing.value}rad` }],
+    }));
+
+    return (
+        <Animated.View style={[{ width: 180, height: 180 }, swingStyle]}>
+            {keepFrames && canvasItem.usePolaroid ? (
+                <View style={{ width: 180, height: 180 }}>
+                    <View style={{ position: 'absolute', top: 25, left: 25, width: 130, height: 130, overflow: 'hidden' }}>
+                        <Image source={{ uri: canvasItem.url }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                    </View>
+                    <Image source={POLAROID_FRAME} style={{ position: 'absolute', width: '100%', height: '100%' }} contentFit="contain" />
+                </View>
+            ) : (
+                <Image source={{ uri: canvasItem.url }} style={{ width: 180, height: 180 }} contentFit="cover" />
+            )}
+        </Animated.View>
+    );
+}
+
 // Step Indicator Component
 function StepIndicator({ currentStep, colors }: { currentStep: number; colors: any }) {
     const steps = ['Upload', 'Canvas', 'Preview'];
@@ -265,6 +324,9 @@ export default function CreateScreen() {
     const { colors } = useTheme();
     const user = useAuthStore((state) => state.user);
 
+    // First-time canvas tutorial
+    const { visible: showCanvasTutorial, dismiss: dismissCanvasTutorial } = useFirstVisitTutorial('has_seen_canvas_tutorial');
+
     // Step state (1 = Build, 2 = Preview)
     const [currentStep, setCurrentStep] = useState(1);
 
@@ -278,6 +340,14 @@ export default function CreateScreen() {
     const params = useLocalSearchParams();
     const draftId = params.draftId as string;
     const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
+
+    // Styling-for-client params (passed from Messages screen)
+    const forConversation = params.forConversation as string;
+    const forClientId = params.forClientId as string;
+    const forClientName = params.forClientName as string;
+    const forClientFaceUrl = params.forClientFaceUrl as string;
+    const isStylingFor = !!forConversation && !!forClientId;
+    const sendStylingDelivery = useMessagesStore((state) => state.sendStylingDelivery);
 
     // NEW: Upload/Search toggle (for top tabs)
     const [uploadMode, setUploadMode] = useState<'upload' | 'search'>('upload');
@@ -324,6 +394,11 @@ export default function CreateScreen() {
 
     // Music modal state
     const [showMusicModal, setShowMusicModal] = useState(false);
+
+    // Save to device state
+    const [showSaveModal, setShowSaveModal] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [showSearchComingSoon, setShowSearchComingSoon] = useState(false);
     const [musicSearchQuery, setMusicSearchQuery] = useState('');
 
     // Ref for capturing canvas as image
@@ -342,12 +417,14 @@ export default function CreateScreen() {
     // Note: Tab navigation cannot be intercepted/prevented in React Navigation
     // The unsaved work prompt is shown when user explicitly taps "Reset" or "New Fit"
 
-    // Auto-load stored face photo from user profile
+    // Auto-load face photo: client's face when styling for someone, otherwise user's own
     useEffect(() => {
-        if (user?.ai_face_url && !facePhotoUri && !draftId) {
+        if (isStylingFor && forClientFaceUrl && !facePhotoUri) {
+            setFacePhotoUri(forClientFaceUrl);
+        } else if (user?.ai_face_url && !facePhotoUri && !draftId && !isStylingFor) {
             setFacePhotoUri(user.ai_face_url);
         }
-    }, [user?.ai_face_url, draftId]);
+    }, [user?.ai_face_url, draftId, isStylingFor, forClientFaceUrl]);
 
     // Handle product added from marketplace via URL params
     useEffect(() => {
@@ -833,7 +910,7 @@ export default function CreateScreen() {
     };
 
     // Recent searches constants
-    const RECENT_SEARCHES_KEY = 'fitted_recent_product_searches';
+    const RECENT_SEARCHES_KEY = 'emode_recent_product_searches';
     const MAX_RECENT_SEARCHES = 8;
 
     // Load recent searches on mount
@@ -957,6 +1034,80 @@ export default function CreateScreen() {
         }
     };
 
+    // Send outfit to client via DM (styling delivery)
+    const handleSendToClient = async () => {
+        if (!user || !forConversation || !forClientId) {
+            Alert.alert('Error', 'Missing client information');
+            return;
+        }
+        if (uploading) return;
+        if (!generatedImageUri && !capturedBoardUri) {
+            Alert.alert('Error', 'No image to send');
+            return;
+        }
+
+        setUploading(true);
+        try {
+            let publicGeneratedUrl: string | null = null;
+            let publicBoardUrl: string | null = null;
+
+            // Upload generated image
+            if (generatedImageUri) {
+                const filename = `delivery_gen_${Date.now()}.jpg`;
+                let base64 = '';
+                if (generatedImageUri.startsWith('data:')) {
+                    base64 = generatedImageUri.split(',')[1];
+                } else {
+                    base64 = await FileSystem.readAsStringAsync(generatedImageUri, { encoding: FileSystem.EncodingType.Base64 });
+                }
+                publicGeneratedUrl = await uploadImage('posts', filename, base64);
+            }
+
+            // Upload board image
+            if (capturedBoardUri) {
+                const filename = `delivery_board_${Date.now()}.jpg`;
+                const base64 = await FileSystem.readAsStringAsync(capturedBoardUri, { encoding: FileSystem.EncodingType.Base64 });
+                publicBoardUrl = await uploadImage('posts', filename, base64);
+            }
+
+            if (!publicGeneratedUrl && !publicBoardUrl) {
+                Alert.alert('Error', 'Failed to upload images');
+                return;
+            }
+
+            // Build items array
+            const deliveryItems = canvasItems.map((item) => ({
+                id: item.id,
+                brand: item.brand || itemLinks[item.id]?.brand || 'Unknown',
+                name: item.itemName || itemLinks[item.id]?.name || 'Item',
+                price: parseFloat(itemLinks[item.id]?.price || '0') || 0,
+                image_url: item.url,
+                purchase_link: item.purchaseLink || itemLinks[item.id]?.url || '',
+            }));
+
+            // Send delivery message
+            await sendStylingDelivery(forConversation, user.id, {
+                generated_image_url: publicGeneratedUrl || publicBoardUrl!,
+                board_image_url: publicBoardUrl || undefined,
+                items: deliveryItems,
+                caption: caption.trim() || undefined,
+            });
+
+            // Success — reset and navigate back to messages
+            resetWorkflow();
+            router.setParams({ forConversation: '', forClientId: '', forClientName: '', forClientFaceUrl: '' });
+            Alert.alert('Delivered! \u{1F389}', `Your styled outfit has been sent to ${forClientName}.`, [
+                { text: 'View Chat', onPress: () => router.push('/(tabs)/messages') },
+                { text: 'OK' },
+            ]);
+        } catch (error: any) {
+            console.error('Send to client failed:', error);
+            Alert.alert('Error', error.message || 'Failed to send outfit');
+        } finally {
+            setUploading(false);
+        }
+    };
+
     const handlePublish = async () => {
         if (!user) {
             Alert.alert('Error', 'Please sign in to post');
@@ -1038,14 +1189,15 @@ export default function CreateScreen() {
                 publicBoardUrl = await uploadImage('posts', filename, base64);
             }
 
-            // Build items array with canvas_state positions
+            // Build items array — itemLinks (entered in preview form) takes priority over
+            // canvas item data so the user's manual edits always win.
             const itemsWithPositions = canvasItems.map((item) => ({
                 id: item.id,
-                brand: item.brand || 'Unknown',
-                name: item.itemName || 'Item',
-                price: 0,
+                brand: itemLinks[item.id]?.brand || item.brand || 'Unknown',
+                name: itemLinks[item.id]?.name || item.itemName || 'Item',
+                price: parseFloat(itemLinks[item.id]?.price || '0') || 0,
                 image_url: item.url,
-                purchase_link: item.purchaseLink || '',
+                purchase_link: itemLinks[item.id]?.url || item.purchaseLink || '',
                 canvas_state: {
                     x: item.x,
                     y: item.y,
@@ -1100,6 +1252,81 @@ export default function CreateScreen() {
         }));
     };
 
+    // Save generated image(s) to device camera roll
+    const handleSaveToDevice = async (saveType: 'ai' | 'board' | 'both') => {
+        setIsSaving(true);
+        try {
+            // Request permission
+            const { status } = await MediaLibrary.requestPermissionsAsync();
+            if (status !== 'granted') {
+                Alert.alert('Permission Needed', 'Please allow access to save images to your device.');
+                setIsSaving(false);
+                return;
+            }
+
+            let savedCount = 0;
+
+            // Helper: save a URI (data URI or file path) to camera roll
+            const saveUri = async (uri: string, label: string) => {
+                let fileUri = uri;
+
+                // If it's a data URI, write to a temp file first
+                if (uri.startsWith('data:')) {
+                    const base64Data = uri.split(',')[1];
+                    const tempPath = `${FileSystem.cacheDirectory}emode_save_${Date.now()}.jpg`;
+                    await FileSystem.writeAsStringAsync(tempPath, base64Data, {
+                        encoding: FileSystem.EncodingType.Base64,
+                    });
+                    fileUri = tempPath;
+                }
+
+                const asset = await MediaLibrary.createAssetAsync(fileUri);
+                if (asset) savedCount++;
+            };
+
+            // Save AI generated image
+            if ((saveType === 'ai' || saveType === 'both') && generatedImageUri) {
+                await saveUri(generatedImageUri, 'AI Outfit');
+            }
+
+            // Save board/collage image
+            if ((saveType === 'board' || saveType === 'both') && capturedBoardUri) {
+                await saveUri(capturedBoardUri, 'Mood Board');
+            }
+
+            // If board hasn't been captured yet but user wants it, capture now
+            if ((saveType === 'board' || saveType === 'both') && !capturedBoardUri && previewBoardRef.current) {
+                try {
+                    const boardUri = await captureRef(previewBoardRef, {
+                        format: 'jpg',
+                        quality: 0.95,
+                        result: 'tmpfile',
+                    });
+                    const asset = await MediaLibrary.createAssetAsync(boardUri);
+                    if (asset) savedCount++;
+                } catch (e) {
+                    console.warn('Failed to capture board for save:', e);
+                }
+            }
+
+            setShowSaveModal(false);
+
+            if (savedCount > 0) {
+                Alert.alert(
+                    '✅ Saved!',
+                    `${savedCount} image${savedCount > 1 ? 's' : ''} saved to your camera roll.`
+                );
+            } else {
+                Alert.alert('Oops', 'No images were available to save.');
+            }
+        } catch (error: any) {
+            console.error('Save to device error:', error);
+            Alert.alert('Save Failed', error.message || 'Could not save image to device.');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     return (
         <GestureHandlerRootView style={[styles.container, { backgroundColor: colors.background }]}>
             <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -1120,6 +1347,29 @@ export default function CreateScreen() {
                             </Pressable>
                         </View>
                     </View>
+
+                    {/* Styling-for-client banner */}
+                    {isStylingFor && (
+                        <View style={{
+                            flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                            paddingVertical: 8, paddingHorizontal: 16, gap: 8,
+                            backgroundColor: 'rgba(99, 102, 241, 0.08)',
+                            borderBottomWidth: 1, borderBottomColor: 'rgba(99, 102, 241, 0.15)',
+                        }}>
+                            <MaterialCommunityIcons name="palette" size={16} color="#6366f1" />
+                            <Text style={{ color: '#6366f1', fontSize: 13, fontWeight: '600', fontFamily: 'Inter_700Bold' }}>
+                                Styling for {forClientName}
+                            </Text>
+                            <Pressable
+                                onPress={() => {
+                                    router.setParams({ forConversation: '', forClientId: '', forClientName: '', forClientFaceUrl: '' });
+                                }}
+                                style={{ marginLeft: 'auto' }}
+                            >
+                                <Feather name="x" size={16} color="#6366f1" />
+                            </Pressable>
+                        </View>
+                    )}
 
                     {/* STEP 1: Build Fit */}
                     {currentStep === 1 && (
@@ -1243,7 +1493,7 @@ export default function CreateScreen() {
                                                     <MaskedView
                                                         style={styles.gradientTextContainer}
                                                         maskElement={
-                                                            <Text style={styles.loadingTextMask}>Fitted is cooking...</Text>
+                                                            <Text style={styles.loadingTextMask}>Emode is cooking...</Text>
                                                         }
                                                     >
                                                         <LinearGradient
@@ -1261,7 +1511,7 @@ export default function CreateScreen() {
                                     {/* Floating Action Buttons (when items exist) */}
                                     {canvasItems.length > 0 && (
                                         <View style={styles.floatingActions}>
-                                            <Pressable style={[styles.floatingButton, { backgroundColor: '#fff' }]} onPress={() => setShowProductSearch(true)}>
+                                            <Pressable style={[styles.floatingButton, { backgroundColor: '#fff' }]} onPress={() => setShowSearchComingSoon(true)}>
                                                 <Feather name="search" size={20} color="#000" />
                                             </Pressable>
                                             <Pressable style={[styles.floatingButton, { backgroundColor: '#fff' }]} onPress={handleTakePicture}>
@@ -1275,8 +1525,32 @@ export default function CreateScreen() {
                                 </View>
                             )}
 
-                            {/* Inline Search UI - show when search mode AND no items */}
+                            {/* Inline Search UI - Coming Soon */}
                             {uploadMode === 'search' && canvasItems.length === 0 && (
+                                <View style={[styles.canvasContainer, { backgroundColor: colors.background }]}>
+                                    <View style={{ padding: 24, alignItems: 'center', justifyContent: 'center', flex: 1, minHeight: 300 }}>
+                                        <View style={[styles.comingSoonIconCircle, { backgroundColor: 'rgba(147, 51, 234, 0.08)' }]}>
+                                            <Feather name="search" size={32} color="#9333EA" />
+                                        </View>
+                                        <Text style={{ color: colors.text, fontWeight: '700', fontSize: 18, marginTop: 16, letterSpacing: -0.3 }}>Product Search</Text>
+                                        <View style={[styles.comingSoonBadge, { marginTop: 10 }]}>
+                                            <Text style={styles.comingSoonText}>COMING SOON</Text>
+                                        </View>
+                                        <Text style={{ color: colors.textSecondary, marginTop: 12, textAlign: 'center', fontSize: 14, lineHeight: 20, paddingHorizontal: 20 }}>
+                                            Search and add items from StockX, GOAT & more directly to your fit. For now, upload your own images!
+                                        </Text>
+                                        <Pressable
+                                            style={{ marginTop: 20, backgroundColor: colors.primary, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10 }}
+                                            onPress={() => setUploadMode('upload')}
+                                        >
+                                            <Text style={{ color: colors.primaryForeground, fontWeight: '600', fontSize: 14 }}>Switch to Upload</Text>
+                                        </Pressable>
+                                    </View>
+                                </View>
+                            )}
+
+                            {/* Original Inline Search UI - hidden for MVP, enable when ready */}
+                            {false && uploadMode === 'search' && canvasItems.length === 0 && (
                                 <View style={[styles.canvasContainer, { backgroundColor: colors.background }]}>
                                     <View style={{ padding: 16, gap: 16 }}>
                                         {/* Search Input */}
@@ -1538,30 +1812,7 @@ export default function CreateScreen() {
                                                                 ]
                                                             }
                                                         ]}>
-                                                            {keepFrames && canvasItem.usePolaroid ? (
-                                                                <View style={{ width: 180, height: 180 }}>
-                                                                    {/* Image renders first (behind) */}
-                                                                    <View style={{ position: 'absolute', top: 15, left: 15, right: 15, bottom: 35, overflow: 'hidden' }}>
-                                                                        <Image
-                                                                            source={{ uri: canvasItem.url }}
-                                                                            style={{ width: '100%', height: '100%' }}
-                                                                            contentFit="contain"
-                                                                        />
-                                                                    </View>
-                                                                    {/* Frame renders second (on top) */}
-                                                                    <Image
-                                                                        source={POLAROID_FRAME}
-                                                                        style={{ position: 'absolute', width: '100%', height: '100%' }}
-                                                                        contentFit="contain"
-                                                                    />
-                                                                </View>
-                                                            ) : (
-                                                                <Image
-                                                                    source={{ uri: canvasItem.url }}
-                                                                    style={{ width: 150, height: 150 }}
-                                                                    contentFit="contain"
-                                                                />
-                                                            )}
+                                                            <PreviewItem canvasItem={canvasItem} keepFrames={keepFrames} />
                                                         </View>
                                                     ))
                                                 )}
@@ -1585,6 +1836,15 @@ export default function CreateScreen() {
                                 <Text style={styles.keepFramesTextSmall}>Keep frames?</Text>
                             </Pressable>
 
+                            {/* Save to Device */}
+                            <Pressable
+                                style={styles.saveToDeviceButton}
+                                onPress={() => setShowSaveModal(true)}
+                            >
+                                <Feather name="download" size={18} color="#fff" />
+                                <Text style={styles.saveToDeviceText}>Save to Device</Text>
+                            </Pressable>
+
                             {/* Caption */}
                             <View style={styles.captionSection}>
                                 <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>CAPTION</Text>
@@ -1599,21 +1859,25 @@ export default function CreateScreen() {
                                 />
                             </View>
 
-                            {/* Add Music */}
+                            {/* Add Music — Coming Soon */}
                             <View style={styles.optionSection}>
-                                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>ADD MUSIC</Text>
-                                <Pressable
-                                    style={[styles.musicRow, { backgroundColor: colors.backgroundSecondary }]}
-                                    onPress={() => setShowMusicModal(true)}
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                                    <Text style={[styles.sectionLabel, { color: colors.textSecondary, marginBottom: 0 }]}>ADD MUSIC</Text>
+                                    <View style={styles.comingSoonBadge}>
+                                        <Text style={styles.comingSoonText}>COMING SOON</Text>
+                                    </View>
+                                </View>
+                                <View
+                                    style={[styles.musicRow, { backgroundColor: colors.backgroundSecondary, opacity: 0.5 }]}
                                 >
                                     <View style={styles.musicIcon}>
-                                        <Feather name="music" size={18} color={musicTrack ? colors.primary : colors.textSecondary} />
+                                        <Feather name="music" size={18} color={colors.textSecondary} />
                                     </View>
-                                    <Text style={[styles.musicText, { color: musicTrack ? colors.text : colors.placeholder }]}>
-                                        {musicTrack ? musicTrack : 'Pick a track...'}
+                                    <Text style={[styles.musicText, { color: colors.placeholder }]}>
+                                        Pick a track...
                                     </Text>
-                                    <Feather name="chevron-right" size={20} color={colors.textSecondary} />
-                                </Pressable>
+                                    <Feather name="lock" size={16} color={colors.textTertiary} />
+                                </View>
                             </View>
 
                             {/* Link Items */}
@@ -1692,17 +1956,44 @@ export default function CreateScreen() {
                                 <Pressable style={[styles.actionButton, styles.actionButtonSecondary]} onPress={goToPrevStep}>
                                     <Text style={styles.actionButtonSecondaryText}>Back to Edit</Text>
                                 </Pressable>
-                                <Pressable
-                                    style={[styles.actionButton, styles.actionButtonPrimary, uploading && styles.actionButtonDisabled]}
-                                    onPress={handlePublish}
-                                    disabled={uploading}
-                                >
-                                    {uploading ? (
-                                        <ActivityIndicator color="#fff" size="small" />
-                                    ) : (
-                                        <Text style={styles.actionButtonPrimaryText}>Publish Post</Text>
-                                    )}
-                                </Pressable>
+
+                                {isStylingFor ? (
+                                    /* Send to Client button — when styling for someone */
+                                    <Pressable
+                                        style={[styles.actionButton, uploading && styles.actionButtonDisabled]}
+                                        onPress={handleSendToClient}
+                                        disabled={uploading}
+                                    >
+                                        <LinearGradient
+                                            colors={['#6366f1', '#4f46e5']}
+                                            start={{ x: 0, y: 0 }}
+                                            end={{ x: 1, y: 0 }}
+                                            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 14, gap: 8 }}
+                                        >
+                                            {uploading ? (
+                                                <ActivityIndicator color="#fff" size="small" />
+                                            ) : (
+                                                <>
+                                                    <MaterialCommunityIcons name="send" size={18} color="#fff" />
+                                                    <Text style={styles.actionButtonPrimaryText}>Send to {forClientName}</Text>
+                                                </>
+                                            )}
+                                        </LinearGradient>
+                                    </Pressable>
+                                ) : (
+                                    /* Normal publish button */
+                                    <Pressable
+                                        style={[styles.actionButton, styles.actionButtonPrimary, uploading && styles.actionButtonDisabled]}
+                                        onPress={handlePublish}
+                                        disabled={uploading}
+                                    >
+                                        {uploading ? (
+                                            <ActivityIndicator color="#fff" size="small" />
+                                        ) : (
+                                            <Text style={styles.actionButtonPrimaryText}>Publish Post</Text>
+                                        )}
+                                    </Pressable>
+                                )}
                             </View>
                         </ScrollView>
                     )}
@@ -1727,6 +2018,132 @@ export default function CreateScreen() {
                 onClose={() => setShowProductSearch(false)}
                 onSelectProduct={handleProductSelect}
             />
+
+            {/* Search Coming Soon Modal */}
+            <Modal
+                visible={showSearchComingSoon}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowSearchComingSoon(false)}
+            >
+                <Pressable style={styles.saveModalOverlay} onPress={() => setShowSearchComingSoon(false)}>
+                    <Pressable style={[styles.saveModalContent, { backgroundColor: colors.background }]} onPress={e => e.stopPropagation()}>
+                        <View style={styles.saveModalHandle} />
+                        <View style={{ alignItems: 'center', paddingVertical: 8 }}>
+                            <View style={[styles.comingSoonIconCircle, { backgroundColor: 'rgba(147, 51, 234, 0.08)' }]}>
+                                <Feather name="search" size={28} color="#9333EA" />
+                            </View>
+                            <Text style={[styles.saveModalTitle, { color: colors.text, marginTop: 16 }]}>Product Search</Text>
+                            <View style={[styles.comingSoonBadge, { marginTop: 10 }]}>
+                                <Text style={styles.comingSoonText}>COMING SOON</Text>
+                            </View>
+                            <Text style={{ color: colors.textSecondary, marginTop: 12, textAlign: 'center', fontSize: 14, lineHeight: 20, paddingHorizontal: 12 }}>
+                                Soon you'll be able to search and add items from StockX, GOAT & more directly to your fit.
+                            </Text>
+                        </View>
+                        <Pressable
+                            style={{ alignItems: 'center', paddingVertical: 16, marginTop: 12 }}
+                            onPress={() => setShowSearchComingSoon(false)}
+                        >
+                            <Text style={{ color: colors.textSecondary, fontWeight: '600', fontSize: 15 }}>Got it</Text>
+                        </Pressable>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
+            {/* Save to Device Modal */}
+            <Modal
+                visible={showSaveModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowSaveModal(false)}
+            >
+                <Pressable style={styles.saveModalOverlay} onPress={() => !isSaving && setShowSaveModal(false)}>
+                    <Pressable style={[styles.saveModalContent, { backgroundColor: colors.background }]} onPress={e => e.stopPropagation()}>
+                        <View style={styles.saveModalHandle} />
+                        <Text style={[styles.saveModalTitle, { color: colors.text }]}>Save to Device</Text>
+                        <Text style={[styles.saveModalSubtitle, { color: colors.textSecondary }]}>
+                            Choose which image to save to your camera roll
+                        </Text>
+
+                        <View style={styles.saveModalOptions}>
+                            {/* AI Image Option */}
+                            {generatedImageUri && (
+                                <Pressable
+                                    style={[styles.saveOptionCard, { backgroundColor: colors.backgroundSecondary, borderColor: colors.border }]}
+                                    onPress={() => !isSaving && handleSaveToDevice('ai')}
+                                    disabled={isSaving}
+                                >
+                                    <View style={[styles.saveOptionIcon, { backgroundColor: 'rgba(147, 51, 234, 0.1)' }]}>
+                                        <Feather name="cpu" size={22} color="#9333EA" />
+                                    </View>
+                                    <View style={styles.saveOptionInfo}>
+                                        <Text style={[styles.saveOptionTitle, { color: colors.text }]}>AI Outfit</Text>
+                                        <Text style={[styles.saveOptionDesc, { color: colors.textSecondary }]}>The generated image</Text>
+                                    </View>
+                                    <Feather name="download" size={20} color={colors.textSecondary} />
+                                </Pressable>
+                            )}
+
+                            {/* Board Option */}
+                            {(capturedBoardUri || canvasItems.length > 0) && (
+                                <Pressable
+                                    style={[styles.saveOptionCard, { backgroundColor: colors.backgroundSecondary, borderColor: colors.border }]}
+                                    onPress={() => !isSaving && handleSaveToDevice('board')}
+                                    disabled={isSaving}
+                                >
+                                    <View style={[styles.saveOptionIcon, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
+                                        <Feather name="layout" size={22} color="#3b82f6" />
+                                    </View>
+                                    <View style={styles.saveOptionInfo}>
+                                        <Text style={[styles.saveOptionTitle, { color: colors.text }]}>Mood Board</Text>
+                                        <Text style={[styles.saveOptionDesc, { color: colors.textSecondary }]}>Your collage layout</Text>
+                                    </View>
+                                    <Feather name="download" size={20} color={colors.textSecondary} />
+                                </Pressable>
+                            )}
+
+                            {/* Both Option */}
+                            {generatedImageUri && (capturedBoardUri || canvasItems.length > 0) && (
+                                <Pressable
+                                    style={[styles.saveOptionCard, styles.saveOptionCardBoth, { borderColor: '#9333EA' }]}
+                                    onPress={() => !isSaving && handleSaveToDevice('both')}
+                                    disabled={isSaving}
+                                >
+                                    <LinearGradient
+                                        colors={['rgba(147, 51, 234, 0.08)', 'rgba(59, 130, 246, 0.08)']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 0 }}
+                                        style={StyleSheet.absoluteFill}
+                                    />
+                                    <View style={[styles.saveOptionIcon, { backgroundColor: 'rgba(147, 51, 234, 0.15)' }]}>
+                                        <Feather name="download-cloud" size={22} color="#9333EA" />
+                                    </View>
+                                    <View style={styles.saveOptionInfo}>
+                                        <Text style={[styles.saveOptionTitle, { color: colors.text }]}>Save Both</Text>
+                                        <Text style={[styles.saveOptionDesc, { color: colors.textSecondary }]}>AI outfit + mood board</Text>
+                                    </View>
+                                    <Feather name="check-circle" size={20} color="#9333EA" />
+                                </Pressable>
+                            )}
+                        </View>
+
+                        {isSaving && (
+                            <View style={styles.savingOverlay}>
+                                <ActivityIndicator size="small" color="#9333EA" />
+                                <Text style={{ color: colors.textSecondary, marginLeft: 8, fontSize: 14 }}>Saving...</Text>
+                            </View>
+                        )}
+
+                        <Pressable
+                            style={styles.saveModalCancel}
+                            onPress={() => !isSaving && setShowSaveModal(false)}
+                        >
+                            <Text style={[styles.saveModalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
+                        </Pressable>
+                    </Pressable>
+                </Pressable>
+            </Modal>
 
             {/* Music Selection Modal */}
             <Modal
@@ -1790,6 +2207,13 @@ export default function CreateScreen() {
                     </Pressable>
                 </Pressable>
             </Modal>
+
+            <TutorialModal
+                visible={showCanvasTutorial && currentStep === 1}
+                onDismiss={dismissCanvasTutorial}
+                title="The Canvas"
+                steps={CANVAS_TUTORIAL_STEPS}
+            />
         </GestureHandlerRootView >
     );
 }
@@ -1831,19 +2255,14 @@ const styles = StyleSheet.create({
     },
     canvasContainer: {
         position: 'relative',
-        paddingHorizontal: 16,
         backgroundColor: 'transparent',
     },
     canvas: {
-        width: CANVAS_WIDTH - 32,
-        height: CANVAS_WIDTH - 32,
+        width: CANVAS_WIDTH,
+        height: CANVAS_WIDTH,
         backgroundColor: '#fff',
-        // borderRadius: 16, // Removed to prevent rounded corners on export
-        borderWidth: 2,
-        borderColor: '#d1d5db',
         position: 'relative',
         overflow: 'hidden',
-
     },
     previewCanvas: {
         width: CANVAS_WIDTH,
@@ -2514,6 +2933,27 @@ const styles = StyleSheet.create({
         flex: 1,
         fontSize: 14,
     },
+    comingSoonBadge: {
+        backgroundColor: 'rgba(147, 51, 234, 0.1)',
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: 'rgba(147, 51, 234, 0.2)',
+    },
+    comingSoonIconCircle: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    comingSoonText: {
+        fontSize: 9,
+        fontWeight: '800',
+        color: '#9333EA',
+        letterSpacing: 0.5,
+    },
     linkItemCard: {
         flexDirection: 'row',
         padding: 12,
@@ -2805,6 +3245,106 @@ const styles = StyleSheet.create({
     },
     actionButtonDisabled: {
         opacity: 0.5,
+    },
+    // Save to Device button
+    saveToDeviceButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        marginHorizontal: 16,
+        marginTop: 12,
+        paddingVertical: 14,
+        borderRadius: 12,
+        backgroundColor: '#18181b',
+    },
+    saveToDeviceText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#fff',
+    },
+    // Save Modal styles
+    saveModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        justifyContent: 'flex-end',
+    },
+    saveModalContent: {
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        paddingHorizontal: 20,
+        paddingTop: 12,
+        paddingBottom: 36,
+    },
+    saveModalHandle: {
+        width: 40,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: '#d1d5db',
+        alignSelf: 'center',
+        marginBottom: 20,
+    },
+    saveModalTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        textAlign: 'center',
+        letterSpacing: -0.5,
+    },
+    saveModalSubtitle: {
+        fontSize: 14,
+        textAlign: 'center',
+        marginTop: 4,
+        marginBottom: 24,
+    },
+    saveModalOptions: {
+        gap: 10,
+    },
+    saveOptionCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        borderRadius: 16,
+        borderWidth: 1,
+        gap: 14,
+        overflow: 'hidden',
+    },
+    saveOptionCardBoth: {
+        borderWidth: 1.5,
+        borderStyle: 'dashed',
+    },
+    saveOptionIcon: {
+        width: 48,
+        height: 48,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    saveOptionInfo: {
+        flex: 1,
+    },
+    saveOptionTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        letterSpacing: -0.3,
+    },
+    saveOptionDesc: {
+        fontSize: 13,
+        marginTop: 2,
+    },
+    savingOverlay: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 16,
+    },
+    saveModalCancel: {
+        alignItems: 'center',
+        paddingVertical: 16,
+        marginTop: 8,
+    },
+    saveModalCancelText: {
+        fontSize: 15,
+        fontWeight: '600',
     },
 });
 

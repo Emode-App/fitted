@@ -1,12 +1,18 @@
-﻿import { create } from 'zustand';
+import { create } from 'zustand';
+import { Platform } from 'react-native';
 import { supabase } from '../services/supabase';
 import { User } from '../types';
+import * as SecureStore from 'expo-secure-store';
+import * as Device from 'expo-device';
+
+const SESSION_KEY = 'current_login_session_id';
 
 interface AuthState {
     user: User | null;
     session: any | null;
     isLoading: boolean;
     isAuthenticated: boolean;
+    currentSessionId: string | null;
 
     // Actions
     initialize: () => Promise<void>;
@@ -17,18 +23,37 @@ interface AuthState {
     updateProfile: (updates: Partial<User>) => Promise<void>;
 }
 
+async function recordLoginSession(userId: string): Promise<string | null> {
+    try {
+        const deviceName = Device.modelName ?? (Platform.OS === 'ios' ? 'iPhone' : 'Android Device');
+        const deviceType = Device.deviceType === Device.DeviceType.TABLET ? 'tablet' : 'phone';
+        const { data } = await supabase
+            .from('login_sessions')
+            .insert({ user_id: userId, device_name: deviceName, device_type: deviceType, platform: Platform.OS })
+            .select('id')
+            .single();
+        return data?.id ?? null;
+    } catch {
+        return null;
+    }
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
     user: null,
     session: null,
     isLoading: true,
     isAuthenticated: false,
+    currentSessionId: null,
 
     initialize: async () => {
         try {
+            // Restore persisted session ID across app restarts
+            const storedSessionId = await SecureStore.getItemAsync(SESSION_KEY);
+            if (storedSessionId) set({ currentSessionId: storedSessionId });
+
             const { data: { session } } = await supabase.auth.getSession();
 
             if (session?.user) {
-                // Fetch user profile from our users table
                 const { data: profile } = await supabase
                     .from('users')
                     .select('*')
@@ -54,17 +79,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                         .eq('id', session.user.id)
                         .single();
 
-                    set({
-                        session,
-                        user: profile,
-                        isAuthenticated: true
-                    });
+                    set({ session, user: profile, isAuthenticated: true });
+
+                    if (event === 'SIGNED_IN') {
+                        const sessionId = await recordLoginSession(session.user.id);
+                        if (sessionId) {
+                            await SecureStore.setItemAsync(SESSION_KEY, sessionId);
+                            set({ currentSessionId: sessionId });
+                        }
+                    }
                 } else {
-                    set({
-                        session: null,
-                        user: null,
-                        isAuthenticated: false
-                    });
+                    if (event === 'SIGNED_OUT') {
+                        await SecureStore.deleteItemAsync(SESSION_KEY);
+                        set({ currentSessionId: null });
+                    }
+                    set({ session: null, user: null, isAuthenticated: false });
                 }
             });
         } catch (error) {
@@ -102,7 +131,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             }
 
             if (authData.user) {
-                // Create user profile
                 const handle = `@${username.toLowerCase().replace(/\s+/g, '')}`;
                 const { error: profileError } = await supabase
                     .from('users')
@@ -138,7 +166,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         const { user } = get();
         if (!user) return;
 
-        // Optimistic update
         set({ user: { ...user, ...updates } });
 
         try {
@@ -149,7 +176,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
             if (error) {
                 console.error('Error updating profile:', error);
-                // Revert on error (optional, but good practice. For now simpler to just log)
             }
         } catch (error) {
             console.error('Exception updating profile:', error);

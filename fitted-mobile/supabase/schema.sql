@@ -1,4 +1,4 @@
-﻿- Fitted Database Schema
+- Emode Database Schema
 -- Run this in Supabase SQL Editor: https://supabase.com/dashboard/project/scvvbjheyfnxlsiiozta/sql/new
 
 -- Enable UUID extension
@@ -238,3 +238,46 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER on_user_created
 AFTER INSERT ON users
 FOR EACH ROW EXECUTE FUNCTION create_default_wardrobe();
+
+-- ============================================
+-- LOGIN SESSIONS TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS login_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    device_name TEXT NOT NULL DEFAULT 'Unknown Device',
+    device_type TEXT NOT NULL DEFAULT 'phone',
+    platform TEXT NOT NULL DEFAULT 'unknown',
+    logged_in_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE login_sessions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own sessions" ON login_sessions
+    FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own sessions" ON login_sessions
+    FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own sessions" ON login_sessions
+    FOR DELETE USING (auth.uid() = user_id);
+
+-- Trim to 20 most recent sessions per user
+CREATE OR REPLACE FUNCTION cleanup_old_login_sessions()
+RETURNS TRIGGER AS $$
+BEGIN
+    DELETE FROM login_sessions
+    WHERE user_id = NEW.user_id
+      AND id NOT IN (
+          SELECT id FROM login_sessions
+          WHERE user_id = NEW.user_id
+          ORDER BY logged_in_at DESC
+          LIMIT 20
+      );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER on_login_session_insert
+AFTER INSERT ON login_sessions
+FOR EACH ROW EXECUTE FUNCTION cleanup_old_login_sessions();

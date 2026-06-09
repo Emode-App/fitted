@@ -34,6 +34,7 @@ import {
     CartPage,
     DraftItem,
 } from './SettingsPages';
+import BusinessSubscriptionModal from './BusinessSubscriptionModal';
 
 // View Types
 type SettingsView =
@@ -68,6 +69,7 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
     const user = useAuthStore((state) => state.user);
     const updateProfile = useAuthStore((state) => state.updateProfile);
     const { dressingRoomBadgeCount, cartItems } = useMarketplaceStore();
+    const [showBusinessModal, setShowBusinessModal] = useState(false);
 
     // Animation states
     const [internalVisible, setInternalVisible] = useState(false);
@@ -207,25 +209,26 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
                         style={[styles.businessItem, { backgroundColor: isDark ? '#27272a' : '#f9fafb' }]}
                         onPress={async () => {
                             const isBusiness = user?.is_business_account;
-                            const newStatus = !isBusiness;
 
-                            Alert.alert(
-                                'Switch Account Type',
-                                `Are you sure you want to switch to a ${newStatus ? 'Business' : 'Personal'} Account?`,
-                                [
-                                    { text: 'Cancel', style: 'cancel' },
-                                    {
-                                        text: 'Confirm',
-                                        style: 'default',
-                                        onPress: async () => {
-                                            await updateProfile({ is_business_account: newStatus });
-                                            // Close drawer to reflect changes in profile view if needed, or keep open.
-                                            // Keeping open is fine, but maybe toast would be nice? 
-                                            // For now just toggle.
-                                        }
-                                    }
-                                ]
-                            );
+                            if (isBusiness) {
+                                // Already business — switching back to personal is free
+                                Alert.alert(
+                                    'Switch to Personal',
+                                    'Switch back to a Personal Account? Your shop will be hidden.',
+                                    [
+                                        { text: 'Cancel', style: 'cancel' },
+                                        {
+                                            text: 'Confirm',
+                                            onPress: async () => {
+                                                await updateProfile({ is_business_account: false });
+                                            },
+                                        },
+                                    ]
+                                );
+                            } else {
+                                // Not business — show subscription modal
+                                setShowBusinessModal(true);
+                            }
                         }}
                     >
                         <Feather
@@ -273,7 +276,7 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
 
                 {/* Footer */}
                 <View style={[styles.footer, { borderTopColor: colors.border }]}>
-                    <Text style={[styles.footerText, { color: isDark ? '#52525b' : '#9ca3af' }]}>Fitted v1.0.0</Text>
+                    <Text style={[styles.footerText, { color: isDark ? '#52525b' : '#9ca3af' }]}>Emode v1.0.0</Text>
                     <Text style={[styles.footerSubtext, { color: isDark ? '#3f3f46' : '#d1d5db' }]}>Powered by Nano Banana Pro</Text>
                 </View>
             </ScrollView>
@@ -308,6 +311,7 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
     if (!internalVisible) return null;
 
     return (
+        <>
         <Modal
             visible={internalVisible}
             transparent
@@ -340,6 +344,13 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
                 {renderContent()}
             </Animated.View>
         </Modal>
+
+        {/* Business Subscription Modal */}
+        <BusinessSubscriptionModal
+            visible={showBusinessModal}
+            onClose={() => setShowBusinessModal(false)}
+        />
+        </>
     );
 }
 

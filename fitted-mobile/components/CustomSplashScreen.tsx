@@ -64,7 +64,7 @@ export const CustomSplashScreen = ({ onAnimationFinish }: SplashScreenProps) => 
     return (
         <Animated.View style={[styles.container, animatedContainerStyle]} pointerEvents="none">
             <Animated.Text style={[styles.text, animatedTextStyle]}>
-                FITTED.
+                EMODE.
             </Animated.Text>
         </Animated.View>
     );

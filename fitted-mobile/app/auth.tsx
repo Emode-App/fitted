@@ -61,7 +61,7 @@ export default function LoginScreen() {
             <RNView style={[styles.inner, { backgroundColor: colors.background }]}>
                 {/* Logo */}
                 <RNView style={styles.logoContainer}>
-                    <RNText style={[styles.logo, { color: colors.text }]}>fitted</RNText>
+                    <RNText style={[styles.logo, { color: colors.text }]}>emode</RNText>
                     <RNText style={[styles.tagline, { color: colors.textSecondary }]}>AI-Powered Virtual Try-On</RNText>
                 </RNView>
 

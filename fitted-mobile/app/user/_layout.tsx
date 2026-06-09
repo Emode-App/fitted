@@ -12,7 +12,7 @@ function UserHeader() {
             <Pressable style={styles.headerButton} onPress={() => router.back()}>
                 <Feather name="arrow-left" size={24} color={colors.text} />
             </Pressable>
-            <Text style={[styles.logo, { color: colors.text }]}>FITTED.</Text>
+            <Text style={[styles.logo, { color: colors.text }]}>EMODE.</Text>
             <View style={styles.headerButton} />
         </View>
     );

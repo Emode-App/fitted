@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "fitted-mobile",
-    "slug": "fitted-mobile",
+    "name": "emode",
+    "slug": "emode",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "fittedmobile",
+    "scheme": "emode",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -22,7 +22,14 @@
       "output": "static"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.com.emode.app",
+          "enableGooglePay": true
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

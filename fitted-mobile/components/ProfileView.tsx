@@ -9,23 +9,53 @@ import {
     RefreshControl,
     Linking,
     Alert,
+    Share,
+    Modal,
+    LayoutAnimation,
+    Platform,
+    UIManager,
 } from 'react-native';
+
+if (Platform.OS === 'android') {
+    UIManager.setLayoutAnimationEnabledExperimental?.(true);
+}
 import { Image } from 'expo-image';
 import { Feather, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 
 import { useTheme } from '@/hooks/useTheme';
 import { User, Post, Product } from '@/types';
 import StylistModal from '@/components/StylistModal';
 import { useMarketplaceStore } from '@/stores/marketplaceStore';
+import { usePostsStore } from '@/stores/postsStore';
 import ProductCard from '@/components/ProductCard';
 import ProductDetailModal from '@/components/ProductDetailModal';
 import ProductUploadModal from './ProductUploadModal';
+import TutorialModal, { useFirstVisitTutorial, TutorialStep } from '@/components/TutorialModal';
 
 const { width } = Dimensions.get('window');
 const GRID_SIZE = (width - 4) / 3;
 const BANNER_HEIGHT = 128;
+
+const MARKETPLACE_TUTORIAL_STEPS: TutorialStep[] = [
+    {
+        icon: 'shopping-bag',
+        title: 'Your Storefront',
+        body: 'List items for sale from your Shop tab — buyers can browse and purchase directly from your profile.',
+    },
+    {
+        icon: 'star',
+        title: 'Styling Requests',
+        body: 'As a verified stylist, clients can book styling sessions and message you directly for requests.',
+    },
+    {
+        icon: 'dollar-sign',
+        title: 'Get Paid',
+        body: 'Payments for sales and styling sessions go straight to your connected account. Track everything from your profile.',
+    },
+];
 
 export interface Draft {
     id: string;
@@ -83,6 +113,53 @@ export default function ProfileView({
     const { products, isLoadingProducts, fetchSellerProducts, deleteProduct } = useMarketplaceStore();
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
+    // First-time marketplace/stylist tutorial (own profile only)
+    const showsMarketplaceFeatures = isOwnProfile && (user.is_business_account || user.is_verified_stylist);
+    const { visible: showMarketplaceTutorial, dismiss: dismissMarketplaceTutorial } = useFirstVisitTutorial(
+        'has_seen_marketplace_tutorial',
+        showsMarketplaceFeatures
+    );
+
+    // Local posts mirror — lets us remove items instantly without waiting for prop refresh
+    const [localPosts, setLocalPosts] = useState<Post[]>(posts);
+    useEffect(() => { setLocalPosts(posts); }, [posts]);
+
+    // Post long-press menu
+    const { deletePost } = usePostsStore();
+    const [postMenuPost, setPostMenuPost] = useState<Post | null>(null);
+
+    const handleLongPressPost = (post: Post) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        setPostMenuPost(post);
+    };
+
+    const handleSharePost = async (post: Post) => {
+        setPostMenuPost(null);
+        try {
+            await Share.share({ message: `Check out this fit! 🔥` });
+        } catch {}
+    };
+
+    const handleDeletePost = (post: Post) => {
+        setPostMenuPost(null);
+        Alert.alert(
+            'Delete Post',
+            'Are you sure you want to delete this post? This cannot be undone.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: () => {
+                        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                        setLocalPosts(prev => prev.filter(p => p.id !== post.id));
+                        deletePost(post.id);
+                    },
+                },
+            ]
+        );
+    };
+
     // Fetch products when entering shop tab or user changes
     useEffect(() => {
         if (activeTab === 'shop' && user.id) {
@@ -97,21 +174,40 @@ export default function ProfileView({
         }
     }, [user.is_business_account]);
 
-    const displayData = activeTab === 'posts' ? posts : activeTab === 'saved' ? savedPosts : products;
+    const displayData = activeTab === 'posts' ? localPosts : activeTab === 'saved' ? savedPosts : products;
 
     const handleOpenLink = async (link: string) => {
-        if (link) {
-            try {
-                const canOpen = await Linking.canOpenURL(link);
-                if (canOpen) {
-                    await Linking.openURL(link);
-                } else {
-                    Alert.alert('Cannot Open Link', 'Unable to open this URL.');
-                }
-            } catch (error) {
-                console.error('Error opening link:', error);
-            }
+        if (!link) return;
+        // Auto-prefix if no protocol
+        const url = /^https?:\/\//i.test(link) ? link : `https://${link}`;
+        try {
+            await Linking.openURL(url);
+        } catch (error) {
+            Alert.alert('Cannot Open Link', 'Unable to open this URL.');
         }
+    };
+
+    const URL_REGEX = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
+
+    const renderBio = (bio: string) => {
+        const parts = bio.split(URL_REGEX);
+        return (
+            <Text style={[styles.bio, { color: colors.text }]}>
+                {parts.map((part, i) =>
+                    URL_REGEX.test(part) ? (
+                        <Text
+                            key={i}
+                            style={{ color: '#3b82f6' }}
+                            onPress={() => handleOpenLink(part)}
+                        >
+                            {part}
+                        </Text>
+                    ) : (
+                        <Text key={i}>{part}</Text>
+                    )
+                )}
+            </Text>
+        );
     };
 
     const handleDeleteProduct = async (productId: string) => {
@@ -143,6 +239,8 @@ export default function ProfileView({
             <Pressable
                 style={styles.gridItem}
                 onPress={() => router.push({ pathname: '/post/[id]', params: { id: post.id } })}
+                onLongPress={isOwnProfile ? () => handleLongPressPost(post) : undefined}
+                delayLongPress={400}
             >
                 <Image
                     source={{ uri: post.generated_image }}
@@ -264,9 +362,7 @@ export default function ProfileView({
                         </View>
 
                         {/* Bio */}
-                        {user.bio && (
-                            <Text style={[styles.bio, { color: colors.text }]}>{user.bio}</Text>
-                        )}
+                        {user.bio && renderBio(user.bio)}
 
                         {/* Website */}
                         {user.website && (
@@ -287,14 +383,29 @@ export default function ProfileView({
                                 <Text style={[styles.pillText, { color: colors.text }]}>{user.favorite_brand}</Text>
                             </View>
                         )}
-                        {user.favorite_song && (
-                            <View style={[styles.favoritePill, { backgroundColor: colors.backgroundSecondary, borderColor: colors.border }]}>
-                                <Feather name="music" size={12} color={colors.textSecondary} />
-                                <Text style={[styles.pillText, { color: colors.text }]} numberOfLines={1}>
-                                    {user.favorite_song.title}
-                                </Text>
-                            </View>
-                        )}
+                        {user.favorite_song && (() => {
+                            const { title, artist, url } = user.favorite_song!;
+                            const label = artist ? `${artist} - ${title}` : title;
+                            const pillStyle = [styles.favoritePill, { backgroundColor: colors.backgroundSecondary, borderColor: colors.border }];
+                            const inner = (
+                                <>
+                                    <Feather name="music" size={12} color={colors.textSecondary} />
+                                    <Text style={[styles.pillText, { color: colors.text }]}>
+                                        {label}
+                                    </Text>
+                                </>
+                            );
+                            return url ? (
+                                <Pressable
+                                    style={({ pressed }) => [...pillStyle, pressed && { opacity: 0.7 }]}
+                                    onPress={() => Linking.openURL(url)}
+                                >
+                                    {inner}
+                                </Pressable>
+                            ) : (
+                                <View style={pillStyle}>{inner}</View>
+                            );
+                        })()}
                     </View>
                 </View>
 
@@ -310,7 +421,7 @@ export default function ProfileView({
                             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>following</Text>
                         </Pressable>
                         <View style={styles.statItem}>
-                            <Text style={[styles.statNumber, { color: colors.text }]}>{stats.fits}</Text>
+                            <Text style={[styles.statNumber, { color: colors.text }]}>{localPosts.length}</Text>
                             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>fits</Text>
                         </View>
                     </View>
@@ -355,7 +466,7 @@ export default function ProfileView({
                         <View style={styles.faceInfo}>
                             <View style={styles.faceTitleRow}>
                                 <Text style={[styles.faceTitle, { color: user.ai_face_url ? '#065f46' : '#6b21a8' }]}>
-                                    Get Fitted AI Access
+                                    Get Emode AI Access
                                 </Text>
                                 {user.ai_face_url && (
                                     <MaterialCommunityIcons name="check-circle" size={18} color="#10b981" style={{ marginLeft: 4 }} />
@@ -493,6 +604,45 @@ export default function ProfileView({
                 visible={!!selectedProduct}
                 product={selectedProduct}
                 onClose={() => setSelectedProduct(null)}
+            />
+
+            {/* Post Long-Press Action Sheet */}
+            <Modal
+                visible={!!postMenuPost}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setPostMenuPost(null)}
+            >
+                <Pressable style={styles.postMenuOverlay} onPress={() => setPostMenuPost(null)}>
+                    <View style={[styles.postMenuSheet, { backgroundColor: colors.backgroundSecondary }]}>
+                        <Pressable
+                            style={styles.postMenuItem}
+                            onPress={() => postMenuPost && handleSharePost(postMenuPost)}
+                        >
+                            <Feather name="share" size={20} color={colors.text} />
+                            <Text style={[styles.postMenuItemText, { color: colors.text }]}>Share</Text>
+                        </Pressable>
+                        <View style={[styles.postMenuDivider, { backgroundColor: colors.border }]} />
+                        <Pressable
+                            style={styles.postMenuItem}
+                            onPress={() => postMenuPost && handleDeletePost(postMenuPost)}
+                        >
+                            <Feather name="trash-2" size={20} color="#ff4444" />
+                            <Text style={[styles.postMenuItemText, { color: '#ff4444' }]}>Delete Post</Text>
+                        </Pressable>
+                        <View style={[styles.postMenuDivider, { backgroundColor: colors.border }]} />
+                        <Pressable style={styles.postMenuItem} onPress={() => setPostMenuPost(null)}>
+                            <Text style={[styles.postMenuCancelText, { color: colors.textSecondary }]}>Cancel</Text>
+                        </Pressable>
+                    </View>
+                </Pressable>
+            </Modal>
+
+            <TutorialModal
+                visible={showMarketplaceTutorial}
+                onDismiss={dismissMarketplaceTutorial}
+                title="Selling & Styling"
+                steps={MARKETPLACE_TUTORIAL_STEPS}
             />
         </>
     );
@@ -864,5 +1014,37 @@ const styles = StyleSheet.create({
         fontSize: 15,
         fontWeight: '700',
         fontFamily: 'Inter_700Bold',
+    },
+    postMenuOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'flex-end',
+    },
+    postMenuSheet: {
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        paddingBottom: 32,
+        overflow: 'hidden',
+    },
+    postMenuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 18,
+        gap: 14,
+    },
+    postMenuItemText: {
+        fontSize: 16,
+        fontWeight: '500',
+    },
+    postMenuDivider: {
+        height: StyleSheet.hairlineWidth,
+        marginHorizontal: 20,
+    },
+    postMenuCancelText: {
+        fontSize: 16,
+        fontWeight: '500',
+        textAlign: 'center',
+        flex: 1,
     },
 });

@@ -132,7 +132,7 @@ export default function PostDetailScreen() {
         try {
             await Share.share({
                 message: `Check out this fit by ${post.user?.username || 'user'}: ${post.caption || ''}`,
-                url: `fitted://post/${post.id}`, // Deep link if applicable
+                url: `emode://post/${post.id}`, // Deep link if applicable
             });
         } catch (error) {
             console.error('Error sharing:', error);
@@ -294,6 +294,11 @@ export default function PostDetailScreen() {
         }
     };
 
+    const handleSearchGoogle = (item: ClothingItem) => {
+        const query = [item.brand, item.name].filter(Boolean).join(' ');
+        handleOpenLink(`https://www.google.com/search?q=${encodeURIComponent(query)}`);
+    };
+
     const handleOpenLink = async (link: string) => {
         if (link) {
             try {
@@ -451,17 +456,24 @@ export default function PostDetailScreen() {
                                 <Text style={[styles.modalBrand, { color: colors.textSecondary }]}>
                                     {selectedItem.brand}
                                 </Text>
+                                <Text style={[styles.modalName, { color: colors.text }]} numberOfLines={2}>
+                                    {selectedItem.name}
+                                </Text>
                                 <Text style={[styles.modalPrice, { color: colors.primary }]}>
                                     ${selectedItem.price}
                                 </Text>
 
-                                <Pressable
-                                    style={[styles.shopButton, { backgroundColor: colors.primary }]}
-                                    onPress={() => handleOpenLink(selectedItem.purchase_link)}
-                                >
-                                    <Feather name="external-link" size={18} color="#fff" />
-                                    <Text style={styles.shopButtonText}>View on StockX</Text>
-                                </Pressable>
+                                <View style={styles.linksRow}>
+                                    <Pressable
+                                        style={({ pressed }) => [styles.linkWrapper, { opacity: pressed ? 0.7 : 1 }]}
+                                        onPress={() => handleSearchGoogle(selectedItem)}
+                                    >
+                                        <View style={[styles.linkCircle, { backgroundColor: colors.backgroundSecondary, borderColor: colors.border }]}>
+                                            <Text style={styles.linkEmoji}>🔗</Text>
+                                        </View>
+                                        <Text style={[styles.linkLabel, { color: colors.textSecondary }]}>Search</Text>
+                                    </Pressable>
+                                </View>
 
                                 <Pressable style={styles.closeButton} onPress={() => setSelectedItem(null)}>
                                     <Text style={[styles.closeButtonText, { color: colors.textTertiary }]}>
@@ -643,6 +655,33 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 16,
         fontWeight: '600',
+    },
+    linksRow: {
+        flexDirection: 'row',
+        gap: 16,
+        justifyContent: 'center',
+        marginTop: 20,
+    },
+    linkWrapper: {
+        alignItems: 'center',
+        gap: 6,
+        width: 64,
+    },
+    linkCircle: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        borderWidth: 1.5,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    linkEmoji: {
+        fontSize: 22,
+    },
+    linkLabel: {
+        fontSize: 11,
+        textAlign: 'center',
+        width: 64,
     },
     closeButton: {
         paddingVertical: 16,

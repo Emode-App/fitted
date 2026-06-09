@@ -9,6 +9,9 @@ import { useTheme } from '@/hooks/useTheme';
 import { useMarketplaceStore } from '@/stores/marketplaceStore';
 import { Product } from '@/types';
 import DressingRoomPreview from './DressingRoomPreview';
+import ProTryOnsModal from './ProTryOnsModal';
+import { canPerformTryOn, FREE_DAILY_TRYON_LIMIT } from '@/services/revenueCatService';
+import { useAuthStore } from '@/stores/authStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.85, 400); // Match SettingsDrawer width
@@ -33,6 +36,9 @@ export default function DressingRoom() {
 
     const [showPreview, setShowPreview] = useState(false);
     const [uploadedItems, setUploadedItems] = useState<UploadedItem[]>([]);
+    const [showProModal, setShowProModal] = useState(false);
+    const [remainingTryOns, setRemainingTryOns] = useState(FREE_DAILY_TRYON_LIMIT);
+    const authUser = useAuthStore((state) => state.user);
 
     // Handle image upload from gallery or camera
     const handleUploadImage = async () => {
@@ -94,7 +100,7 @@ export default function DressingRoom() {
         setUploadedItems(prev => prev.filter(item => item.id !== id));
     };
 
-    const handleGenerateOutfit = () => {
+    const handleGenerateOutfit = async () => {
         if (dressingRoomItems.length === 0) {
             Alert.alert('No Items', 'Add some items to your dressing room first!');
             return;
@@ -103,6 +109,19 @@ export default function DressingRoom() {
             Alert.alert('No Selection', 'Please select at least one item to include in the outfit.');
             return;
         }
+
+        // Check daily try-on limit
+        if (authUser?.id) {
+            const { allowed, remaining, isPro } = await canPerformTryOn(authUser.id);
+            setRemainingTryOns(remaining);
+
+            if (!allowed && !isPro) {
+                // Show upgrade modal
+                setShowProModal(true);
+                return;
+            }
+        }
+
         setShowPreview(true);
     };
 
@@ -310,6 +329,13 @@ export default function DressingRoom() {
             <DressingRoomPreview
                 visible={showPreview}
                 onClose={() => setShowPreview(false)}
+            />
+
+            {/* Pro Try-Ons Upgrade Modal */}
+            <ProTryOnsModal
+                visible={showProModal}
+                onClose={() => setShowProModal(false)}
+                remainingTryOns={remainingTryOns}
             />
         </View>
     );

@@ -33,6 +33,12 @@ export interface User {
         url?: string;
     };
     created_at?: string;
+    // Stripe Connect (for stylists receiving payments)
+    stripe_account_id?: string;
+    stripe_customer_id?: string;
+    stripe_onboarding_complete?: boolean;
+    // Subscription status
+    subscription_status?: 'none' | 'active' | 'expired' | 'canceled';
 }
 
 // Marketplace Types
@@ -125,6 +131,14 @@ export interface PaymentRequest {
     transaction_id?: string;
 }
 
+export interface StylingDelivery {
+    generated_image_url: string;
+    board_image_url?: string;
+    items: ClothingItem[];
+    caption?: string;
+    styling_session_id?: string;
+}
+
 export interface Message {
     id: string;
     conversation_id: string;
@@ -133,6 +147,8 @@ export interface Message {
     created_at: string;
     is_read: boolean;
     payment_request?: PaymentRequest;
+    styling_delivery?: StylingDelivery;
+    shared_face_url?: string;
 }
 
 export interface Conversation {
@@ -172,4 +188,22 @@ export interface Notification {
     comment_id?: string;
     is_read: boolean;
     created_at: string;
+}
+
+// Styling Session Types
+export type StylingSessionStatus = 'pending' | 'completed' | 'declined' | 'refunded';
+
+export interface StylingSession {
+    id: string;
+    stylist_id: string;
+    stylist?: User;
+    client_id: string;
+    client?: User;
+    conversation_id: string;
+    message_id: string; // the message containing the payment_request
+    amount: number;
+    description: string;
+    status: StylingSessionStatus;
+    created_at: string;
+    completed_at?: string;
 }

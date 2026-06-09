@@ -1,5 +1,5 @@
 // Theme Colors - Centralized color palette for light and dark modes
-// Aligned with Fitted Web (Zinc/Gray scale)
+// Aligned with Emode Web (Zinc/Gray scale)
 
 export const Colors = {
     light: {
@@ -26,6 +26,47 @@ export const Colors = {
 
         // Tab bar
         tabBar: '#ffffff',
+        tabBarBorder: '#e4e4e7',
+        tabActive: '#18181b',
+        tabInactive: '#a1a1aa',
+
+        // Inputs
+        input: '#f4f4f5',       // zinc-100
+        inputBorder: '#e4e4e7', // zinc-200
+        placeholder: '#a1a1aa', // zinc-400
+
+        // Status
+        success: '#10b981', // emerald-500
+        error: '#ef4444',   // red-500
+        warning: '#f59e0b', // amber-500
+
+        // Brand
+        tint: '#18181b',
+    },
+    emode: {
+        // Backgrounds
+        background: '#F5F2EC',
+        backgroundSecondary: '#f9fafb', // gray-50
+        backgroundTertiary: '#f3f4f6',  // gray-100
+
+        // Text
+        text: '#09090b',       // zinc-950
+        textSecondary: '#71717a', // zinc-500
+        textTertiary: '#a1a1aa',  // zinc-400
+        textInverse: '#ffffff',
+
+        // Borders
+        border: '#e4e4e7',      // zinc-200
+        borderLight: '#f4f4f5', // zinc-100
+
+        // Interactive
+        primary: '#18181b',     // zinc-900 (Black)
+        primaryForeground: '#ffffff',
+        secondary: '#f4f4f5',   // zinc-100
+        secondaryForeground: '#18181b',
+
+        // Tab bar
+        tabBar: '#F5F2EC',
         tabBarBorder: '#e4e4e7',
         tabActive: '#18181b',
         tabInactive: '#a1a1aa',
@@ -104,6 +145,6 @@ export const useThemeColor = (
     }
 };
 
-export const getColors = (theme: 'light' | 'dark'): ThemeColors => {
+export const getColors = (theme: 'light' | 'dark' | 'emode'): ThemeColors => {
     return Colors[theme];
 };
