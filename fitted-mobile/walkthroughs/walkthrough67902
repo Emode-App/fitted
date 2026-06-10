@@ -1,0 +1,109 @@
+# Stylist Payment + Delivery Flow — Walkthrough
+
+## What Was Built
+
+A complete end-to-end stylist workflow inside the Emode messaging system. Verified stylists can request payment from clients, create styled outfits, and deliver them — all within DMs. Payments are currently simulated (UI-first); Stripe Connect is the next phase.
+
+---
+
+## Full User Journey (Step by Step)
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant DMs
+    participant Stylist
+    participant Create
+
+    Client->>DMs: "I need a fit for a wedding"
+    Stylist->>DMs: Taps "$" → sends payment request ($75)
+    DMs->>Client: Sees PaymentCard with Accept/Decline
+    Client->>DMs: Taps "Accept & Pay" → payment confirmed
+    Client->>DMs: Taps "Share Face Photo" → sends selfie
+    DMs->>Stylist: Sees face photo + "Create Outfit" button
+    Stylist->>Create: Taps "Create Outfit" → enters Create tab
+    Note over Create: Banner: "Styling for @username"
+    Note over Create: Client's face auto-loaded
+    Stylist->>Create: Builds outfit, generates AI image
+    Stylist->>Create: Taps "Send to @username"
+    Create->>DMs: Outfit delivered as rich card
+    DMs->>Client: Sees OutfitDeliveryCard with outfit image + tagged items
+```
+
+---
+
+## Files Changed
+
+### New Files (4)
+
+| File | Purpose |
+|------|---------|
+| [PaymentRequestModal.tsx](file:///c:/Users/brand/OneDrive/Desktop/development/Fitted/fitted-mobile/components/PaymentRequestModal.tsx) | Slide-up modal for stylists to enter amount + description |
+| [PaymentCard.tsx](file:///c:/Users/brand/OneDrive/Desktop/development/Fitted/fitted-mobile/components/PaymentCard.tsx) | Rich payment card in chat (Pending/Paid/Declined + post-payment actions) |
+| [OutfitDeliveryCard.tsx](file:///c:/Users/brand/OneDrive/Desktop/development/Fitted/fitted-mobile/components/OutfitDeliveryCard.tsx) | Rich outfit delivery card with AI image, moodboard, tagged items scroll |
+| [styling_payments.sql](file:///c:/Users/brand/OneDrive/Desktop/development/Fitted/fitted-mobile/supabase/styling_payments.sql) | DB migration: `styling_sessions` table, Stripe fields, delivery columns |
+
+### Modified Files (4)
+
+| File | What Changed |
+|------|-------------|
+| [types/index.ts](file:///c:/Users/brand/OneDrive/Desktop/development/Fitted/fitted-mobile/types/index.ts) | Added `StylingDelivery`, `StylingSession` types; extended `Message` with `styling_delivery`, `shared_face_url` |
+| [messagesStore.ts](file:///c:/Users/brand/OneDrive/Desktop/development/Fitted/fitted-mobile/stores/messagesStore.ts) | Added `sendPaymentRequest`, `respondToPayment`, `sendStylingDelivery`, `sendFacePhoto` |
+| [messages.tsx](file:///c:/Users/brand/OneDrive/Desktop/development/Fitted/fitted-mobile/app/(tabs)/messages.tsx) | "$" button, PaymentCard/OutfitDeliveryCard/FaceShare rendering, Create Outfit navigation, conversation previews |
+| [create.tsx](file:///c:/Users/brand/OneDrive/Desktop/development/Fitted/fitted-mobile/app/(tabs)/create.tsx) | "Styling for @username" banner, client face override, `handleSendToClient`, indigo "Send to Client" button |
+
+---
+
+## Feature Details
+
+### PaymentCard Post-Payment Actions
+After a payment is accepted:
+- **Stylist** sees an indigo **"Create Outfit"** button → navigates to Create tab with client context
+- **Client** sees a purple **"Share Face Photo"** button → sends their face reference for AI generation
+
+### Create Screen — Styling Mode
+When a stylist navigates from "Create Outfit":
+- Indigo **"Styling for @username"** banner appears below the header (dismissible with ✕)
+- Client's face photo is **auto-loaded** as the AI face reference
+- Preview step shows **"Send to @username"** (indigo gradient) instead of "Publish Post"
+- On send: uploads images → sends `styling_delivery` message → shows success alert with "View Chat" option
+
+### Face Photo Sharing
+- Client can share their saved `ai_face_url` or pick a new photo
+- Renders in chat as a compact card with the face image and a 📸 label
+- Stylist's "Create Outfit" button automatically picks up the most recent shared face URL
+
+### Conversation Preview
+Messages list shows contextual previews:
+- 🎨 Outfit delivered
+- 📸 Face photo shared
+- 💰 $75.00 — completed
+
+---
+
+## What's Next
+
+### Stripe Integration
+1. `@stripe/stripe-react-native` — payment sheet for real transactions
+2. Supabase Edge Function — create PaymentIntents
+3. Stripe Connect onboarding for stylists
+4. Replace simulated `respondToPayment` with real API calls
+
+### Earnings Dashboard
+- Stylist profile section showing earnings, completed sessions, and payout history
+- Query the `styling_sessions` table
+
+### Save to Profile
+- Client "Save to Profile" button on OutfitDeliveryCard — currently shows "Coming Soon"
+- Will re-post the outfit to the client's profile with stylist credit
+
+---
+
+## Validation
+
+- TypeScript: **zero new errors** (only pre-existing TEMP file errors)
+- All existing messaging functionality preserved
+- All existing Create screen functionality preserved (drafts, wardrobe, AI generation, publishing)
+
+> [!IMPORTANT]
+> Run [styling_payments.sql](file:///c:/Users/brand/OneDrive/Desktop/development/Fitted/fitted-mobile/supabase/styling_payments.sql) in your Supabase SQL editor before testing. This creates the `styling_sessions` table, adds Stripe columns to users, and adds the `styling_delivery`/`shared_face_url` columns to messages.

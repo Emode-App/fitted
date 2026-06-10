@@ -1,0 +1,514 @@
+// Settings Drawer - Slide-in modal from profile with settings menu
+import React, { useState, useEffect, useRef } from 'react';
+import {
+    View,
+    Text,
+    Modal,
+    TouchableOpacity,
+    ScrollView,
+    StyleSheet,
+    Pressable,
+    Alert,
+    Animated,
+    Dimensions,
+    Easing,
+    Platform,
+} from 'react-native';
+import { Feather } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import { BlurView } from 'expo-blur';
+import { useTheme } from '@/hooks/useTheme';
+import { useAuthStore } from '@/stores/authStore';
+import { useMarketplaceStore } from '@/stores/marketplaceStore';
+import {
+    PrivacyPage,
+    NotificationsPage,
+    AppearancePage,
+    HelpPage,
+    TwoFactorPage,
+    LoginActivityPage,
+    FAQsPage,
+    ContactPage,
+    DraftsPage,
+    DressingRoomPage,
+    CartPage,
+    DraftItem,
+} from './SettingsPages';
+import BusinessSubscriptionModal from './BusinessSubscriptionModal';
+
+// View Types
+type SettingsView =
+    | 'menu'
+    | 'appearance'
+    | 'notifications'
+    | 'privacy'
+    | 'help'
+    | '2fa'
+    | 'loginActivity'
+    | 'faqs'
+    | 'contact'
+    | 'drafts'
+    | 'drafts'
+    | 'dressingRoom'
+    | 'cart';
+
+interface SettingsDrawerProps {
+    visible: boolean;
+    onClose: () => void;
+    initialView?: SettingsView;
+}
+
+const { width } = Dimensions.get('window');
+const DRAWER_WIDTH_PCT = 0.85;
+const DRAWER_MAX_WIDTH = 400;
+
+export default function SettingsDrawer({ visible, onClose, initialView = 'menu' }: SettingsDrawerProps) {
+    const [currentView, setCurrentView] = useState<SettingsView>(initialView);
+    const { colors, isDark } = useTheme();
+    const signOut = useAuthStore((state) => state.signOut);
+    const user = useAuthStore((state) => state.user);
+    const updateProfile = useAuthStore((state) => state.updateProfile);
+    const { dressingRoomBadgeCount, cartItems } = useMarketplaceStore();
+    const [showBusinessModal, setShowBusinessModal] = useState(false);
+
+    // Animation states
+    const [internalVisible, setInternalVisible] = useState(false);
+    // Start off-screen to the left
+    const slideAnim = useRef(new Animated.Value(-width)).current;
+    const fadeAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        if (visible) {
+            setInternalVisible(true);
+            // Use initialView when opening, or menu if not specified
+            setCurrentView(initialView);
+
+            Animated.parallel([
+                Animated.timing(slideAnim, {
+                    toValue: 0,
+                    duration: 300,
+                    easing: Easing.out(Easing.poly(4)),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(fadeAnim, {
+                    toValue: 1,
+                    duration: 300,
+                    useNativeDriver: true,
+                }),
+            ]).start();
+        } else {
+            Animated.parallel([
+                Animated.timing(slideAnim, {
+                    toValue: -width,
+                    duration: 250,
+                    easing: Easing.in(Easing.poly(4)),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(fadeAnim, {
+                    toValue: 0,
+                    duration: 250,
+                    useNativeDriver: true,
+                }),
+            ]).start(({ finished }) => {
+                if (finished) {
+                    setInternalVisible(false);
+                }
+            });
+        }
+    }, [visible]);
+
+    const handleLogout = async () => {
+        Alert.alert(
+            'Log Out',
+            'Are you sure you want to log out?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Log Out',
+                    style: 'destructive',
+                    onPress: async () => {
+                        await signOut();
+                        onClose();
+                        router.replace('/auth');
+                    },
+                },
+            ]
+        );
+    };
+
+    const handleBusinessSwitch = () => {
+        Alert.alert('Switch Account Type', 'Are you sure you want to switch to a Business Account?');
+    };
+
+    const renderMenu = () => (
+        <>
+            {/* Header */}
+            <View style={[styles.header, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
+                <TouchableOpacity onPress={onClose} style={[styles.closeButton, { backgroundColor: isDark ? '#27272a' : '#f3f4f6' }]}>
+                    <Feather name="x" size={20} color={colors.text} />
+                </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.scrollContent}>
+                {/* Account Section */}
+                <View style={styles.section}>
+                    <Text style={[styles.sectionTitle, { color: isDark ? '#71717a' : '#9ca3af' }]}>Account</Text>
+                    <View style={{ gap: 4 }}>
+                        <MenuItem
+                            icon="shopping-bag"
+                            label="Dressing Room"
+                            onPress={() => setCurrentView('dressingRoom')}
+                            colors={colors}
+                            isDark={isDark}
+                            badge={dressingRoomBadgeCount}
+                        />
+                        <MenuItem // Cart
+                            icon="shopping-cart"
+                            label="Shopping Cart"
+                            onPress={() => setCurrentView('cart')}
+                            colors={colors}
+                            isDark={isDark}
+                            badge={cartItems.length}
+                        />
+                        <MenuItem
+                            icon="user"
+                            label="Edit Profile"
+                            onPress={() => {
+                                onClose();
+                                router.push('/edit-profile');
+                            }}
+                            colors={colors}
+                            isDark={isDark}
+                        />
+                        <MenuItem
+                            icon="edit-3"
+                            label="Drafts"
+                            onPress={() => setCurrentView('drafts')}
+                            colors={colors}
+                            isDark={isDark}
+                        />
+                        <MenuItem
+                            icon="lock"
+                            label="Privacy & Security"
+                            onPress={() => setCurrentView('privacy')}
+                            colors={colors}
+                            isDark={isDark}
+                        />
+                        <MenuItem
+                            icon="bell"
+                            label="Notifications"
+                            onPress={() => setCurrentView('notifications')}
+                            colors={colors}
+                            isDark={isDark}
+                        />
+                    </View>
+
+                    {/* Business Switcher */}
+                    <TouchableOpacity
+                        style={[styles.businessItem, { backgroundColor: isDark ? '#27272a' : '#f9fafb' }]}
+                        onPress={async () => {
+                            const isBusiness = user?.is_business_account;
+
+                            if (isBusiness) {
+                                // Already business — switching back to personal is free
+                                Alert.alert(
+                                    'Switch to Personal',
+                                    'Switch back to a Personal Account? Your shop will be hidden.',
+                                    [
+                                        { text: 'Cancel', style: 'cancel' },
+                                        {
+                                            text: 'Confirm',
+                                            onPress: async () => {
+                                                await updateProfile({ is_business_account: false });
+                                            },
+                                        },
+                                    ]
+                                );
+                            } else {
+                                // Not business — show subscription modal
+                                setShowBusinessModal(true);
+                            }
+                        }}
+                    >
+                        <Feather
+                            name={user?.is_business_account ? "user" : "briefcase"}
+                            size={20}
+                            color={isDark ? '#60a5fa' : '#2563eb'}
+                        />
+                        <Text style={{ fontSize: 15, fontWeight: '500', color: isDark ? '#60a5fa' : '#2563eb' }}>
+                            {user?.is_business_account ? 'Switch to Personal Account' : 'Switch to Business Account'}
+                        </Text>
+                    </TouchableOpacity>
+                </View>
+
+                {/* App Section */}
+                <View style={styles.section}>
+                    <Text style={[styles.sectionTitle, { color: isDark ? '#71717a' : '#9ca3af' }]}>App</Text>
+                    <View style={{ gap: 4 }}>
+                        <MenuItem
+                            icon="moon"
+                            label="Appearance"
+                            onPress={() => setCurrentView('appearance')}
+                            colors={colors}
+                            isDark={isDark}
+                        />
+                        <MenuItem
+                            icon="help-circle"
+                            label="Help & Support"
+                            onPress={() => setCurrentView('help')}
+                            colors={colors}
+                            isDark={isDark}
+                        />
+                    </View>
+                </View>
+
+                {/* Logout */}
+                <View style={[styles.logoutSection, { borderTopColor: colors.border }]}>
+                    <TouchableOpacity
+                        style={[styles.logoutButton, { backgroundColor: isDark ? 'rgba(239, 68, 68, 0.1)' : '#fef2f2' }]}
+                        onPress={handleLogout}
+                    >
+                        <Feather name="log-out" size={20} color="#dc2626" />
+                        <Text style={styles.logoutText}>Log Out</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {/* Footer */}
+                <View style={[styles.footer, { borderTopColor: colors.border }]}>
+                    <Text style={[styles.footerText, { color: isDark ? '#52525b' : '#9ca3af' }]}>Emode v1.0.0</Text>
+                    <Text style={[styles.footerSubtext, { color: isDark ? '#3f3f46' : '#d1d5db' }]}>Powered by Nano Banana Pro</Text>
+                </View>
+            </ScrollView>
+        </>
+    );
+
+    const renderContent = () => {
+        switch (currentView) {
+            case 'appearance': return <AppearancePage onBack={() => setCurrentView('menu')} />;
+            case 'notifications': return <NotificationsPage onBack={() => setCurrentView('menu')} />;
+            case 'privacy': return <PrivacyPage onBack={() => setCurrentView('menu')} onNavigate={setCurrentView as any} />;
+            case 'help': return <HelpPage onBack={() => setCurrentView('menu')} onNavigate={setCurrentView as any} />;
+
+            // Sub-pages (Level 2)
+            case '2fa': return <TwoFactorPage onBack={() => setCurrentView('privacy')} />;
+            case 'loginActivity': return <LoginActivityPage onBack={() => setCurrentView('privacy')} />;
+            case 'faqs': return <FAQsPage onBack={() => setCurrentView('help')} />;
+            case 'contact': return <ContactPage onBack={() => setCurrentView('help')} />;
+            case 'drafts': return (
+                <DraftsPage
+                    onBack={() => setCurrentView('menu')}
+                    onCloseDrawer={onClose}
+                />
+            );
+            case 'dressingRoom': return <DressingRoomPage onBack={() => setCurrentView('menu')} />;
+            case 'cart': return <CartPage onBack={() => setCurrentView('menu')} />;
+
+            default: return renderMenu();
+        }
+    };
+
+    if (!internalVisible) return null;
+
+    return (
+        <>
+        <Modal
+            visible={internalVisible}
+            transparent
+            animationType="none"
+            onRequestClose={onClose}
+        >
+            {/* Backdrop with Blur */}
+            <Animated.View style={[styles.backdropContainer, { opacity: fadeAnim }]}>
+                {Platform.OS === 'ios' ? (
+                    <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+                ) : (
+                    // Fallback for Android if blur is too heavy or not supported well without setup
+                    <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)' }]} />
+                )}
+                {/* On Android, add pressable overlay on TOP of blur/color */}
+                <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+            </Animated.View>
+
+            {/* Drawer */}
+            <Animated.View
+                style={[
+                    styles.drawer,
+                    {
+                        backgroundColor: colors.background,
+                        borderColor: colors.border,
+                        transform: [{ translateX: slideAnim }]
+                    }
+                ]}
+            >
+                {renderContent()}
+            </Animated.View>
+        </Modal>
+
+        {/* Business Subscription Modal */}
+        <BusinessSubscriptionModal
+            visible={showBusinessModal}
+            onClose={() => setShowBusinessModal(false)}
+        />
+        </>
+    );
+}
+
+// Global Menu Item
+function MenuItem({
+    icon,
+    label,
+    onPress,
+    colors,
+    isDark,
+    badge
+}: {
+    icon: string;
+    label: string;
+    onPress: () => void;
+    colors: any;
+    isDark: boolean;
+    badge?: number;
+}) {
+    return (
+        <TouchableOpacity
+            style={[styles.menuItem, { backgroundColor: isDark ? '#27272a' : 'transparent' }]}
+            onPress={onPress}
+            activeOpacity={0.7}
+        >
+            <View style={styles.menuItemLeft}>
+                <Feather name={icon as any} size={20} color={isDark ? '#d4d4d8' : '#374151'} />
+                <Text style={[styles.menuItemLabel, { color: colors.text }]}>{label}</Text>
+                {badge !== undefined && badge > 0 && (
+                    <View style={{
+                        backgroundColor: '#ef4444',
+                        paddingHorizontal: 6,
+                        paddingVertical: 2,
+                        borderRadius: 10,
+                        marginLeft: 8
+                    }}>
+                        <Text style={{ color: 'white', fontSize: 10, fontWeight: 'bold' }}>
+                            {badge > 99 ? '99+' : badge}
+                        </Text>
+                    </View>
+                )}
+            </View>
+            <Feather name="chevron-right" size={16} color={isDark ? '#52525b' : '#d1d5db'} />
+        </TouchableOpacity>
+    );
+}
+
+
+const styles = StyleSheet.create({
+    backdropContainer: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.3)', // subtle tint even with blur
+    },
+    drawer: {
+        position: 'absolute',
+        left: 0, // Left side
+        top: 0,
+        bottom: 0,
+        width: '85%',
+        maxWidth: 400,
+        borderTopRightRadius: 24, // rounded-r-3xl
+        borderBottomRightRadius: 24,
+        overflow: 'hidden',
+        borderRightWidth: 1, // Border on right
+        shadowColor: "#000",
+        shadowOffset: {
+            width: 4,
+            height: 0,
+        },
+        shadowOpacity: 0.30,
+        shadowRadius: 4.65,
+        elevation: 8,
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingTop: 60,
+        paddingBottom: 20,
+        borderBottomWidth: 1,
+    },
+    headerTitle: {
+        fontSize: 20,
+        fontWeight: '900',
+        letterSpacing: -0.5,
+    },
+    closeButton: {
+        padding: 8,
+        borderRadius: 999,
+    },
+    scrollContent: {
+        flex: 1,
+        padding: 16,
+    },
+    section: {
+        marginBottom: 24,
+    },
+    sectionTitle: {
+        fontSize: 12,
+        fontWeight: '700',
+        letterSpacing: 0.5,
+        textTransform: 'uppercase',
+        marginBottom: 12,
+        paddingHorizontal: 8,
+    },
+    menuItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 12,
+        paddingHorizontal: 12,
+        borderRadius: 12,
+    },
+    menuItemLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    menuItemLabel: {
+        fontSize: 15,
+        fontWeight: '500',
+    },
+    businessItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        padding: 12,
+        borderRadius: 12,
+        marginTop: 8,
+    },
+    logoutSection: {
+        paddingTop: 16,
+        borderTopWidth: 1,
+        marginBottom: 8,
+    },
+    logoutButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        padding: 12,
+        borderRadius: 12,
+    },
+    logoutText: {
+        fontSize: 15,
+        fontWeight: '500',
+        color: '#dc2626',
+    },
+    footer: {
+        alignItems: 'center',
+        paddingVertical: 24,
+        borderTopWidth: 1,
+    },
+    footerText: {
+        fontSize: 12,
+    },
+    footerSubtext: {
+        fontSize: 10,
+        marginTop: 4,
+    }
+});

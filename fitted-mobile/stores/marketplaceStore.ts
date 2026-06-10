@@ -1,0 +1,407 @@
+import { create } from 'zustand';
+import { Product, DressingRoomItem } from '@/types';
+import { supabase } from '@/services/supabase';
+import { generateOutfit } from '@/services/aiService';
+import * as FileSystem from 'expo-file-system/legacy';
+
+interface MarketplaceState {
+    // Dressing room items
+    dressingRoomItems: Product[];
+    dressingRoomBadgeCount: number;
+    selectedDressingRoomIds: string[];
+
+    // Products cache
+    products: Product[];
+    isLoadingProducts: boolean;
+
+    // Cart
+    cartItems: Product[];
+    isLoadingCart: boolean;
+
+    // Outfit generation
+    generatedOutfitUrl: string | null;
+    isGeneratingOutfit: boolean;
+
+    // Actions
+    addToDressingRoom: (product: Product) => void;
+    removeFromDressingRoom: (productId: string) => void;
+    clearDressingRoom: () => void;
+    clearBadge: () => void;
+    toggleDressingRoomSelection: (productId: string) => void;
+    selectAllDressingRoom: () => void;
+
+    // Cart actions
+    addToCart: (product: Product, userId: string) => Promise<void>;
+    removeFromCart: (productId: string, userId: string) => Promise<void>;
+    fetchCart: (userId: string) => Promise<void>;
+
+    // Product fetching
+    fetchSellerProducts: (sellerId: string) => Promise<void>;
+    searchProducts: (query: string) => Promise<Product[]>;
+    deleteProduct: (productId: string) => Promise<void>;
+
+    // Outfit generation - takes optional uploaded image URIs
+    generateDressingRoomOutfit: (userId: string, forceRegenerate?: boolean, uploadedImageUris?: string[]) => Promise<string | null>;
+
+    // Last used items for canvas
+    lastUsedItems: Product[];
+    sendToCanvas: (product: Product) => void;
+}
+
+// Generate cache key from product IDs
+function getCacheKey(productIds: string[]): string {
+    return [...productIds].sort().join('_');
+}
+
+export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
+    dressingRoomItems: [],
+    dressingRoomBadgeCount: 0,
+    selectedDressingRoomIds: [],
+    products: [],
+    isLoadingProducts: false,
+    cartItems: [],
+    isLoadingCart: false,
+    generatedOutfitUrl: null,
+    isGeneratingOutfit: false,
+    lastUsedItems: [],
+
+    addToDressingRoom: (product: Product) => {
+        const { dressingRoomItems, dressingRoomBadgeCount, selectedDressingRoomIds } = get();
+        if (dressingRoomItems.find(item => item.id === product.id)) {
+            return;
+        }
+        set({
+            dressingRoomItems: [...dressingRoomItems, product],
+            dressingRoomBadgeCount: dressingRoomBadgeCount + 1,
+            selectedDressingRoomIds: [...selectedDressingRoomIds, product.id], // Auto-select new items
+        });
+    },
+
+    removeFromDressingRoom: (productId: string) => {
+        const { dressingRoomItems, selectedDressingRoomIds } = get();
+        set({
+            dressingRoomItems: dressingRoomItems.filter(item => item.id !== productId),
+            selectedDressingRoomIds: selectedDressingRoomIds.filter(id => id !== productId),
+        });
+    },
+
+    clearDressingRoom: () => {
+        set({
+            dressingRoomItems: [],
+            dressingRoomBadgeCount: 0,
+            selectedDressingRoomIds: [],
+            generatedOutfitUrl: null,
+        });
+    },
+
+    clearBadge: () => {
+        set({ dressingRoomBadgeCount: 0 });
+    },
+
+    toggleDressingRoomSelection: (productId: string) => {
+        const { selectedDressingRoomIds } = get();
+        if (selectedDressingRoomIds.includes(productId)) {
+            set({
+                selectedDressingRoomIds: selectedDressingRoomIds.filter(id => id !== productId),
+                generatedOutfitUrl: null, // Clear so regenerate works
+            });
+        } else {
+            set({
+                selectedDressingRoomIds: [...selectedDressingRoomIds, productId],
+                generatedOutfitUrl: null, // Clear so regenerate works
+            });
+        }
+    },
+
+    selectAllDressingRoom: () => {
+        const { dressingRoomItems } = get();
+        set({ selectedDressingRoomIds: dressingRoomItems.map(item => item.id) });
+    },
+
+    // Cart operations
+    addToCart: async (product: Product, userId: string) => {
+        try {
+            const { error } = await supabase
+                .from('cart_items')
+                .insert({ user_id: userId, product_id: product.id });
+
+            if (error && error.code !== '23505') throw error; // Ignore duplicate key error
+
+            const { cartItems } = get();
+            if (!cartItems.find(item => item.id === product.id)) {
+                set({ cartItems: [...cartItems, product] });
+            }
+        } catch (error) {
+            console.error('Error adding to cart:', error);
+        }
+    },
+
+    removeFromCart: async (productId: string, userId: string) => {
+        try {
+            await supabase
+                .from('cart_items')
+                .delete()
+                .eq('user_id', userId)
+                .eq('product_id', productId);
+
+            const { cartItems } = get();
+            set({ cartItems: cartItems.filter(item => item.id !== productId) });
+        } catch (error) {
+            console.error('Error removing from cart:', error);
+        }
+    },
+
+    fetchCart: async (userId: string) => {
+        set({ isLoadingCart: true });
+        try {
+            const { data, error } = await supabase
+                .from('cart_items')
+                .select(`
+                    product_id,
+                    product:products(*, seller:users(id, username, handle, avatar_url, is_verified_boutique))
+                `)
+                .eq('user_id', userId);
+
+            if (error) throw error;
+            const cartProducts = data?.map((item: any) => item.product).filter(Boolean) || [];
+            set({ cartItems: cartProducts });
+        } catch (error) {
+            console.error('Error fetching cart:', error);
+        } finally {
+            set({ isLoadingCart: false });
+        }
+    },
+
+    sendToCanvas: (product: Product) => {
+        const { lastUsedItems } = get();
+        const filtered = lastUsedItems.filter(item => item.id !== product.id);
+        set({
+            lastUsedItems: [product, ...filtered].slice(0, 10),
+        });
+    },
+
+    fetchSellerProducts: async (sellerId: string) => {
+        set({ isLoadingProducts: true });
+        try {
+            const { data, error } = await supabase
+                .from('products')
+                .select(`
+                    *,
+                    seller:users(id, username, handle, avatar_url, is_verified_boutique)
+                `)
+                .eq('seller_id', sellerId)
+                .eq('is_active', true)
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+            set({ products: data || [] });
+        } catch (error) {
+            console.error('Error fetching seller products:', error);
+            set({ products: [] });
+        } finally {
+            set({ isLoadingProducts: false });
+        }
+    },
+
+    searchProducts: async (query: string): Promise<Product[]> => {
+        try {
+            const { data, error } = await supabase
+                .from('products')
+                .select(`
+                    *,
+                    seller:users(id, username, handle, avatar_url, is_verified_boutique)
+                `)
+                .eq('is_active', true)
+                .or(`name.ilike.%${query}%,description.ilike.%${query}%`)
+                .order('created_at', { ascending: false })
+                .limit(20);
+
+            if (error) throw error;
+            return data || [];
+        } catch (error) {
+            console.error('Error searching products:', error);
+            return [];
+        }
+    },
+
+    deleteProduct: async (productId: string): Promise<void> => {
+        try {
+            // Soft delete - just set is_active to false
+            const { error } = await supabase
+                .from('products')
+                .update({ is_active: false })
+                .eq('id', productId);
+
+            if (error) throw error;
+
+            // Remove from local products list
+            set(state => ({
+                products: state.products.filter(p => p.id !== productId),
+                // Also remove from dressing room if present
+                dressingRoomItems: state.dressingRoomItems.filter(p => p.id !== productId),
+                selectedDressingRoomIds: state.selectedDressingRoomIds.filter(id => id !== productId),
+            }));
+        } catch (error) {
+            console.error('Error deleting product:', error);
+            throw error;
+        }
+    },
+
+    generateDressingRoomOutfit: async (userId: string, forceRegenerate: boolean = false, uploadedImageUris: string[] = []): Promise<string | null> => {
+        const { selectedDressingRoomIds, dressingRoomItems } = get();
+
+        // Need at least one selected product OR one uploaded image
+        if (selectedDressingRoomIds.length === 0 && uploadedImageUris.length === 0) {
+            return null;
+        }
+
+        // Include uploaded image URIs in the cache key for uniqueness
+        const allIds = [...selectedDressingRoomIds, ...uploadedImageUris.map(uri => uri.slice(-20))];
+        const cacheKey = getCacheKey(allIds);
+
+        // Check cache first (unless force regenerate or has uploaded images)
+        // Skip cache if there are uploaded images since they're local and may change
+        if (!forceRegenerate && uploadedImageUris.length === 0) {
+            try {
+                const { data: cached } = await supabase
+                    .from('dressing_room_outfits')
+                    .select('generated_image_url')
+                    .eq('cache_key', cacheKey)
+                    .single();
+
+                if (cached?.generated_image_url) {
+                    set({ generatedOutfitUrl: cached.generated_image_url });
+                    return cached.generated_image_url;
+                }
+            } catch {
+                // No cache hit, continue to generate
+            }
+        }
+
+        set({ isGeneratingOutfit: true });
+
+        try {
+            // Get selected product images
+            const selectedProducts = dressingRoomItems.filter(item =>
+                selectedDressingRoomIds.includes(item.id)
+            );
+
+            // Convert product images to base64
+            const clothingBase64s: string[] = [];
+            for (const product of selectedProducts) {
+                if (product.image_urls[0]) {
+                    try {
+                        const response = await fetch(product.image_urls[0]);
+                        const blob = await response.blob();
+                        const reader = new FileReader();
+                        const base64 = await new Promise<string>((resolve) => {
+                            reader.onloadend = () => resolve(reader.result as string);
+                            reader.readAsDataURL(blob);
+                        });
+                        clothingBase64s.push(base64);
+                    } catch (e) {
+                        console.warn('Failed to fetch product image:', e);
+                    }
+                }
+            }
+
+            // Convert uploaded images to base64
+            for (const uri of uploadedImageUris) {
+                try {
+                    const response = await fetch(uri);
+                    const blob = await response.blob();
+                    const reader = new FileReader();
+                    const base64 = await new Promise<string>((resolve) => {
+                        reader.onloadend = () => resolve(reader.result as string);
+                        reader.readAsDataURL(blob);
+                    });
+                    clothingBase64s.push(base64);
+                    console.log('Added uploaded image to generation');
+                } catch (e) {
+                    console.warn('Failed to convert uploaded image:', e);
+                }
+            }
+
+            if (clothingBase64s.length === 0) {
+                throw new Error('No clothing images available');
+            }
+
+            console.log('Generating outfit with', clothingBase64s.length, 'clothing items');
+
+            // Fetch user's face photo from profile
+            let faceBase64: string | null = null;
+            try {
+                const { data: userData } = await supabase
+                    .from('users')
+                    .select('ai_face_url')
+                    .eq('id', userId)
+                    .single();
+
+                if (userData?.ai_face_url) {
+                    const faceResponse = await fetch(userData.ai_face_url);
+                    const faceBlob = await faceResponse.blob();
+                    const faceReader = new FileReader();
+                    faceBase64 = await new Promise<string>((resolve) => {
+                        faceReader.onloadend = () => resolve(faceReader.result as string);
+                        faceReader.readAsDataURL(faceBlob);
+                    });
+                }
+            } catch (e) {
+                console.warn('Could not fetch user face photo:', e);
+            }
+
+            // Generate outfit with user's face, white background, standing pose
+            const generatedImage = await generateOutfit(
+                faceBase64,
+                clothingBase64s,
+                'a clean white studio background with the model standing upright in a professional fashion pose, like a typical e-commerce product listing'
+            );
+
+            // Upload to Supabase Storage
+            const base64Data = generatedImage.split(',')[1];
+            const fileName = `dressing-room/${userId}/${cacheKey}_${Date.now()}.png`;
+
+            const { error: uploadError } = await supabase.storage
+                .from('products')
+                .upload(fileName, decode(base64Data), {
+                    contentType: 'image/png',
+                });
+
+            if (uploadError) throw uploadError;
+
+            const { data: urlData } = supabase.storage
+                .from('products')
+                .getPublicUrl(fileName);
+
+            const publicUrl = urlData.publicUrl;
+
+            // Cache the result
+            await supabase.from('dressing_room_outfits').insert({
+                user_id: userId,
+                product_ids: selectedDressingRoomIds,
+                cache_key: cacheKey,
+                generated_image_url: publicUrl,
+            });
+
+            set({ generatedOutfitUrl: publicUrl });
+            return publicUrl;
+
+        } catch (error) {
+            console.error('Error generating outfit:', error);
+            return null;
+        } finally {
+            set({ isGeneratingOutfit: false });
+        }
+    },
+}));
+
+// Helper to decode base64 to Uint8Array
+function decode(base64: string): Uint8Array {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+}
+
