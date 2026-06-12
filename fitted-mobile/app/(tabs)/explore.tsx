@@ -1,5 +1,5 @@
 import { StyleSheet, FlatList, View, RefreshControl, Dimensions, Pressable, Text, ActivityIndicator } from 'react-native';
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
@@ -12,6 +12,7 @@ import { Post, User, Product } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
 import { ExploreHeader, FeaturedStylists, TrendingGrid, SearchResults } from '@/components/ExploreComponents';
 import ProductDetailModal from '@/components/ProductDetailModal';
+import { computeTrendingBrands, TrendingBrand } from '@/constants/brands';
 
 const { width } = Dimensions.get('window');
 const GRID_SIZE = width / 3;
@@ -136,10 +137,13 @@ export default function ExploreScreen() {
         console.log('View hashtag:', tag);
     };
 
-    const handleViewTrend = (trendName: string, trendImage: string) => {
+    // Trending brands derived from the brands featured across recent fits
+    const trendingBrands = useMemo(() => computeTrendingBrands(posts), [posts]);
+
+    const handleViewBrand = (brand: TrendingBrand) => {
         router.push({
             pathname: '/trend/[id]',
-            params: { id: trendName, name: trendName, image: trendImage }
+            params: { id: brand.name, name: brand.name, logo: brand.logoUrl ?? '' }
         });
     };
 
@@ -177,7 +181,7 @@ export default function ExploreScreen() {
         return (
             <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
                 <FeaturedStylists stylists={featuredStylists} onViewProfile={handleViewProfile} />
-                <TrendingGrid onViewTrend={handleViewTrend} />
+                <TrendingGrid brands={trendingBrands} onViewBrand={handleViewBrand} />
                 <View style={{ marginBottom: 20 }}>
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>Explore</Text>
                 </View>

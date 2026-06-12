@@ -1,6 +1,44 @@
 import { create } from 'zustand';
+import * as FileSystem from 'expo-file-system/legacy';
+import { decode } from 'base64-arraybuffer';
 import { supabase } from '../services/supabase';
 import { Conversation, Message, User, PaymentRequest, StylingDelivery } from '../types';
+
+// Upload a local image URI (or data: URI) to Supabase storage and return its public URL.
+// Reused by both general chat images and face-photo sharing so neither sends a local-only URI.
+async function uploadChatImage(conversationId: string, senderId: string, localUri: string): Promise<string | null> {
+    try {
+        let base64 = '';
+        if (localUri.startsWith('data:')) {
+            base64 = localUri.split(',')[1];
+        } else {
+            base64 = await FileSystem.readAsStringAsync(localUri, {
+                encoding: FileSystem.EncodingType.Base64,
+            });
+        }
+
+        const filename = `messages/${conversationId}/${senderId}_${Date.now()}.jpg`;
+        const arrayBuffer = decode(base64);
+
+        const { error } = await supabase.storage
+            .from('posts')
+            .upload(filename, arrayBuffer, {
+                contentType: 'image/jpeg',
+                upsert: false,
+            });
+
+        if (error) {
+            console.error('Chat image upload error:', error);
+            return null;
+        }
+
+        const { data: urlData } = supabase.storage.from('posts').getPublicUrl(filename);
+        return urlData.publicUrl;
+    } catch (error) {
+        console.error('Chat image upload error:', error);
+        return null;
+    }
+}
 
 interface MessagesState {
     conversations: ConversationWithDetails[];
@@ -16,6 +54,7 @@ interface MessagesState {
     respondToPayment: (messageId: string, conversationId: string, responderId: string, action: 'accept' | 'decline') => Promise<void>;
     sendStylingDelivery: (conversationId: string, senderId: string, delivery: StylingDelivery) => Promise<void>;
     sendFacePhoto: (conversationId: string, senderId: string, faceUrl: string) => Promise<void>;
+    sendImage: (conversationId: string, senderId: string, localUri: string) => Promise<boolean>;
     createConversation: (userId: string, otherUserId: string) => Promise<string | null>;
     setActiveConversation: (conversation: ConversationWithDetails | null) => void;
 }
@@ -231,11 +270,20 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
 
     sendFacePhoto: async (conversationId: string, senderId: string, faceUrl: string) => {
         try {
+            // If a local image was picked, upload it first so it persists across devices.
+            // Already-hosted URLs (e.g. the user's saved ai_face_url) are sent as-is.
+            let sharedUrl = faceUrl;
+            if (!faceUrl.startsWith('http')) {
+                const uploaded = await uploadChatImage(conversationId, senderId, faceUrl);
+                if (!uploaded) return;
+                sharedUrl = uploaded;
+            }
+
             const { error } = await supabase.from('messages').insert({
                 conversation_id: conversationId,
                 sender_id: senderId,
                 text: '📸 Shared face photo for styling',
-                shared_face_url: faceUrl,
+                shared_face_url: sharedUrl,
             });
 
             if (!error) {
@@ -243,6 +291,31 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
             }
         } catch (error) {
             console.error('Error sending face photo:', error);
+        }
+    },
+
+    sendImage: async (conversationId: string, senderId: string, localUri: string) => {
+        try {
+            const publicUrl = await uploadChatImage(conversationId, senderId, localUri);
+            if (!publicUrl) return false;
+
+            const { error } = await supabase.from('messages').insert({
+                conversation_id: conversationId,
+                sender_id: senderId,
+                text: '📷 Photo',
+                image_url: publicUrl,
+            });
+
+            if (error) {
+                console.error('Error sending image:', error);
+                return false;
+            }
+
+            get().fetchMessages(conversationId);
+            return true;
+        } catch (error) {
+            console.error('Error sending image:', error);
+            return false;
         }
     },
 

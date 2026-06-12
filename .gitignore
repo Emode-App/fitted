@@ -22,3 +22,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Expo cache
+.expo/
+
+# Local backups / temp / restore scripts (do not commit)
+CHECK-types-*.ts
+TEMP-*.ts
+TEMP-*.tsx
+fitted-mobile-rebuild-backup/
+restore-*.ps1

@@ -149,6 +149,7 @@ export interface Message {
     payment_request?: PaymentRequest;
     styling_delivery?: StylingDelivery;
     shared_face_url?: string;
+    image_url?: string;
 }
 
 export interface Conversation {

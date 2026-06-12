@@ -6,7 +6,7 @@ import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
 
 import { Text, View } from '@/components/Themed';
-import { useNotificationsStore } from '@/stores/notificationsStore';
+import { useNotificationsStore, FollowingActivityItem } from '@/stores/notificationsStore';
 import { useAuthStore } from '@/stores/authStore';
 import { Notification } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
@@ -35,12 +35,16 @@ interface NotificationWithDetails {
 export default function ActivityScreen() {
     const { colors } = useTheme();
     const [refreshing, setRefreshing] = useState(false);
+    const [tab, setTab] = useState<'you' | 'following'>('you');
     const user = useAuthStore((state) => state.user);
     const notifications = useNotificationsStore((state) => state.notifications) as NotificationWithDetails[];
     const isLoading = useNotificationsStore((state) => state.isLoading);
     const fetchNotifications = useNotificationsStore((state) => state.fetchNotifications);
     const markAsRead = useNotificationsStore((state) => state.markAsRead);
     const markAllAsRead = useNotificationsStore((state) => state.markAllAsRead);
+    const followingActivity = useNotificationsStore((state) => state.followingActivity);
+    const isLoadingFollowing = useNotificationsStore((state) => state.isLoadingFollowing);
+    const fetchFollowingActivity = useNotificationsStore((state) => state.fetchFollowingActivity);
 
     useFocusEffect(
         useCallback(() => {
@@ -49,6 +53,7 @@ export default function ActivityScreen() {
                 fetchNotifications(user.id).then(() => {
                     markAllAsRead(user.id);
                 });
+                fetchFollowingActivity(user.id);
             }
         }, [user])
     );
@@ -57,7 +62,11 @@ export default function ActivityScreen() {
     const onRefresh = async () => {
         if (!user?.id) return;
         setRefreshing(true);
-        await fetchNotifications(user.id);
+        if (tab === 'you') {
+            await fetchNotifications(user.id);
+        } else {
+            await fetchFollowingActivity(user.id);
+        }
         setRefreshing(false);
     };
 
@@ -133,6 +142,78 @@ export default function ActivityScreen() {
         }
     };
 
+    const handleFollowingItemPress = (item: FollowingActivityItem) => {
+        if (item.type === 'follow' && item.target_user) {
+            router.push({ pathname: '/user/[id]', params: { id: item.target_user.id } });
+        } else if (item.post?.id) {
+            router.push({ pathname: '/post/[id]', params: { id: item.post.id } });
+        }
+    };
+
+    const getFollowingText = (item: FollowingActivityItem) => {
+        switch (item.type) {
+            case 'like':
+                return 'liked a post';
+            case 'comment':
+                if (item.content) {
+                    const truncated = item.content.length > 50
+                        ? item.content.slice(0, 50) + '...'
+                        : item.content;
+                    return `commented: "${truncated}"`;
+                }
+                return 'commented on a post';
+            case 'follow':
+                return 'started following';
+            default:
+                return '';
+        }
+    };
+
+    const renderFollowingItem = ({ item }: { item: FollowingActivityItem }) => (
+        <Pressable
+            style={[styles.notificationItem, { borderBottomColor: colors.border }]}
+            onPress={() => handleFollowingItemPress(item)}
+        >
+            <Pressable onPress={() => handleActorPress(item.actor.id)}>
+                {item.actor.avatar_url ? (
+                    <Image source={{ uri: item.actor.avatar_url }} style={styles.avatar} />
+                ) : (
+                    <View style={[styles.avatarPlaceholder, { backgroundColor: colors.backgroundTertiary }]}>
+                        <Feather name="user" size={18} color={colors.textSecondary} />
+                    </View>
+                )}
+            </Pressable>
+
+            <View style={styles.content}>
+                <Text style={[styles.text, { color: colors.text }]}>
+                    <Text
+                        style={[styles.username, { color: colors.text }]}
+                        onPress={() => handleActorPress(item.actor.id)}
+                    >
+                        {item.actor.username || 'Someone'}
+                    </Text>
+                    {' '}{getFollowingText(item)}
+                    {item.type === 'follow' && item.target_user && (
+                        <Text
+                            style={[styles.username, { color: colors.text }]}
+                            onPress={() => handleActorPress(item.target_user!.id)}
+                        >
+                            {' '}{item.target_user.username}
+                        </Text>
+                    )}
+                </Text>
+                <View style={styles.meta}>
+                    {getNotificationIcon(item.type)}
+                    <Text style={[styles.time, { color: colors.textSecondary }]}>{formatTime(item.created_at)}</Text>
+                </View>
+            </View>
+
+            {item.post?.generated_image && (
+                <Image source={{ uri: item.post.generated_image }} style={styles.postThumb} />
+            )}
+        </Pressable>
+    );
+
     const renderNotification = ({ item }: { item: NotificationWithDetails }) => (
         <Pressable
             style={[
@@ -174,52 +255,88 @@ export default function ActivityScreen() {
         </Pressable>
     );
 
-    if (isLoading && notifications.length === 0) {
-        return (
-            <View style={[styles.container, { backgroundColor: colors.background }]}>
-                <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
-                    <Text style={[styles.title, { color: colors.text }]}>Activity</Text>
-                </View>
-                <View style={styles.loadingContainer}>
-                    <ActivityIndicator color={colors.text} size="large" />
-                </View>
-            </View>
-        );
-    }
+    const showInitialLoader = tab === 'you'
+        ? isLoading && notifications.length === 0
+        : isLoadingFollowing && followingActivity.length === 0;
 
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
             <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
                 <Text style={[styles.title, { color: colors.text }]}>Activity</Text>
-                {notifications.some(n => !n.is_read) && (
+                {tab === 'you' && notifications.some(n => !n.is_read) && (
                     <Pressable onPress={() => user && markAllAsRead(user.id)}>
                         <Text style={[styles.markRead, { color: colors.primary }]}>Mark all read</Text>
                     </Pressable>
                 )}
             </View>
 
-            <FlatList
-                data={notifications}
-                keyExtractor={(item) => item.id}
-                renderItem={renderNotification}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={onRefresh}
-                        tintColor={colors.text}
-                    />
-                }
-                ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Feather name="bell-off" size={48} color={colors.textSecondary} />
-                        <Text style={[styles.emptyTitle, { color: colors.text }]}>No notifications yet</Text>
-                        <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-                            When someone likes, comments, or follows you, it'll show up here
-                        </Text>
-                    </View>
-                }
-                showsVerticalScrollIndicator={false}
-            />
+            {/* Tab switcher */}
+            <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
+                <Pressable
+                    style={[styles.tabButton, tab === 'you' && [styles.tabButtonActive, { borderBottomColor: colors.text }]]}
+                    onPress={() => setTab('you')}
+                >
+                    <Text style={[styles.tabText, { color: tab === 'you' ? colors.text : colors.textSecondary }]}>You</Text>
+                </Pressable>
+                <Pressable
+                    style={[styles.tabButton, tab === 'following' && [styles.tabButtonActive, { borderBottomColor: colors.text }]]}
+                    onPress={() => setTab('following')}
+                >
+                    <Text style={[styles.tabText, { color: tab === 'following' ? colors.text : colors.textSecondary }]}>Following</Text>
+                </Pressable>
+            </View>
+
+            {showInitialLoader ? (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator color={colors.text} size="large" />
+                </View>
+            ) : tab === 'you' ? (
+                <FlatList
+                    data={notifications}
+                    keyExtractor={(item) => item.id}
+                    renderItem={renderNotification}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={onRefresh}
+                            tintColor={colors.text}
+                        />
+                    }
+                    ListEmptyComponent={
+                        <View style={styles.emptyContainer}>
+                            <Feather name="bell-off" size={48} color={colors.textSecondary} />
+                            <Text style={[styles.emptyTitle, { color: colors.text }]}>No notifications yet</Text>
+                            <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                                When someone likes, comments, or follows you, it'll show up here
+                            </Text>
+                        </View>
+                    }
+                    showsVerticalScrollIndicator={false}
+                />
+            ) : (
+                <FlatList
+                    data={followingActivity}
+                    keyExtractor={(item) => item.id}
+                    renderItem={renderFollowingItem}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={onRefresh}
+                            tintColor={colors.text}
+                        />
+                    }
+                    ListEmptyComponent={
+                        <View style={styles.emptyContainer}>
+                            <Feather name="users" size={48} color={colors.textSecondary} />
+                            <Text style={[styles.emptyTitle, { color: colors.text }]}>No activity yet</Text>
+                            <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                                Likes, comments, and follows from people you follow will show up here
+                            </Text>
+                        </View>
+                    }
+                    showsVerticalScrollIndicator={false}
+                />
+            )}
         </View>
     );
 }
@@ -243,6 +360,24 @@ const styles = StyleSheet.create({
     },
     markRead: {
         fontSize: 14,
+    },
+    tabBar: {
+        flexDirection: 'row',
+        borderBottomWidth: 0.5,
+    },
+    tabButton: {
+        flex: 1,
+        alignItems: 'center',
+        paddingVertical: 12,
+        borderBottomWidth: 2,
+        borderBottomColor: 'transparent',
+    },
+    tabButtonActive: {
+        borderBottomWidth: 2,
+    },
+    tabText: {
+        fontSize: 15,
+        fontWeight: '600',
     },
     loadingContainer: {
         flex: 1,

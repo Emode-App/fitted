@@ -4,7 +4,6 @@ import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '@/hooks/useTheme';
-import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '@/services/supabase';
 
 const { width } = Dimensions.get('window');
@@ -13,27 +12,42 @@ const GAP = 1; // tight gap
 const ITEM_WIDTH = (width - (COLUMN_COUNT - 1) * GAP) / COLUMN_COUNT;
 
 export default function TrendDetailScreen() {
-    const { id, name, image } = useLocalSearchParams<{ id: string; name: string; image: string }>();
+    // `id`/`name` are the brand name; `logo` is the brand logo URL (may be empty).
+    const { id, name, logo } = useLocalSearchParams<{ id: string; name: string; logo: string }>();
     const router = useRouter();
     const { colors, isDark } = useTheme();
     const [posts, setPosts] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
+    const brandName = name || id || 'Brand';
+
     useEffect(() => {
-        fetchTrendPosts();
+        fetchBrandFits();
     }, [id]);
 
-    const fetchTrendPosts = async () => {
+    const fetchBrandFits = async () => {
         try {
-            // For now, fetch random posts to populate the grid
-            // In a real app, this would filter by the trend tag/category
+            // Pull the most-liked fits, then keep the ones that feature this brand.
+            // Brand names are free-text in items[], so we match case-insensitively
+            // client-side rather than with a fragile JSONB containment query.
+            // Note: no users join here — posts<->users is ambiguous (direct FK +
+            // many-to-many via likes), which makes PostgREST error out. The grid
+            // only needs id + generated_image anyway.
             const { data, error } = await supabase
                 .from('posts')
-                .select('*, user:users(*)')
-                .limit(21); // Multiple of 3
+                .select('*')
+                .order('likes_count', { ascending: false })
+                .limit(200);
+
+            if (error) console.error('Failed to fetch brand fits:', error);
 
             if (data) {
-                setPosts(data);
+                const target = brandName.trim().toLowerCase();
+                const matches = data.filter((post: any) =>
+                    Array.isArray(post.items) &&
+                    post.items.some((item: any) => item?.brand?.trim().toLowerCase() === target)
+                );
+                setPosts(matches);
             }
         } catch (e) {
             console.error(e);
@@ -48,7 +62,7 @@ export default function TrendDetailScreen() {
                 <Feather name="arrow-left" size={24} color={colors.text} />
             </Pressable>
             <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
-                {name}
+                {brandName}
             </Text>
             <Pressable style={styles.iconButton}>
                 <Feather name="filter" size={24} color={colors.text} />
@@ -64,18 +78,19 @@ export default function TrendDetailScreen() {
             {renderHeader()}
 
             <ScrollView showsVerticalScrollIndicator={false}>
-                {/* Hero Section */}
-                <View style={styles.heroContainer}>
-                    <Image source={{ uri: image }} style={StyleSheet.absoluteFill} contentFit="cover" />
-                    <View style={styles.heroOverlay}>
-                        <Text style={styles.heroTitle}>{name}</Text>
-                    </View>
+                {/* Hero Section — brand logo on a neutral surface */}
+                <View style={[styles.heroContainer, { backgroundColor: isDark ? '#18181b' : '#f4f4f5' }]}>
+                    {logo ? (
+                        <Image source={{ uri: logo }} style={styles.heroLogo} contentFit="contain" />
+                    ) : (
+                        <Text style={[styles.heroTitle, { color: colors.text }]}>{brandName}</Text>
+                    )}
                 </View>
 
                 {/* Description */}
                 <View style={[styles.descriptionContainer, { backgroundColor: colors.background }]}>
                     <Text style={[styles.descriptionText, { color: colors.textSecondary }]}>
-                        Explore the latest looks defining the <Text style={{ color: colors.text, fontWeight: '700' }}>{name}</Text> aesthetic, curated by the Emode community.
+                        The most-liked fits featuring <Text style={{ color: colors.text, fontWeight: '700' }}>{brandName}</Text> on Emode.
                     </Text>
                 </View>
 
@@ -83,6 +98,13 @@ export default function TrendDetailScreen() {
                 {loading ? (
                     <View style={{ padding: 40 }}>
                         <ActivityIndicator color={colors.text} />
+                    </View>
+                ) : posts.length === 0 ? (
+                    <View style={styles.emptyState}>
+                        <Feather name="grid" size={32} color={colors.textTertiary} />
+                        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                            No fits featuring {brandName} yet.
+                        </Text>
                     </View>
                 ) : (
                     <View style={styles.grid}>
@@ -93,15 +115,10 @@ export default function TrendDetailScreen() {
                                 onPress={() => router.push({ pathname: '/post/[id]', params: { id: post.id } })}
                             >
                                 <Image
-                                    source={{ uri: post.image_url }}
+                                    source={{ uri: post.generated_image }}
                                     style={StyleSheet.absoluteFill}
                                     contentFit="cover"
                                 />
-                                {post.type === 'video' && (
-                                    <View style={styles.videoIcon}>
-                                        <Feather name="play" size={12} color="white" />
-                                    </View>
-                                )}
                             </Pressable>
                         ))}
                     </View>
@@ -139,21 +156,18 @@ const styles = StyleSheet.create({
         padding: 4,
     },
     heroContainer: {
-        height: 250,
+        height: 200,
         width: '100%',
-        position: 'relative',
-    },
-    heroOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.3)',
         justifyContent: 'center',
         alignItems: 'center',
     },
+    heroLogo: {
+        width: '55%',
+        height: '55%',
+    },
     heroTitle: {
-        color: 'white',
         fontSize: 32,
         fontWeight: '900',
-        textTransform: 'uppercase',
         letterSpacing: 1,
         textAlign: 'center',
         paddingHorizontal: 20,
@@ -178,15 +192,14 @@ const styles = StyleSheet.create({
         backgroundColor: '#e5e7eb',
         position: 'relative',
     },
-    videoIcon: {
-        position: 'absolute',
-        top: 6,
-        right: 6,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        borderRadius: 10,
-        width: 20,
-        height: 20,
-        justifyContent: 'center',
+    emptyState: {
+        paddingVertical: 60,
+        paddingHorizontal: 40,
         alignItems: 'center',
-    }
+        gap: 12,
+    },
+    emptyText: {
+        fontSize: 15,
+        textAlign: 'center',
+    },
 });
