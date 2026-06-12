@@ -80,6 +80,7 @@ interface ProfileViewProps {
     onOpenDrafts?: () => void;
     onRefresh?: () => void;
     refreshing?: boolean;
+    statsLoaded?: boolean;
     stats: {
         followers: number;
         following: number;
@@ -102,6 +103,7 @@ export default function ProfileView({
     onOpenDrafts,
     onRefresh,
     refreshing = false,
+    statsLoaded = true,
     stats,
 }: ProfileViewProps) {
     const { colors, isDark } = useTheme();
@@ -412,16 +414,22 @@ export default function ProfileView({
                 {/* Stats & Socials Row */}
                 <View style={styles.statsSocialsRow}>
                     <View style={styles.statsGroup}>
-                        <Pressable style={styles.statItem}>
-                            <Text style={[styles.statNumber, { color: colors.text }]}>{stats.followers}</Text>
+                        <Pressable
+                            style={styles.statItem}
+                            onPress={() => router.push({ pathname: '/connections', params: { userId: user.id, type: 'followers', username: user.username } })}
+                        >
+                            <Text style={[styles.statNumber, { color: colors.text }]}>{statsLoaded ? stats.followers : '—'}</Text>
                             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>followers</Text>
                         </Pressable>
-                        <Pressable style={styles.statItem}>
-                            <Text style={[styles.statNumber, { color: colors.text }]}>{stats.following}</Text>
+                        <Pressable
+                            style={styles.statItem}
+                            onPress={() => router.push({ pathname: '/connections', params: { userId: user.id, type: 'following', username: user.username } })}
+                        >
+                            <Text style={[styles.statNumber, { color: colors.text }]}>{statsLoaded ? stats.following : '—'}</Text>
                             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>following</Text>
                         </Pressable>
                         <View style={styles.statItem}>
-                            <Text style={[styles.statNumber, { color: colors.text }]}>{localPosts.length}</Text>
+                            <Text style={[styles.statNumber, { color: colors.text }]}>{statsLoaded ? localPosts.length : '—'}</Text>
                             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>fits</Text>
                         </View>
                     </View>

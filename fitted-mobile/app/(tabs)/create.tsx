@@ -29,6 +29,7 @@ import { useTheme } from '@/hooks/useTheme';
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as MediaLibrary from 'expo-media-library';
+import * as Sharing from 'expo-sharing';
 import { useMessagesStore } from '@/stores/messagesStore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 // Removed legacy shared component import that might conflict if not used exactly as before
@@ -562,11 +563,13 @@ export default function CreateScreen() {
         });
 
         if (!result.canceled && result.assets[0]) {
+            const localUri = result.assets[0].uri;
+
             // Add to canvas at center - store original URL for re-cropping
             const newItem: CanvasItem = {
                 id: Date.now().toString(),
-                url: result.assets[0].uri,
-                originalUrl: result.assets[0].uri, // Keep original
+                url: localUri,
+                originalUrl: localUri, // Keep original
                 x: CANVAS_WIDTH / 2 - 75,
                 y: 150,
                 usePolaroid: true, // Default to polaroid frame
@@ -575,8 +578,22 @@ export default function CreateScreen() {
             };
             setCanvasItems([...canvasItems, newItem]);
 
-            // Auto-save to wardrobe "Last Used"
-            addAssetToWardrobe('last_used', { url: result.assets[0].uri });
+            // Auto-save to wardrobe "Last Used" — upload to durable storage so the
+            // image survives app restarts (the picker's local cache URI doesn't)
+            if (user) {
+                try {
+                    const base64 = await FileSystem.readAsStringAsync(localUri, {
+                        encoding: FileSystem.EncodingType.Base64,
+                    });
+                    const filename = `wardrobe/${user.id}_${Date.now()}.jpg`;
+                    const publicUrl = await uploadImage('posts', filename, base64);
+                    if (publicUrl) {
+                        addAssetToWardrobe('last_used', { url: publicUrl });
+                    }
+                } catch (error) {
+                    console.error('Failed to save wardrobe item:', error);
+                }
+            }
         }
     };
 
@@ -1108,6 +1125,41 @@ export default function CreateScreen() {
         }
     };
 
+    // Open the native share sheet with the post image so the user can post it to
+    // Instagram/TikTok/X (selected via the "Share to" toggles). True one-tap auto-
+    // posting requires each platform's OAuth API, so we hand off to the OS share sheet.
+    const shareToSocial = async (genUri: string | null, boardUri: string | null) => {
+        try {
+            const available = await Sharing.isAvailableAsync();
+            if (!available) {
+                Alert.alert('Sharing Unavailable', 'Sharing is not available on this device.');
+                return;
+            }
+
+            // expo-sharing needs a local file URI. Prefer the AI image, fall back to the board.
+            const source = genUri || boardUri;
+            if (!source) return;
+
+            let fileUri = source;
+            if (source.startsWith('data:')) {
+                const base64 = source.split(',')[1];
+                const tempPath = `${FileSystem.cacheDirectory}emode_share_${Date.now()}.jpg`;
+                await FileSystem.writeAsStringAsync(tempPath, base64, {
+                    encoding: FileSystem.EncodingType.Base64,
+                });
+                fileUri = tempPath;
+            }
+
+            await Sharing.shareAsync(fileUri, {
+                mimeType: 'image/jpeg',
+                dialogTitle: 'Share your fit',
+                UTI: 'public.jpeg',
+            });
+        } catch (err) {
+            console.warn('Social share failed:', err);
+        }
+    };
+
     const handlePublish = async () => {
         if (!user) {
             Alert.alert('Error', 'Please sign in to post');
@@ -1224,6 +1276,12 @@ export default function CreateScreen() {
             if (error) {
                 // If it's a string error from store
                 throw new Error(typeof error === 'string' ? error : (error as any).message);
+            }
+
+            // If the user toggled any "Share to" platform, hand the image to the
+            // native share sheet so they can post it to Instagram/TikTok/X.
+            if (shareToInstagram || shareToTikTok || shareToTwitter) {
+                await shareToSocial(generatedImageUri, finalBoardImageUri);
             }
 
             // Success - reset and go back

@@ -61,3 +61,5 @@ CREATE POLICY "Users can update messages in their conversations" ON messages
 -- ============================================
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS styling_delivery JSONB;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS shared_face_url TEXT;
+-- General photo attachments sent in a conversation (public URL in the `posts` bucket)
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS image_url TEXT;

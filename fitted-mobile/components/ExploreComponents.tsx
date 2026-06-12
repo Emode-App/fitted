@@ -5,6 +5,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '@/hooks/useTheme';
 import { User, Product } from '@/types';
+import { TrendingBrand } from '@/constants/brands';
 import ProductCard from '@/components/ProductCard';
 
 // Constants
@@ -24,7 +25,8 @@ interface FeaturedStylistsProps {
 }
 
 interface TrendingGridProps {
-    onViewTrend: (trend: string, image: string) => void;
+    brands: TrendingBrand[];
+    onViewBrand: (brand: TrendingBrand) => void;
 }
 
 interface SearchResultsProps {
@@ -129,16 +131,51 @@ export const FeaturedStylists = ({ stylists, onViewProfile }: FeaturedStylistsPr
     );
 };
 
-// 3. Trending Now
-const TRENDS = [
-    { id: '1', name: 'Y2K Revival', image: 'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?auto=format&fit=crop&q=80&w=400' },
-    { id: '2', name: 'Opium Core', image: 'https://images.unsplash.com/photo-1516762689617-e1cffcef479d?auto=format&fit=crop&q=80&w=400' },
-    { id: '3', name: 'Quiet Luxury', image: 'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&q=80&w=400' },
-    { id: '4', name: 'Blokecore', image: 'https://images.unsplash.com/photo-1550614000-4b9519e0031a?auto=format&fit=crop&q=80&w=400' },
-];
+// 3. Trending Now — the brands featured in the most fits right now.
+// Each card shows the brand's logo (pulled from logo.dev) over a neutral surface,
+// with a gradient + brand name at the bottom. Tapping opens that brand's top fits.
+const BrandCard = ({ brand, onPress }: { brand: TrendingBrand; onPress: () => void }) => {
+    const { colors, isDark } = useTheme();
+    const [logoFailed, setLogoFailed] = React.useState(false);
+    const showLogo = !!brand.logoUrl && !logoFailed;
 
-export const TrendingGrid = ({ onViewTrend }: TrendingGridProps) => {
+    return (
+        <Pressable
+            style={[styles.trendCard, { backgroundColor: isDark ? '#27272a' : '#ffffff' }]}
+            onPress={onPress}
+        >
+            {showLogo ? (
+                <Image
+                    source={{ uri: brand.logoUrl! }}
+                    style={styles.brandLogo}
+                    contentFit="contain"
+                    transition={300}
+                    onError={() => setLogoFailed(true)}
+                />
+            ) : (
+                // Fallback when no logo resolves: brand initial on the surface
+                <View style={styles.brandFallback}>
+                    <Text style={[styles.brandInitial, { color: colors.textTertiary }]}>
+                        {brand.name.charAt(0).toUpperCase()}
+                    </Text>
+                </View>
+            )}
+            <LinearGradient
+                colors={['transparent', 'rgba(0,0,0,0.75)']}
+                style={styles.trendOverlay}
+            >
+                <Text style={styles.trendName} numberOfLines={1}>{brand.name}</Text>
+            </LinearGradient>
+        </Pressable>
+    );
+};
+
+export const TrendingGrid = ({ brands, onViewBrand }: TrendingGridProps) => {
     const { colors } = useTheme();
+
+    // Nothing to show until fits with brands exist — hide the section entirely
+    // rather than render an empty grid.
+    if (brands.length === 0) return null;
 
     return (
         <View style={styles.sectionContainer}>
@@ -148,17 +185,12 @@ export const TrendingGrid = ({ onViewTrend }: TrendingGridProps) => {
                 <Text style={[styles.sectionTitle, { color: colors.text }]}>Trending Now</Text>
             </View>
             <View style={styles.trendGrid}>
-                {TRENDS.map((trend) => (
-                    <Pressable
-                        key={trend.id}
-                        style={styles.trendCard}
-                        onPress={() => onViewTrend(trend.name, trend.image)}
-                    >
-                        <Image source={{ uri: trend.image }} style={StyleSheet.absoluteFill} contentFit="cover" />
-                        <View style={styles.trendOverlay}>
-                            <Text style={styles.trendName}>{trend.name}</Text>
-                        </View>
-                    </Pressable>
+                {brands.map((brand) => (
+                    <BrandCard
+                        key={brand.name}
+                        brand={brand}
+                        onPress={() => onViewBrand(brand)}
+                    />
                 ))}
             </View>
         </View>
@@ -372,10 +404,25 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         position: 'relative',
     },
+    brandLogo: {
+        ...StyleSheet.absoluteFillObject,
+        margin: 24, // inset the logo so it reads as a centered mark, not edge-to-edge
+    },
+    brandFallback: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    brandInitial: {
+        fontSize: 40,
+        fontWeight: '900',
+    },
     trendOverlay: {
         position: 'absolute',
-        inset: 0,
-        backgroundColor: 'rgba(0,0,0,0.3)',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: '55%',
         justifyContent: 'flex-end',
         padding: 12,
     },

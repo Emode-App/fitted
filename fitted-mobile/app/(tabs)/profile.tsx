@@ -34,6 +34,10 @@ export default function ProfileScreen() {
     const [savedPosts, setSavedPosts] = useState<Post[]>([]);
     const [drafts, setDrafts] = useState<Draft[]>([]);
     const [stats, setStats] = useState({ followers: 0, following: 0, fits: 0 });
+    // Stays false until the first stats fetch resolves, so we show a placeholder
+    // ("—") instead of flashing 0s on initial load. Never reset on subsequent
+    // refreshes so background reloads don't flicker back to the placeholder.
+    const [statsLoaded, setStatsLoaded] = useState(false);
 
     // Handle URL params to open settings directly
     useEffect(() => {
@@ -110,6 +114,7 @@ export default function ProfileScreen() {
             following: following || 0,
             fits: posts.length,
         });
+        setStatsLoaded(true);
     };
 
     // Full refresh including user data
@@ -172,9 +177,12 @@ export default function ProfileScreen() {
                     return;
                 }
 
-                // Get public URL
+                // Get public URL. The storage filename is fixed (upsert), so the base URL
+                // never changes between uploads. Append a cache-busting timestamp so that
+                // React Native's <Image> cache fetches the new photo instead of showing the
+                // stale one (which previously required restarting the app).
                 const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(filename);
-                const publicUrl = urlData.publicUrl;
+                const publicUrl = `${urlData.publicUrl}?v=${Date.now()}`;
 
                 // Update user record
                 const { error: updateError } = await supabase
@@ -233,6 +241,7 @@ export default function ProfileScreen() {
                 savedPosts={savedPosts}
                 isOwnProfile={true}
                 stats={stats}
+                statsLoaded={statsLoaded}
                 onEditProfile={() => router.push('/edit-profile')}
                 onAiFaceUpload={handleAiFaceUpload}
                 onDeleteDraft={handleDeleteDraft}

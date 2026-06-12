@@ -27,6 +27,15 @@ import { usePostsStore } from '@/stores/postsStore';
 
 const { width } = Dimensions.get('window');
 
+// Brands shown in the "More from" sections: unique, real (not 'unknown'),
+// and shoppable (has a purchase link). Used by both the fetch and the render
+// so the two never disagree (which would strand a brand on "No items found").
+const getDisplayBrands = (post: Post): string[] => [...new Set(
+    (post.items || [])
+        .filter(item => item.brand && item.brand.toLowerCase() !== 'unknown' && item.purchase_link)
+        .map(item => item.brand as string)
+)];
+
 export default function PostDetailScreen() {
     const { id } = useLocalSearchParams<{ id: string }>();
     const router = useRouter();
@@ -251,17 +260,16 @@ export default function PostDetailScreen() {
         if (!post?.items) return;
 
         // Get unique brands from post items, excluding 'unknown' and items without purchase links
-        const brands = [...new Set(
-            post.items
-                .filter(item => item.brand && item.brand.toLowerCase() !== 'unknown' && item.purchase_link)
-                .map(item => item.brand)
-        )];
+        const brands = getDisplayBrands(post).filter(brand => !brandCollections[brand]);
 
-        for (const brand of brands) {
-            if (brandCollections[brand]) continue; // Already loaded
+        if (brands.length === 0) return;
 
-            setLoadingBrands(prev => [...prev, brand]);
+        // Mark every brand as loading upfront so none of them briefly render
+        // "No items found" while waiting for their turn.
+        setLoadingBrands(prev => [...new Set([...prev, ...brands])]);
 
+        // Fetch all brands in parallel so they load together instead of one-by-one.
+        await Promise.all(brands.map(async (brand) => {
             try {
                 const results = await searchProducts(`${brand} clothing`);
 
@@ -270,7 +278,12 @@ export default function PostDetailScreen() {
                         // Image fallback logic
                         let imageUrl = item.imageUrl;
                         if (!imageUrl || imageUrl.length < 10) {
-                            const searchTerm = `${item.brand} ${item.name} white background`;
+                            // Include the SKU when available - it uniquely identifies the
+                            // product, so the search returns the exact item rather than a
+                            // visually-similar one.
+                            const searchTerm = [item.brand, item.name, item.sku, 'product white background']
+                                .filter(Boolean)
+                                .join(' ');
                             imageUrl = `https://tse2.mm.bing.net/th?q=${encodeURIComponent(searchTerm)}&w=500&h=500&c=7&rs=1&p=0`;
                         }
 
@@ -291,7 +304,7 @@ export default function PostDetailScreen() {
             } finally {
                 setLoadingBrands(prev => prev.filter(b => b !== brand));
             }
-        }
+        }));
     };
 
     const handleSearchGoogle = (item: ClothingItem) => {
@@ -337,7 +350,7 @@ export default function PostDetailScreen() {
         );
     }
 
-    const brands = [...new Set(post.items?.map(item => item.brand).filter(b => b && b.toLowerCase() !== 'unknown') || [])];
+    const brands = getDisplayBrands(post);
 
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>

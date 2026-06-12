@@ -23,6 +23,12 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { fetchPaymentIntent, checkConnectStatus, getStylistStripeAccountId } from '@/services/stripeService';
 
+// Height of the persistent header rendered above the tab content (see (tabs)/_layout.tsx).
+// KeyboardAvoidingView measures its own position relative to its parent (not the screen),
+// so it doesn't "see" this header — without offsetting by it, the input gets pushed up
+// short of the keyboard's edge.
+const HEADER_HEIGHT = 106;
+
 export default function MessagesScreen() {
     const { colors } = useTheme();
     const user = useAuthStore((state) => state.user);
@@ -36,6 +42,7 @@ export default function MessagesScreen() {
     const sendPaymentRequest = useMessagesStore((state) => state.sendPaymentRequest);
     const respondToPayment = useMessagesStore((state) => state.respondToPayment);
     const sendFacePhoto = useMessagesStore((state) => state.sendFacePhoto);
+    const sendImage = useMessagesStore((state) => state.sendImage);
     const setActiveConversation = useMessagesStore((state) => state.setActiveConversation);
     const createConversation = useMessagesStore((state) => state.createConversation);
 
@@ -49,6 +56,7 @@ export default function MessagesScreen() {
     const [showPaymentModal, setShowPaymentModal] = useState(false);
     const [showConnectOnboarding, setShowConnectOnboarding] = useState(false);
     const [paymentProcessing, setPaymentProcessing] = useState(false);
+    const [imageUploading, setImageUploading] = useState(false);
     const flatListRef = useRef<FlatList>(null);
 
     // Filter conversations by search
@@ -83,6 +91,59 @@ export default function MessagesScreen() {
         setTimeout(() => {
             flatListRef.current?.scrollToEnd();
         }, 100);
+    };
+
+    // Attach and send a photo in the conversation (available to any participant).
+    // Offers either capturing a new photo or choosing one from the library.
+    const handleSendPhoto = () => {
+        if (!user || !activeConversation || imageUploading) return;
+
+        Alert.alert(
+            'Send Photo',
+            undefined,
+            [
+                { text: 'Take Photo', onPress: () => pickAndSendPhoto('camera') },
+                { text: 'Choose from Library', onPress: () => pickAndSendPhoto('library') },
+                { text: 'Cancel', style: 'cancel' },
+            ]
+        );
+    };
+
+    const pickAndSendPhoto = async (source: 'camera' | 'library') => {
+        if (!user || !activeConversation || imageUploading) return;
+
+        let result: ImagePicker.ImagePickerResult;
+        if (source === 'camera') {
+            const { status } = await ImagePicker.requestCameraPermissionsAsync();
+            if (status !== 'granted') {
+                Alert.alert('Permission needed', 'Please grant camera access to take photos.');
+                return;
+            }
+            result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 });
+        } else {
+            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (status !== 'granted') {
+                Alert.alert('Permission needed', 'Please grant photo library access to send photos.');
+                return;
+            }
+            result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
+        }
+
+        if (result.canceled || !result.assets[0]) return;
+
+        setImageUploading(true);
+        try {
+            const ok = await sendImage(activeConversation.id, user.id, result.assets[0].uri);
+            if (!ok) {
+                Alert.alert('Upload Failed', 'Could not send the photo. Please try again.');
+                return;
+            }
+            setTimeout(() => {
+                flatListRef.current?.scrollToEnd();
+            }, 100);
+        } finally {
+            setImageUploading(false);
+        }
     };
 
     const handleSendPaymentRequest = async (amount: number, description: string) => {
@@ -416,6 +477,22 @@ export default function MessagesScreen() {
             );
         }
 
+        // Photo message → render image bubble
+        if (item.image_url) {
+            return (
+                <View style={[styles.imageBubble, { alignSelf: isOwn ? 'flex-end' : 'flex-start' }]}>
+                    <Image
+                        source={{ uri: item.image_url }}
+                        style={styles.imageBubbleImage}
+                        contentFit="cover"
+                    />
+                    <Text style={[styles.messageTime, { color: colors.textTertiary, alignSelf: 'flex-end', marginTop: 4 }]}>
+                        {formatTime(item.created_at)}
+                    </Text>
+                </View>
+            );
+        }
+
         // Regular text message
         return (
             <View style={[
@@ -450,6 +527,7 @@ export default function MessagesScreen() {
             <KeyboardAvoidingView
                 style={[styles.container, { backgroundColor: colors.background }]}
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                keyboardVerticalOffset={HEADER_HEIGHT}
                 {...panResponder.panHandlers}
             >
                 {/* Chat Header */}
@@ -489,6 +567,19 @@ export default function MessagesScreen() {
 
                 {/* Input */}
                 <View style={[styles.inputContainer, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
+                    {/* Photo Attach Button — available to any participant */}
+                    <Pressable
+                        style={[styles.attachButton, { backgroundColor: colors.backgroundSecondary }]}
+                        onPress={handleSendPhoto}
+                        disabled={imageUploading}
+                    >
+                        {imageUploading ? (
+                            <ActivityIndicator size="small" color={colors.textSecondary} />
+                        ) : (
+                            <Feather name="image" size={20} color={colors.textSecondary} />
+                        )}
+                    </Pressable>
+
                     {/* Payment Request Button — Only for verified stylists */}
                     {isStylist && (
                         <Pressable
@@ -624,9 +715,11 @@ export default function MessagesScreen() {
                                             ? '🎨 Outfit delivered'
                                             : item.lastMessage?.shared_face_url
                                                 ? '📸 Face photo shared'
-                                                : item.lastMessage?.payment_request
-                                                    ? `💰 $${item.lastMessage.payment_request.amount.toFixed(2)} — ${item.lastMessage.payment_request.status}`
-                                                    : item.lastMessage?.text || 'Start a conversation'
+                                                : item.lastMessage?.image_url
+                                                    ? '📷 Photo'
+                                                    : item.lastMessage?.payment_request
+                                                        ? `💰 $${item.lastMessage.payment_request.amount.toFixed(2)} — ${item.lastMessage.payment_request.status}`
+                                                        : item.lastMessage?.text || 'Start a conversation'
                                         }
                                     </Text>
                                 </View>
@@ -789,6 +882,13 @@ const styles = StyleSheet.create({
     // Payment Button
     paymentButton: { marginRight: 8 },
     paymentButtonGradient: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+
+    // Photo Attach Button
+    attachButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginRight: 8 },
+
+    // Image Message Bubble
+    imageBubble: { maxWidth: '65%', marginBottom: 8 },
+    imageBubbleImage: { width: 220, height: 220, borderRadius: 16 },
 
     // Face Share Card
     faceShareCard: {
