@@ -10,6 +10,7 @@ import { Alert } from 'react-native';
 import { useAuthStore } from '@/stores/authStore';
 import { usePostsStore } from '@/stores/postsStore';
 import { supabase } from '@/services/supabase';
+import { PRIVATE_BUCKET, getSignedUrl } from '@/services/privateMedia';
 import { Post } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
 import ProfileView, { Draft } from '@/components/ProfileView';
@@ -160,13 +161,14 @@ export default function ProfileScreen() {
                     encoding: FileSystem.EncodingType.Base64,
                 });
 
-                // Upload to Supabase Storage
-                const filename = `faces/${user.id}_face.jpg`;
+                // Upload to the PRIVATE bucket under the owner's folder. Only the
+                // owner can read it (storage RLS); we persist the path, not a URL.
+                const facePath = `faces/${user.id}/face.jpg`;
                 const arrayBuffer = decode(base64);
 
                 const { error: uploadError } = await supabase.storage
-                    .from('avatars')
-                    .upload(filename, arrayBuffer, {
+                    .from(PRIVATE_BUCKET)
+                    .upload(facePath, arrayBuffer, {
                         contentType: 'image/jpeg',
                         upsert: true, // Overwrite if exists
                     });
@@ -177,17 +179,10 @@ export default function ProfileScreen() {
                     return;
                 }
 
-                // Get public URL. The storage filename is fixed (upsert), so the base URL
-                // never changes between uploads. Append a cache-busting timestamp so that
-                // React Native's <Image> cache fetches the new photo instead of showing the
-                // stale one (which previously required restarting the app).
-                const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(filename);
-                const publicUrl = `${urlData.publicUrl}?v=${Date.now()}`;
-
-                // Update user record
+                // Store the object PATH; it is resolved to a fresh signed URL on read.
                 const { error: updateError } = await supabase
                     .from('users')
-                    .update({ ai_face_url: publicUrl })
+                    .update({ ai_face_url: facePath })
                     .eq('id', user.id);
 
                 if (updateError) {
@@ -196,8 +191,9 @@ export default function ProfileScreen() {
                     return;
                 }
 
-                // Refresh local state
-                setUser({ ...user, ai_face_url: publicUrl });
+                // Refresh local state with a signed URL the UI can render immediately.
+                const signedFace = await getSignedUrl(facePath);
+                setUser({ ...user, ai_face_url: signedFace || facePath });
                 Alert.alert('Success', 'Face photo saved! It will be used for AI styling.');
             }
         } catch (error) {

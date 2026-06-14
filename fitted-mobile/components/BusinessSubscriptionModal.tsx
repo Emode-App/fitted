@@ -14,7 +14,6 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
-import { supabase } from '@/services/supabase';
 import {
     purchaseBusinessSubscription,
     restorePurchases,
@@ -50,40 +49,19 @@ export default function BusinessSubscriptionModal({ visible, onClose }: Business
             if (error === 'cancelled') return;
 
             if (!success) {
-                if (error?.includes('not available')) {
-                    Alert.alert(
-                        'Development Mode',
-                        'In-app purchases require a development build. Enable business mode for testing?',
-                        [
-                            { text: 'Cancel', style: 'cancel' },
-                            {
-                                text: 'Enable for Testing',
-                                onPress: async () => {
-                                    const { error: dbError } = await supabase
-                                        .from('users')
-                                        .update({ is_business_account: true })
-                                        .eq('id', user.id);
-
-                                    if (!dbError) {
-                                        setUser({ ...user, is_business_account: true });
-                                        Alert.alert('✅ Enabled', 'Business mode enabled for testing.');
-                                        onClose();
-                                    }
-                                },
-                            },
-                        ]
-                    );
-                    return;
-                }
-
                 Alert.alert('Purchase Failed', error || 'Unable to complete purchase.');
                 return;
             }
 
-            await syncSubscriptionToSupabase(user.id, 'business', true);
-            setUser({ ...user, is_business_account: true });
-            Alert.alert('Welcome to Business! 🏪', 'Your shop is now live on your profile.');
-            onClose();
+            // The server re-verifies with RevenueCat before granting.
+            const flags = await syncSubscriptionToSupabase(user.id, 'business');
+            if (flags?.is_business_account) {
+                setUser({ ...user, is_business_account: true });
+                Alert.alert('Welcome to Business! 🏪', 'Your shop is now live on your profile.');
+                onClose();
+            } else {
+                Alert.alert('Almost there', 'Your purchase was received but we could not verify it yet. Tap "Restore Purchases" in a moment.');
+            }
         } catch (error: any) {
             Alert.alert('Error', error.message || 'An error occurred.');
         } finally {
@@ -103,8 +81,8 @@ export default function BusinessSubscriptionModal({ visible, onClose }: Business
             }
 
             if (activeEntitlements.includes('business_account')) {
-                await syncSubscriptionToSupabase(user.id, 'business', true);
-                setUser({ ...user, is_business_account: true });
+                const flags = await syncSubscriptionToSupabase(user.id, 'business');
+                setUser({ ...user, is_business_account: !!flags?.is_business_account });
                 Alert.alert('Restored!', 'Your Business subscription has been restored.');
                 onClose();
             } else {

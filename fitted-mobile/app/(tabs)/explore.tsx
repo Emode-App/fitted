@@ -70,14 +70,16 @@ export default function ExploreScreen() {
     };
 
     const fetchFeaturedStylists = async () => {
-        // Fetch users who have posted content (simple heuristic for "Featured") 
-        // In a real app, this would be a specific query or 'is_featured' flag
+        // Featured Stylists must only ever contain VERIFIED stylists. This flag is
+        // server-controlled (set by the sync-entitlement function after a real
+        // RevenueCat purchase), so non-stylists can never appear here.
         const { data } = await supabase
             .from('users')
             .select('*')
-            .limit(5); // Get 5 users for the list
+            .eq('is_verified_stylist', true)
+            .limit(10);
 
-        if (data) setFeaturedStylists(data);
+        setFeaturedStylists(data ?? []);
     };
 
     const handleSearch = async (query: string) => {

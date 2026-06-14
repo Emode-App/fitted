@@ -2,27 +2,35 @@ import { create } from 'zustand';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
 import { supabase } from '../services/supabase';
+import { PRIVATE_BUCKET, getSignedUrl } from '../services/privateMedia';
 import { Conversation, Message, User, PaymentRequest, StylingDelivery } from '../types';
 
-// Upload a local image URI (or data: URI) to Supabase storage and return its public URL.
-// Reused by both general chat images and face-photo sharing so neither sends a local-only URI.
-async function uploadChatImage(conversationId: string, senderId: string, localUri: string): Promise<string | null> {
+// Upload a chat image (local file, data: URI, or an http/signed URL we need to
+// copy) into the PRIVATE bucket under the conversation's folder, and return the
+// stored object PATH (not a URL). Only conversation participants can read it,
+// and we sign the path on read. Used for general chat images and face sharing.
+async function uploadChatImage(conversationId: string, senderId: string, sourceUri: string): Promise<string | null> {
     try {
-        let base64 = '';
-        if (localUri.startsWith('data:')) {
-            base64 = localUri.split(',')[1];
+        let arrayBuffer: ArrayBuffer;
+        if (sourceUri.startsWith('data:')) {
+            arrayBuffer = decode(sourceUri.split(',')[1]);
+        } else if (/^https?:/.test(sourceUri)) {
+            // Copy a remote/signed URL into the conversation folder so we never
+            // persist an expiring URL and the recipient can always read it.
+            const res = await fetch(sourceUri);
+            arrayBuffer = await res.arrayBuffer();
         } else {
-            base64 = await FileSystem.readAsStringAsync(localUri, {
+            const base64 = await FileSystem.readAsStringAsync(sourceUri, {
                 encoding: FileSystem.EncodingType.Base64,
             });
+            arrayBuffer = decode(base64);
         }
 
-        const filename = `messages/${conversationId}/${senderId}_${Date.now()}.jpg`;
-        const arrayBuffer = decode(base64);
+        const path = `messages/${conversationId}/${senderId}_${Date.now()}.jpg`;
 
         const { error } = await supabase.storage
-            .from('posts')
-            .upload(filename, arrayBuffer, {
+            .from(PRIVATE_BUCKET)
+            .upload(path, arrayBuffer, {
                 contentType: 'image/jpeg',
                 upsert: false,
             });
@@ -32,8 +40,7 @@ async function uploadChatImage(conversationId: string, senderId: string, localUr
             return null;
         }
 
-        const { data: urlData } = supabase.storage.from('posts').getPublicUrl(filename);
-        return urlData.publicUrl;
+        return path;
     } catch (error) {
         console.error('Chat image upload error:', error);
         return null;
@@ -137,7 +144,16 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
                 .order('created_at', { ascending: true });
 
             if (!error && data) {
-                set({ messages: data as MessageWithUser[] });
+                // Resolve private media (DM images + shared face photos) to
+                // short-lived signed URLs. Legacy public URLs pass through unchanged.
+                const resolved = await Promise.all(
+                    (data as MessageWithUser[]).map(async (m) => ({
+                        ...m,
+                        image_url: m.image_url ? (await getSignedUrl(m.image_url)) || undefined : m.image_url,
+                        shared_face_url: m.shared_face_url ? (await getSignedUrl(m.shared_face_url)) || undefined : m.shared_face_url,
+                    }))
+                );
+                set({ messages: resolved as MessageWithUser[] });
             }
         } catch (error) {
             console.error('Error fetching messages:', error);
@@ -270,20 +286,17 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
 
     sendFacePhoto: async (conversationId: string, senderId: string, faceUrl: string) => {
         try {
-            // If a local image was picked, upload it first so it persists across devices.
-            // Already-hosted URLs (e.g. the user's saved ai_face_url) are sent as-is.
-            let sharedUrl = faceUrl;
-            if (!faceUrl.startsWith('http')) {
-                const uploaded = await uploadChatImage(conversationId, senderId, faceUrl);
-                if (!uploaded) return;
-                sharedUrl = uploaded;
-            }
+            // Always copy the face into the conversation's private folder so the
+            // recipient (stylist) can read it via storage RLS, and we never persist
+            // an expiring signed URL. Stores the object path; signed on read.
+            const storedPath = await uploadChatImage(conversationId, senderId, faceUrl);
+            if (!storedPath) return;
 
             const { error } = await supabase.from('messages').insert({
                 conversation_id: conversationId,
                 sender_id: senderId,
                 text: '📸 Shared face photo for styling',
-                shared_face_url: sharedUrl,
+                shared_face_url: storedPath,
             });
 
             if (!error) {

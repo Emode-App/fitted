@@ -1,11 +1,21 @@
 import { create } from 'zustand';
 import { Platform } from 'react-native';
 import { supabase } from '../services/supabase';
+import { getSignedUrl } from '../services/privateMedia';
 import { User } from '../types';
 import * as SecureStore from 'expo-secure-store';
 import * as Device from 'expo-device';
 
 const SESSION_KEY = 'current_login_session_id';
+
+// Profiles store the face photo as a private-bucket object path; resolve it to a
+// short-lived signed URL the UI can render.
+async function hydrateProfile(profile: User | null): Promise<User | null> {
+    if (profile?.ai_face_url) {
+        profile.ai_face_url = (await getSignedUrl(profile.ai_face_url)) || undefined;
+    }
+    return profile;
+}
 
 interface AuthState {
     user: User | null;
@@ -62,7 +72,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
                 set({
                     session,
-                    user: profile,
+                    user: await hydrateProfile(profile),
                     isAuthenticated: true,
                     isLoading: false
                 });
@@ -79,7 +89,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                         .eq('id', session.user.id)
                         .single();
 
-                    set({ session, user: profile, isAuthenticated: true });
+                    set({ session, user: await hydrateProfile(profile), isAuthenticated: true });
 
                     if (event === 'SIGNED_IN') {
                         const sessionId = await recordLoginSession(session.user.id);
@@ -132,11 +142,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
             if (authData.user) {
                 const handle = `@${username.toLowerCase().replace(/\s+/g, '')}`;
+                // email lives in auth.users (and the private_users mirror created
+                // by a DB trigger) — it is no longer stored on the public users row.
                 const { error: profileError } = await supabase
                     .from('users')
                     .insert({
                         id: authData.user.id,
-                        email,
                         username,
                         handle,
                         bio: '',

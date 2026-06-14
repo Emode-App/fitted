@@ -223,39 +223,38 @@ export async function restorePurchases(): Promise<{
     }
 }
 
+export interface EntitlementFlags {
+    is_verified_stylist: boolean;
+    is_business_account: boolean;
+    subscription_status: string;
+}
+
 /**
- * Sync all subscription statuses to Supabase after a purchase or restore.
+ * Ask the server to (re)verify this user's entitlements with RevenueCat and
+ * write the resulting flags. The client can no longer set these flags directly
+ * — the `sync-entitlement` edge function checks RevenueCat with a secret key and
+ * is the only writer of is_verified_stylist / is_business_account.
+ *
+ * `type` is accepted for call-site compatibility but the server always syncs all
+ * entitlements at once. Returns the verified flags, or null on failure.
  */
 export async function syncSubscriptionToSupabase(
-    userId: string,
-    type: SubscriptionType,
-    isActive: boolean
-): Promise<void> {
+    _userId?: string,
+    _type?: SubscriptionType,
+    _isActive?: boolean
+): Promise<EntitlementFlags | null> {
     try {
-        const meta = SUBSCRIPTION_META[type];
-        const update: Record<string, any> = {};
-
-        if (type === 'stylist') {
-            update.is_verified_stylist = isActive;
-        } else if (type === 'business') {
-            update.is_business_account = isActive;
-        }
-
-        // Always update general subscription status
-        if (isActive) {
-            update.subscription_status = type === 'proTryOns' ? 'pro_tryons' : 'active';
-        }
-
-        const { error } = await supabase
-            .from('users')
-            .update(update)
-            .eq('id', userId);
-
+        const { data, error } = await supabase.functions.invoke('sync-entitlement', {
+            body: { type: _type },
+        });
         if (error) {
-            console.error('[RevenueCat] Failed to sync to Supabase:', error);
+            console.error('[RevenueCat] sync-entitlement failed:', error.message);
+            return null;
         }
+        return data as EntitlementFlags;
     } catch (error) {
         console.error('[RevenueCat] Sync error:', error);
+        return null;
     }
 }
 

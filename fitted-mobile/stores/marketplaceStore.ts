@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Product, DressingRoomItem } from '@/types';
 import { supabase } from '@/services/supabase';
+import { getSignedUrl } from '@/services/privateMedia';
 import { generateOutfit } from '@/services/aiService';
 import * as FileSystem from 'expo-file-system/legacy';
 
@@ -337,8 +338,10 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
                     .eq('id', userId)
                     .single();
 
-                if (userData?.ai_face_url) {
-                    const faceResponse = await fetch(userData.ai_face_url);
+                // ai_face_url is a private-bucket path; sign it before fetching.
+                const signedFaceUrl = userData?.ai_face_url ? await getSignedUrl(userData.ai_face_url) : null;
+                if (signedFaceUrl) {
+                    const faceResponse = await fetch(signedFaceUrl);
                     const faceBlob = await faceResponse.blob();
                     const faceReader = new FileReader();
                     faceBase64 = await new Promise<string>((resolve) => {

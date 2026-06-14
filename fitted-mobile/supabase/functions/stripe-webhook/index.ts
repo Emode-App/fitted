@@ -1,6 +1,8 @@
 // @ts-nocheck
 // supabase/functions/stripe-webhook/index.ts
-// Handles Stripe webhook events for payment and Connect account updates
+// Handles Stripe webhook events. This is the ONLY authoritative source for
+// payment completion and Connect onboarding status. Signature verification is
+// mandatory; events that don't verify are rejected.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import Stripe from 'https://esm.sh/stripe@13.9.0?target=deno';
@@ -33,7 +35,7 @@ serve(async (req: Request) => {
 
     if (webhookSecret) {
         try {
-            event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
+            event = await stripe.webhooks.constructEventAsync(body, signature, webhookSecret);
             verified = true;
         } catch (err: any) {
             verificationError = err;
@@ -42,7 +44,7 @@ serve(async (req: Request) => {
 
     if (!verified && connectWebhookSecret) {
         try {
-            event = stripe.webhooks.constructEvent(body, signature, connectWebhookSecret);
+            event = await stripe.webhooks.constructEventAsync(body, signature, connectWebhookSecret);
             verified = true;
         } catch (err: any) {
             verificationError = err;
@@ -62,9 +64,11 @@ serve(async (req: Request) => {
             case 'payment_intent.succeeded': {
                 const paymentIntent = event.data.object as Stripe.PaymentIntent;
                 const conversationId = paymentIntent.metadata?.conversation_id;
+                const payerId = paymentIntent.metadata?.payer_id;
+                const stylistId = paymentIntent.metadata?.stylist_id;
 
                 if (conversationId) {
-                    // Update the styling session status
+                    // Mark the styling session completed (authoritative).
                     const { error } = await supabase
                         .from('styling_sessions')
                         .update({
@@ -77,8 +81,8 @@ serve(async (req: Request) => {
 
                     if (error) console.error('Error updating session:', error);
 
-                    // Also update the payment_request status on the message
-                    // Find messages with pending payment requests in this conversation
+                    // Reflect completion on the pending payment-request message(s)
+                    // for this conversation only.
                     const { data: messages } = await supabase
                         .from('messages')
                         .select('id, payment_request')
@@ -102,6 +106,7 @@ serve(async (req: Request) => {
                         }
                     }
                 }
+                console.log(`payment_intent.succeeded handled (conv=${conversationId}, payer=${payerId}, stylist=${stylistId})`);
                 break;
             }
 
@@ -123,13 +128,9 @@ serve(async (req: Request) => {
             // ─── Connect account updated ─────────────────────────────
             case 'account.updated': {
                 const account = event.data.object as Stripe.Account;
-                const chargesEnabled = account.charges_enabled;
-                const detailsSubmitted = account.details_submitted;
-
-                if (chargesEnabled && detailsSubmitted) {
-                    // Mark onboarding as complete
+                if (account.charges_enabled && account.details_submitted) {
                     const { error } = await supabase
-                        .from('users')
+                        .from('private_users')
                         .update({ stripe_onboarding_complete: true })
                         .eq('stripe_account_id', account.id);
 

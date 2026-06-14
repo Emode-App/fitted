@@ -1,8 +1,7 @@
-// Product Search Service - Uses RapidAPI KicksDB for sneaker data
-// API Docs: https://rapidapi.com/kicks-db-kicks-db-default/api/kicks-db
+// Product Search Service - calls the authenticated `product-search` edge
+// function so the RapidAPI (KicksDB) key stays server-side, never in the bundle.
 
-const RAPIDAPI_HOST = 'kicks-db.p.rapidapi.com';
-const RAPIDAPI_KEY = process.env.EXPO_PUBLIC_RAPIDAPI_KEY || '';
+import { supabase } from './supabase';
 
 export interface Product {
     id: string;
@@ -28,48 +27,17 @@ export async function searchProducts(query: string, limit: number = 20): Promise
         return { products: [], total: 0 };
     }
 
-    if (!RAPIDAPI_KEY) {
-        console.warn('RAPIDAPI_KEY not set - using mock data');
-        return getMockResults(query);
-    }
-
     try {
-        // KicksDB uses /search/multi endpoint with 'keyword' parameter
-        const response = await fetch(
-            `https://${RAPIDAPI_HOST}/search/multi?keyword=${encodeURIComponent(query)}&limit=${limit}`,
-            {
-                method: 'GET',
-                headers: {
-                    'X-RapidAPI-Key': RAPIDAPI_KEY,
-                    'X-RapidAPI-Host': RAPIDAPI_HOST,
-                },
-            }
-        );
+        const { data, error } = await supabase.functions.invoke('product-search', {
+            body: { query, limit },
+        });
 
-        if (!response.ok) {
-            // If /search/multi fails, try alternate endpoint
-            console.log('Trying alternate search endpoint...');
-            const altResponse = await fetch(
-                `https://${RAPIDAPI_HOST}/stockx/search?query=${encodeURIComponent(query)}&count=${limit}`,
-                {
-                    method: 'GET',
-                    headers: {
-                        'X-RapidAPI-Key': RAPIDAPI_KEY,
-                        'X-RapidAPI-Host': RAPIDAPI_HOST,
-                    },
-                }
-            );
-
-            if (!altResponse.ok) {
-                throw new Error(`API error: ${altResponse.status}`);
-            }
-
-            const altData = await altResponse.json();
-            return transformResponse(altData);
+        if (error || !data?.raw) {
+            if (error) console.error('Product search error:', error.message);
+            return getMockResults(query);
         }
 
-        const data = await response.json();
-        return transformResponse(data);
+        return transformResponse(data.raw);
     } catch (error) {
         console.error('Product search error:', error);
         // Return mock data on error for development

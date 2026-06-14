@@ -1,88 +1,61 @@
 // @ts-nocheck
 // supabase/functions/create-connect-account/index.ts
-// Creates a Stripe Connect Express account for stylists
+// Creates a Stripe Connect Express account for the AUTHENTICATED caller.
+// Identity (user id + email) is derived from the verified JWT, never the body.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import Stripe from 'https://esm.sh/stripe@13.9.0?target=deno';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
+import { corsHeaders } from '../_shared/cors.ts';
+import { getUser } from '../_shared/auth.ts';
 
-const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY')!, {
-    apiVersion: '2023-10-16',
-});
-
+const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY')!, { apiVersion: '2023-10-16' });
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
 serve(async (req: Request) => {
-    if (req.method === 'OPTIONS') {
-        return new Response('ok', { headers: corsHeaders });
-    }
+    const cors = corsHeaders(req);
+    const json = (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
+
+    if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
     try {
-        const { user_id, email } = await req.json();
+        const { user, error } = await getUser(req);
+        if (!user) return json({ error: error || 'Unauthorized' }, 401);
 
-        if (!user_id || !email) {
-            return new Response(
-                JSON.stringify({ error: 'Missing required fields: user_id, email' }),
-                { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
-        }
-
-        // Check if user already has a Connect account
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
-        const { data: user } = await supabase
-            .from('users')
+
+        // Return the caller's existing account if they already have one.
+        const { data: existing } = await supabase
+            .from('private_users')
             .select('stripe_account_id')
-            .eq('id', user_id)
+            .eq('id', user.id)
             .single();
 
-        if (user?.stripe_account_id) {
-            return new Response(
-                JSON.stringify({ accountId: user.stripe_account_id }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
+        if (existing?.stripe_account_id) {
+            return json({ accountId: existing.stripe_account_id });
         }
 
-        // Create Stripe Connect Express account
         const account = await stripe.accounts.create({
             type: 'express',
-            email,
+            email: user.email,
             capabilities: {
                 card_payments: { requested: true },
                 transfers: { requested: true },
             },
-            metadata: {
-                emode_user_id: user_id,
-            },
+            metadata: { emode_user_id: user.id },
         });
 
-        // Save the account ID to the user's record
-        const { error: updateError } = await supabase
-            .from('users')
-            .update({
-                stripe_account_id: account.id,
-                stripe_onboarding_complete: false,
-            })
-            .eq('id', user_id);
+        const { error: upsertError } = await supabase
+            .from('private_users')
+            .upsert({ id: user.id, stripe_account_id: account.id, stripe_onboarding_complete: false });
 
-        if (updateError) {
-            console.error('Failed to save account ID:', updateError);
-        }
+        if (upsertError) console.error('Failed to save account ID:', upsertError);
 
-        return new Response(
-            JSON.stringify({ accountId: account.id }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return json({ accountId: account.id });
     } catch (error: any) {
         console.error('Error creating Connect account:', error);
-        return new Response(
-            JSON.stringify({ error: error.message }),
-            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return json({ error: error.message }, 500);
     }
 });

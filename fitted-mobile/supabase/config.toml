@@ -1,0 +1,28 @@
+project_id = "scvvbjheyfnxlsiiozta"
+
+# Edge function JWT settings.
+# The Stripe webhook is called by Stripe (no Supabase JWT) and verifies its own
+# signature, so gateway JWT verification must be OFF for it. Every other function
+# requires an authenticated caller — the gateway rejects anonymous requests and
+# the function ALSO verifies the JWT in code (defense in depth).
+
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.create-payment-intent]
+verify_jwt = true
+
+[functions.create-connect-account]
+verify_jwt = true
+
+[functions.create-connect-link]
+verify_jwt = true
+
+[functions.sync-entitlement]
+verify_jwt = true
+
+[functions.ai-proxy]
+verify_jwt = true
+
+[functions.product-search]
+verify_jwt = true

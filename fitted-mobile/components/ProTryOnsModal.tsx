@@ -14,7 +14,6 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
-import { supabase } from '@/services/supabase';
 import {
     purchaseProTryOnsSubscription,
     restorePurchases,
@@ -52,40 +51,19 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
             if (error === 'cancelled') return;
 
             if (!success) {
-                if (error?.includes('not available')) {
-                    Alert.alert(
-                        'Development Mode',
-                        'In-app purchases require a development build. Enable unlimited try-ons for testing?',
-                        [
-                            { text: 'Cancel', style: 'cancel' },
-                            {
-                                text: 'Enable for Testing',
-                                onPress: async () => {
-                                    const { error: dbError } = await supabase
-                                        .from('users')
-                                        .update({ subscription_status: 'pro_tryons' })
-                                        .eq('id', user.id);
-
-                                    if (!dbError) {
-                                        setUser({ ...user, subscription_status: 'pro_tryons' as any });
-                                        Alert.alert('✅ Enabled', 'Unlimited try-ons enabled for testing.');
-                                        onClose();
-                                    }
-                                },
-                            },
-                        ]
-                    );
-                    return;
-                }
-
                 Alert.alert('Purchase Failed', error || 'Unable to complete purchase.');
                 return;
             }
 
-            await syncSubscriptionToSupabase(user.id, 'proTryOns', true);
-            setUser({ ...user, subscription_status: 'pro_tryons' as any });
-            Alert.alert('Upgraded! ✨', 'You now have unlimited dressing room try-ons.');
-            onClose();
+            // The server re-verifies with RevenueCat before granting.
+            const flags = await syncSubscriptionToSupabase(user.id, 'proTryOns');
+            if (flags?.subscription_status === 'pro_tryons') {
+                setUser({ ...user, subscription_status: 'pro_tryons' as any });
+                Alert.alert('Upgraded! ✨', 'You now have unlimited dressing room try-ons.');
+                onClose();
+            } else {
+                Alert.alert('Almost there', 'Your purchase was received but we could not verify it yet. Tap "Restore Purchases" in a moment.');
+            }
         } catch (error: any) {
             Alert.alert('Error', error.message || 'An error occurred.');
         } finally {
@@ -105,8 +83,8 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
             }
 
             if (activeEntitlements.includes('pro_tryons')) {
-                await syncSubscriptionToSupabase(user.id, 'proTryOns', true);
-                setUser({ ...user, subscription_status: 'pro_tryons' as any });
+                const flags = await syncSubscriptionToSupabase(user.id, 'proTryOns');
+                setUser({ ...user, subscription_status: (flags?.subscription_status as any) || 'pro_tryons' });
                 Alert.alert('Restored!', 'Your Pro Try-Ons subscription has been restored.');
                 onClose();
             } else {

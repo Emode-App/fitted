@@ -14,7 +14,6 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
-import { supabase } from '@/services/supabase';
 import {
     purchaseStylistSubscription,
     restorePurchases,
@@ -52,45 +51,20 @@ export default function StylistModal({ visible, onClose }: StylistModalProps) {
             }
 
             if (!success) {
-                // If RevenueCat isn't available (Expo Go), fall back to direct DB update for testing
-                if (error?.includes('not available')) {
-                    Alert.alert(
-                        'Development Mode',
-                        'In-app purchases require a development build. Enable stylist mode for testing?',
-                        [
-                            { text: 'Cancel', style: 'cancel' },
-                            {
-                                text: 'Enable for Testing',
-                                onPress: async () => {
-                                    const { error: dbError } = await supabase
-                                        .from('users')
-                                        .update({ is_verified_stylist: true, subscription_status: 'active' })
-                                        .eq('id', user.id);
-
-                                    if (!dbError) {
-                                        setUser({ ...user, is_verified_stylist: true, subscription_status: 'active' });
-                                        Alert.alert('✅ Enabled', 'Stylist mode enabled for testing. In production, this will require a real subscription.');
-                                        onClose();
-                                    } else {
-                                        Alert.alert('Error', 'Failed to enable testing mode.');
-                                    }
-                                },
-                            },
-                        ]
-                    );
-                    return;
-                }
-
                 Alert.alert('Purchase Failed', error || 'Unable to complete purchase. Please try again.');
                 return;
             }
 
-            // Purchase succeeded — sync to Supabase
-            await syncSubscriptionToSupabase(user.id, 'stylist', true);
-            setUser({ ...user, is_verified_stylist: true, subscription_status: 'active' });
-
-            Alert.alert('Congratulations! 🎉', 'You are now a Verified Stylist! You can start accepting styling requests.');
-            onClose();
+            // Purchase succeeded — the server re-verifies with RevenueCat before
+            // granting the entitlement (clients can no longer set it themselves).
+            const flags = await syncSubscriptionToSupabase(user.id, 'stylist');
+            if (flags?.is_verified_stylist) {
+                setUser({ ...user, is_verified_stylist: true, subscription_status: flags.subscription_status as any });
+                Alert.alert('Congratulations! 🎉', 'You are now a Verified Stylist! You can start accepting styling requests.');
+                onClose();
+            } else {
+                Alert.alert('Almost there', 'Your purchase was received but we could not verify it yet. Tap "Restore Purchases" in a moment.');
+            }
         } catch (error: any) {
             console.error('Purchase error:', error);
             Alert.alert('Error', error.message || 'An error occurred. Please try again.');
@@ -117,8 +91,8 @@ export default function StylistModal({ visible, onClose }: StylistModalProps) {
 
             const hasStylist = activeEntitlements.includes('verified_stylist');
             if (hasStylist) {
-                await syncSubscriptionToSupabase(user.id, 'stylist', true);
-                setUser({ ...user, is_verified_stylist: true, subscription_status: 'active' });
+                const flags = await syncSubscriptionToSupabase(user.id, 'stylist');
+                setUser({ ...user, is_verified_stylist: !!flags?.is_verified_stylist, subscription_status: (flags?.subscription_status as any) || 'active' });
                 Alert.alert('Restored!', 'Your Stylist subscription has been restored.');
                 onClose();
             } else {

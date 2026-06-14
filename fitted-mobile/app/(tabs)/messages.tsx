@@ -21,7 +21,7 @@ import OutfitDeliveryCard from '@/components/OutfitDeliveryCard';
 import StripeConnectOnboarding from '@/components/StripeConnectOnboarding';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { fetchPaymentIntent, checkConnectStatus, getStylistStripeAccountId } from '@/services/stripeService';
+import { fetchPaymentIntent, checkConnectStatus } from '@/services/stripeService';
 
 // Height of the persistent header rendered above the tab content (see (tabs)/_layout.tsx).
 // KeyboardAvoidingView measures its own position relative to its parent (not the screen),
@@ -165,95 +165,76 @@ export default function MessagesScreen() {
         const stylistId = paymentMessage.sender_id;
         const description = paymentMessage.payment_request.description || 'Styling session';
 
+        // Is the native Stripe SDK available? (dev builds only, not Expo Go)
+        let stripeAvailable = false;
+        try {
+            const stripeMod = require('@stripe/stripe-react-native');
+            if (stripeMod?.useStripe) stripeAvailable = true;
+        } catch {
+            // Not available in Expo Go
+        }
+
+        const runSimulated = (title: string, body: string) => {
+            Alert.alert(title, body, [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Continue (Test)',
+                    onPress: async () => {
+                        await respondToPayment(messageId, activeConversation.id, user.id, 'accept');
+                    },
+                },
+            ]);
+        };
+
+        if (!stripeAvailable) {
+            runSimulated('Development Mode', `Real payments require a development build. Process $${amount.toFixed(2)} as a test payment?`);
+            return;
+        }
+
         setPaymentProcessing(true);
         try {
-            // Get the stylist's Stripe account ID
-            const stylistStripeAccountId = await getStylistStripeAccountId(stylistId);
+            const { initPaymentSheet, presentPaymentSheet } = require('@stripe/stripe-react-native');
 
-            if (!stylistStripeAccountId) {
-                // Stylist hasn't connected Stripe yet — fall back to simulated payment
-                Alert.alert(
-                    'Payment Processing',
-                    'The stylist has not yet connected their payment account. Processing as a simulated payment for now.',
-                    [
-                        { text: 'Cancel', style: 'cancel' },
-                        {
-                            text: 'Continue (Test)',
-                            onPress: async () => {
-                                await respondToPayment(messageId, activeConversation.id, user.id, 'accept');
-                            },
-                        },
-                    ]
-                );
+            // The server derives the stylist's connected account from the
+            // conversation and verifies we're a participant. If the stylist isn't
+            // set up for payouts yet, fall back to the simulated flow.
+            let paymentData;
+            try {
+                paymentData = await fetchPaymentIntent(amount, activeConversation.id, stylistId, description);
+            } catch (e: any) {
+                if (e?.message === 'stylist_not_connected') {
+                    runSimulated('Payment Processing', 'The stylist has not yet connected their payout account. Process as a simulated payment for now?');
+                    return;
+                }
+                throw e;
+            }
+
+            const { error: initError } = await initPaymentSheet({
+                paymentIntentClientSecret: paymentData.clientSecret,
+                customerId: paymentData.customerId,
+                customerEphemeralKeySecret: paymentData.ephemeralKey,
+                merchantDisplayName: 'Emode',
+                allowsDelayedPaymentMethods: false,
+            });
+
+            if (initError) {
+                Alert.alert('Error', initError.message);
                 return;
             }
 
-            // Try to use Stripe PaymentSheet (only available in dev builds)
-            let useStripe = false;
-            try {
-                const stripeMod = require('@stripe/stripe-react-native');
-                if (stripeMod?.useStripe) {
-                    useStripe = true;
+            const { error: presentError } = await presentPaymentSheet();
+
+            if (presentError) {
+                if (presentError.code !== 'Canceled') {
+                    Alert.alert('Payment Failed', presentError.message);
                 }
-            } catch {
-                // Not available in Expo Go
+                return;
             }
 
-            if (useStripe) {
-                // Real Stripe flow
-                const { initPaymentSheet, presentPaymentSheet } = require('@stripe/stripe-react-native');
-
-                // Fetch PaymentIntent from server
-                const paymentData = await fetchPaymentIntent(
-                    amount,
-                    stylistStripeAccountId,
-                    activeConversation.id,
-                    description
-                );
-
-                // Initialize PaymentSheet
-                const { error: initError } = await initPaymentSheet({
-                    paymentIntentClientSecret: paymentData.clientSecret,
-                    customerId: paymentData.customerId,
-                    customerEphemeralKeySecret: paymentData.ephemeralKey,
-                    merchantDisplayName: 'Emode',
-                    allowsDelayedPaymentMethods: false,
-                });
-
-                if (initError) {
-                    Alert.alert('Error', initError.message);
-                    return;
-                }
-
-                // Present PaymentSheet
-                const { error: presentError } = await presentPaymentSheet();
-
-                if (presentError) {
-                    if (presentError.code !== 'Canceled') {
-                        Alert.alert('Payment Failed', presentError.message);
-                    }
-                    return;
-                }
-
-                // Payment succeeded! Update the message status
-                await respondToPayment(messageId, activeConversation.id, user.id, 'accept');
-                Alert.alert('Payment Successful! 💰', `$${amount.toFixed(2)} has been sent to the stylist.`);
-            } else {
-                // Expo Go fallback — simulated payment
-                Alert.alert(
-                    'Development Mode',
-                    `Real payments require a development build. Process $${amount.toFixed(2)} as a test payment?`,
-                    [
-                        { text: 'Cancel', style: 'cancel' },
-                        {
-                            text: 'Pay (Test)',
-                            onPress: async () => {
-                                await respondToPayment(messageId, activeConversation.id, user.id, 'accept');
-                            },
-                        },
-                    ]
-                );
-            }
+            // Payment succeeded. The Stripe webhook is the authoritative source
+            // and will mark the session/message completed; refresh optimistically.
+            await respondToPayment(messageId, activeConversation.id, user.id, 'accept');
+            Alert.alert('Payment Successful! 💰', `$${amount.toFixed(2)} has been sent to the stylist.`);
         } catch (error: any) {
             console.error('Payment error:', error);
             Alert.alert('Payment Error', error.message || 'Failed to process payment.');

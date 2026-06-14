@@ -27,6 +27,11 @@ export default function LoginScreen() {
             return;
         }
 
+        if (!isLogin && password.length < 8) {
+            Alert.alert('Error', 'Password must be at least 8 characters');
+            return;
+        }
+
         setLoading(true);
 
         try {

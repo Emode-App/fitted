@@ -25,7 +25,6 @@ interface StripeConnectOnboardingProps {
 export default function StripeConnectOnboarding({ visible, onClose, onComplete }: StripeConnectOnboardingProps) {
     const { colors, isDark } = useTheme();
     const user = useAuthStore((state) => state.user);
-    const setUser = useAuthStore((state) => state.setUser);
     const [loading, setLoading] = useState(false);
     const [step, setStep] = useState<'info' | 'connecting'>('info');
 
@@ -35,16 +34,14 @@ export default function StripeConnectOnboarding({ visible, onClose, onComplete }
         setStep('connecting');
 
         try {
-            // Step 1: Create Connect account (or get existing)
-            const { accountId } = await createConnectAccount(user.id, user.handle || '');
+            // Step 1: Create Connect account (or get existing). Identity is
+            // derived from the JWT server-side; no ids are sent from the client.
+            await createConnectAccount();
 
-            // Step 2: Get onboarding URL
-            const { url } = await getConnectOnboardingUrl(accountId);
+            // Step 2: Get onboarding URL for the caller's own account.
+            const { url } = await getConnectOnboardingUrl();
 
-            // Step 3: Update local user state
-            setUser({ ...user, stripe_account_id: accountId });
-
-            // Step 4: Open Stripe's hosted onboarding in the browser
+            // Step 3: Open Stripe's hosted onboarding in the browser
             await Linking.openURL(url);
 
             // User will complete onboarding in the browser and return via deep link

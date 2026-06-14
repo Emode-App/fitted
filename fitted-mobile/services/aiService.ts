@@ -1,90 +1,36 @@
-// AI Service - Uses Gemini for product search and outfit generation
-// Ported from Vite codebase
+// AI Service - calls the authenticated `ai-proxy` edge function so the Gemini
+// API key stays server-side and never ships in the app bundle.
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { GoogleGenAI } from '@google/genai';
-
-// Initialize Gemini with API key from environment
-const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || '';
-
-// New SDK for image generation (Gemini 3 Pro / Nano Banana)
-const genAI = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
+import { supabase } from './supabase';
 
 /**
- * Generates a realistic outfit image using Gemini 3 Pro Image Preview (Nano Banana).
- * Takes a face photo and clothing items, returns a generated outfit image.
+ * Generates a realistic outfit image via the ai-proxy edge function
+ * (Gemini 3 Pro Image / Nano Banana). Returns a data: URL.
  */
 export async function generateOutfit(
     facePhotoBase64: string | null,
     clothingImagesBase64: string[],
     backgroundPrompt?: string
 ): Promise<string> {
-    if (!genAI) {
-        throw new Error('GEMINI_API_KEY not configured');
-    }
-
     if (clothingImagesBase64.length === 0) {
         throw new Error('At least one clothing item is required');
     }
 
     try {
-        const parts: any[] = [];
-
-        // 1. Context Prompt
-        parts.push({
-            text: `Generate a hyper-realistic, high-fashion photo of a person wearing the clothing items provided below.
-                   The style should be modern and trendy. 
-                   The fit of the clothes should differ to the specific item type (e.g. baggy pants should look baggy).
-                   The background should be: ${backgroundPrompt || "a clean, neutral studio background"}.
-                   Output a single 1:1 aspect ratio image.`
+        const { data, error } = await supabase.functions.invoke('ai-proxy', {
+            body: {
+                action: 'generate-outfit',
+                facePhotoBase64,
+                clothingImagesBase64,
+                backgroundPrompt,
+            },
         });
 
-        // 2. Add Face Reference
-        if (facePhotoBase64) {
-            const cleanFace = facePhotoBase64.split(',')[1] || facePhotoBase64;
-            parts.push({
-                inlineData: {
-                    mimeType: 'image/jpeg',
-                    data: cleanFace
-                }
-            });
-            parts.push({ text: "Preserve the facial identity of this person in the generated image." });
-        }
-
-        // 3. Add Clothing Items
-        clothingImagesBase64.forEach((img, index) => {
-            const cleanImg = img.split(',')[1] || img;
-            parts.push({
-                inlineData: {
-                    mimeType: 'image/png',
-                    data: cleanImg
-                }
-            });
-            parts.push({ text: `Wear this clothing item (${index + 1}).` });
-        });
-
-        // 4. Call Model
-        const response = await genAI.models.generateContent({
-            model: 'gemini-3-pro-image-preview',
-            contents: { parts },
-            config: {
-                responseModalities: ['IMAGE', 'TEXT'],
-            }
-        });
-
-        // 5. Extract Result
-        if (response.candidates?.[0]?.content?.parts) {
-            for (const part of response.candidates[0].content.parts) {
-                if (part.inlineData) {
-                    return `data:image/png;base64,${part.inlineData.data}`;
-                }
-            }
-        }
-
-        throw new Error("No image generated in response.");
-
+        if (error) throw new Error(error.message || 'Outfit generation failed');
+        if (!data?.image) throw new Error(data?.error || 'No image generated in response.');
+        return data.image as string;
     } catch (error) {
-        console.error("Outfit generation error:", error);
+        console.error('Outfit generation error:', error);
         throw error;
     }
 }
@@ -100,81 +46,49 @@ export interface Product {
 }
 
 /**
- * Searches for products using Gemini with Google Search Grounding.
- * Simulates a Product API by extracting structured data from search results.
+ * Searches for products via the ai-proxy edge function (Gemini server-side).
+ * Falls back to mock data on any failure.
  */
 export async function searchProducts(query: string): Promise<Product[]> {
     if (!query.trim()) {
         return [];
     }
 
-    if (!GEMINI_API_KEY) {
-        console.warn('GEMINI_API_KEY not set - using mock data');
-        return getMockResults(query);
-    }
-
     try {
-        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-3.5-flash',
-            // Note: Google Search grounding requires specific API configuration
+        const { data, error } = await supabase.functions.invoke('ai-proxy', {
+            body: { action: 'search-products', query },
         });
 
-        const prompt = `Search for clothing products matching "${query}".
-Return a raw JSON array of 12 distinct items.
-Each item object must strictly have these fields: 
-- "name" (string, precise product name)
-- "brand" (string)
-- "price" (number, estimate if needed)
-- "sku" (string, optional - important for images)
-- "imageUrl" (string, optional - if you find a very reliable one)
-- "purchaseLink" (string, the direct product page URL on StockX. e.g. https://stockx.com/jordan-1-retro-high-og-chicago-lost-and-found)
-
-Important:
-1. Prioritize StockX links.
-2. Do NOT return "vertexaisearch.com" or "google.com/url" redirect links. If the link looks like that, assume it is invalid.
-3. If you can't find a direct link, construct a valid StockX URL using the product name (e.g. https://stockx.com/product-slug).
-
-Do not include markdown formatting or backticks. Just the raw JSON string.`;
-
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text() || '';
-
-        // Clean up markdown if present despite instructions
-        const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
-
-        try {
-            const items = JSON.parse(cleanText);
-
-            if (Array.isArray(items)) {
-                return items.map((item: any, index: number) => {
-                    let link = item.purchaseLink;
-
-                    // Sanitizer: Filter out garbage links from search grounding
-                    if (typeof link !== 'string' || link.includes('vertexaisearch') || link.includes('google.com')) {
-                        // Fallback: Construct a StockX Search URL which is safe and reliable
-                        link = `https://stockx.com/search?s=${encodeURIComponent(item.name)}`;
-                    }
-
-                    return {
-                        id: item.sku || `product-${index}`,
-                        name: item.name || 'Unknown Product',
-                        brand: item.brand || 'Unknown Brand',
-                        price: item.price || 0,
-                        sku: item.sku,
-                        imageUrl: item.imageUrl,
-                        purchaseLink: link,
-                    };
-                });
-            }
-            return [];
-        } catch (e) {
-            console.error("Failed to parse search results JSON", e);
+        if (error) {
+            console.error('Search error:', error.message);
             return getMockResults(query);
         }
+
+        const items = data?.products;
+        if (!Array.isArray(items)) {
+            return getMockResults(query);
+        }
+
+        return items.map((item: any, index: number) => {
+            let link = item.purchaseLink;
+
+            // Sanitizer: filter out garbage links the model sometimes returns.
+            if (typeof link !== 'string' || link.includes('vertexaisearch') || link.includes('google.com')) {
+                link = `https://stockx.com/search?s=${encodeURIComponent(item.name || query)}`;
+            }
+
+            return {
+                id: item.sku || `product-${index}`,
+                name: item.name || 'Unknown Product',
+                brand: item.brand || 'Unknown Brand',
+                price: item.price || 0,
+                sku: item.sku,
+                imageUrl: item.imageUrl,
+                purchaseLink: link,
+            };
+        });
     } catch (error) {
-        console.error("Search error:", error);
+        console.error('Search error:', error);
         return getMockResults(query);
     }
 }
