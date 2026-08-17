@@ -8,6 +8,6 @@ export const LEGAL = {
     supportUrl: process.env.EXPO_PUBLIC_SUPPORT_URL || `${LEGAL_BASE}/support`,
     accountDeletionUrl: process.env.EXPO_PUBLIC_ACCOUNT_DELETION_URL || `${LEGAL_BASE}/delete-account`,
     supportEmail: 'support@emode.app',
-    termsVersion: '2026-08-12',
+    termsVersion: '2026-08-17',
     aiConsentVersion: '2026-08-12',
 };
