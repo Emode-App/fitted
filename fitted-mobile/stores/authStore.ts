@@ -2,9 +2,11 @@ import { create } from 'zustand';
 import { Platform } from 'react-native';
 import { supabase } from '../services/supabase';
 import { getSignedUrl } from '../services/privateMedia';
+import { unregisterPush } from '../services/pushNotifications';
 import { User } from '../types';
-import * as SecureStore from 'expo-secure-store';
 import * as Device from 'expo-device';
+import { logOutPurchases } from '../services/revenueCatService';
+import { deleteSecureItem, getSecureItem, setSecureItem } from '../services/secureStorage';
 
 const SESSION_KEY = 'current_login_session_id';
 
@@ -27,8 +29,10 @@ interface AuthState {
     // Actions
     initialize: () => Promise<void>;
     signIn: (email: string, password: string) => Promise<{ error?: string }>;
-    signUp: (email: string, password: string, username: string) => Promise<{ error?: string }>;
+    signUp: (email: string, password: string, username: string) => Promise<{ error?: string; needsEmailConfirmation?: boolean }>;
+    requestPasswordReset: (email: string) => Promise<{ error?: string }>;
     signOut: () => Promise<void>;
+    deleteAccount: () => Promise<void>;
     setUser: (user: User | null) => void;
     updateProfile: (updates: Partial<User>) => Promise<void>;
 }
@@ -58,7 +62,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     initialize: async () => {
         try {
             // Restore persisted session ID across app restarts
-            const storedSessionId = await SecureStore.getItemAsync(SESSION_KEY);
+            const storedSessionId = await getSecureItem(SESSION_KEY);
             if (storedSessionId) set({ currentSessionId: storedSessionId });
 
             const { data: { session } } = await supabase.auth.getSession();
@@ -94,13 +98,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                     if (event === 'SIGNED_IN') {
                         const sessionId = await recordLoginSession(session.user.id);
                         if (sessionId) {
-                            await SecureStore.setItemAsync(SESSION_KEY, sessionId);
+                            await setSecureItem(SESSION_KEY, sessionId);
                             set({ currentSessionId: sessionId });
                         }
                     }
                 } else {
                     if (event === 'SIGNED_OUT') {
-                        await SecureStore.deleteItemAsync(SESSION_KEY);
+                        await deleteSecureItem(SESSION_KEY);
                         set({ currentSessionId: null });
                     }
                     set({ session: null, user: null, isAuthenticated: false });
@@ -115,7 +119,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     signIn: async (email: string, password: string) => {
         try {
             const { data, error } = await supabase.auth.signInWithPassword({
-                email,
+                email: email.trim().toLowerCase(),
                 password,
             });
 
@@ -132,41 +136,63 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     signUp: async (email: string, password: string, username: string) => {
         try {
             const { data: authData, error: authError } = await supabase.auth.signUp({
-                email,
+                email: email.trim().toLowerCase(),
                 password,
+                options: {
+                    emailRedirectTo: 'emode://auth',
+                    data: {
+                        username: username.trim(),
+                        terms_accepted: true,
+                        terms_version: '2026-08-12',
+                    },
+                },
             });
 
             if (authError) {
                 return { error: authError.message };
             }
 
-            if (authData.user) {
-                const handle = `@${username.toLowerCase().replace(/\s+/g, '')}`;
-                // email lives in auth.users (and the private_users mirror created
-                // by a DB trigger) — it is no longer stored on the public users row.
-                const { error: profileError } = await supabase
-                    .from('users')
-                    .insert({
-                        id: authData.user.id,
-                        username,
-                        handle,
-                        bio: '',
-                        location: '',
-                        avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`,
-                    });
-
-                if (profileError) {
-                    return { error: profileError.message };
-                }
-            }
-
-            return {};
+            return { needsEmailConfirmation: !authData.session };
         } catch (error: any) {
             return { error: error.message || 'Sign up failed' };
         }
     },
 
+    requestPasswordReset: async (email: string) => {
+        try {
+            const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+                redirectTo: 'emode://reset-password',
+            });
+            return error ? { error: error.message } : {};
+        } catch (error: any) {
+            return { error: error.message || 'Could not send reset email' };
+        }
+    },
+
     signOut: async () => {
+        // Remove this device's push token while the session is still valid (RLS).
+        await unregisterPush();
+        await logOutPurchases();
+        await supabase.auth.signOut();
+        set({ user: null, session: null, isAuthenticated: false });
+    },
+
+    // Permanently delete the account (Apple Guideline 5.1.1(v)). The edge
+    // function removes all app data + the auth user using the service role; we
+    // then clear the local session. Throws on failure so the UI can surface it.
+    deleteAccount: async () => {
+        const { error } = await supabase.functions.invoke('delete-account', { body: {} });
+        if (error) {
+            let reason = error.message || 'Account deletion failed';
+            try {
+                const body = await error.context?.json?.();
+                if (body?.error) reason = body.error;
+            } catch {
+                // ignore parse failures
+            }
+            throw new Error(reason);
+        }
+        await logOutPurchases();
         await supabase.auth.signOut();
         set({ user: null, session: null, isAuthenticated: false });
     },

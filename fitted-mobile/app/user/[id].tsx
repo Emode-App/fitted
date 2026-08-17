@@ -1,4 +1,4 @@
-﻿import { StyleSheet, ActivityIndicator, View, Text } from 'react-native';
+﻿import { StyleSheet, ActivityIndicator, View, Text, Alert } from 'react-native';
 import { useState, useEffect } from 'react';
 import { useLocalSearchParams, router } from 'expo-router';
 
@@ -8,6 +8,7 @@ import { useMessagesStore } from '@/stores/messagesStore';
 import { User, Post } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
 import ProfileView from '@/components/ProfileView';
+import { reportContent, blockUser } from '@/services/moderation';
 
 export default function UserProfileScreen() {
     const { colors } = useTheme();
@@ -143,6 +144,48 @@ export default function UserProfileScreen() {
         }
     };
 
+    const handleModerate = () => {
+        if (!id) return;
+        const name = user?.username || 'this user';
+        Alert.alert(name, 'Manage this user', [
+            {
+                text: 'Report User',
+                onPress: () => {
+                    Alert.alert('Report User', `Report ${name} for objectionable content or behavior?`, [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                            text: 'Report',
+                            style: 'destructive',
+                            onPress: async () => {
+                                const { error } = await reportContent({ contentType: 'user', reportedUserId: id });
+                                Alert.alert(error ? 'Error' : 'Reported', error || 'Thanks. Our team will review this account.');
+                            },
+                        },
+                    ]);
+                },
+            },
+            {
+                text: 'Block User',
+                style: 'destructive',
+                onPress: () => {
+                    Alert.alert('Block User', `Block ${name}? You won't see their posts, and they won't be able to interact with you.`, [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                            text: 'Block',
+                            style: 'destructive',
+                            onPress: async () => {
+                                const { error } = await blockUser(id);
+                                if (error) { Alert.alert('Error', error); return; }
+                                router.back();
+                            },
+                        },
+                    ]);
+                },
+            },
+            { text: 'Cancel', style: 'cancel' },
+        ]);
+    };
+
     const handleMessage = async () => {
         if (!currentUser || !id) return;
 
@@ -197,6 +240,7 @@ export default function UserProfileScreen() {
             isFollowing={isFollowing}
             onFollow={handleFollow}
             onMessage={handleMessage}
+            onModerate={handleModerate}
             onRefresh={onRefresh}
             refreshing={refreshing}
             stats={stats}

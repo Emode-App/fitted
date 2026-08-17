@@ -1,153 +1,138 @@
 // @ts-nocheck
-// supabase/functions/stripe-webhook/index.ts
-// Handles Stripe webhook events. This is the ONLY authoritative source for
-// payment completion and Connect onboarding status. Signature verification is
-// mandatory; events that don't verify are rejected.
+// Authoritative Stripe webhook for marketplace payments and Connect readiness.
 
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import Stripe from 'https://esm.sh/stripe@13.9.0?target=deno';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
+import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
+import Stripe from 'https://esm.sh/stripe@19.3.1?target=deno';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.86.2';
 
-const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY')!, {
-    apiVersion: '2023-10-16',
+const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY')!, { apiVersion: '2026-06-24.dahlia' });
+const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
+    auth: { persistSession: false, autoRefreshToken: false },
 });
+const platformSecret = Deno.env.get('STRIPE_WEBHOOK_SECRET');
+const connectSecret = Deno.env.get('STRIPE_CONNECT_WEBHOOK_SECRET');
 
-const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const webhookSecret = Deno.env.get('STRIPE_WEBHOOK_SECRET');
-const connectWebhookSecret = Deno.env.get('STRIPE_CONNECT_WEBHOOK_SECRET');
+async function required<T>(promise: PromiseLike<{ data: T; error: any }>): Promise<T> {
+    const { data, error } = await promise;
+    if (error) throw error;
+    return data;
+}
+
+async function paymentIntentIdFromCharge(charge: any): Promise<string | null> {
+    return typeof charge?.payment_intent === 'string' ? charge.payment_intent : charge?.payment_intent?.id || null;
+}
 
 serve(async (req: Request) => {
-    if (req.method === 'OPTIONS') {
-        return new Response('ok', { status: 200 });
-    }
-
+    if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
     const signature = req.headers.get('stripe-signature');
-    if (!signature) {
-        return new Response('Missing stripe-signature header', { status: 400 });
-    }
+    if (!signature) return new Response('Missing signature', { status: 400 });
+    const rawBody = await req.text();
 
-    const body = await req.text();
-    let event: Stripe.Event;
-
-    let verified = false;
-    let verificationError: any = null;
-
-    if (webhookSecret) {
+    let event: any = null;
+    for (const secret of [platformSecret, connectSecret].filter(Boolean)) {
         try {
-            event = await stripe.webhooks.constructEventAsync(body, signature, webhookSecret);
-            verified = true;
-        } catch (err: any) {
-            verificationError = err;
-        }
+            event = await stripe.webhooks.constructEventAsync(rawBody, signature, secret!);
+            break;
+        } catch { /* Try the other endpoint secret. */ }
     }
+    if (!event) return new Response('Invalid signature', { status: 400 });
 
-    if (!verified && connectWebhookSecret) {
-        try {
-            event = await stripe.webhooks.constructEventAsync(body, signature, connectWebhookSecret);
-            verified = true;
-        } catch (err: any) {
-            verificationError = err;
-        }
+    const now = new Date().toISOString();
+    const { error: claimError } = await admin.from('stripe_events').insert({
+        id: event.id, type: event.type, status: 'processing', attempts: 1, processed_at: null, updated_at: now,
+    });
+    if (claimError?.code === '23505') {
+        const { data: prior } = await admin.from('stripe_events').select('status, updated_at, attempts').eq('id', event.id).single();
+        if (prior?.status === 'processed') return Response.json({ received: true, duplicate: true });
+        const stale = !prior?.updated_at || Date.now() - Date.parse(prior.updated_at) > 5 * 60 * 1000;
+        if (prior?.status === 'processing' && !stale) return new Response('Event is already processing', { status: 409 });
+        const { error } = await admin.from('stripe_events').update({
+            status: 'processing', attempts: (prior?.attempts || 1) + 1, last_error: null, updated_at: now,
+        }).eq('id', event.id);
+        if (error) return new Response('Could not claim event', { status: 500 });
+    } else if (claimError) {
+        return new Response('Could not claim event', { status: 500 });
     }
-
-    if (!verified) {
-        console.error('Webhook signature verification failed:', verificationError?.message || 'No signing secrets configured');
-        return new Response(`Webhook Error: ${verificationError?.message || 'No secrets configured'}`, { status: 400 });
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     try {
         switch (event.type) {
-            // ─── Payment succeeded ───────────────────────────────────
             case 'payment_intent.succeeded': {
-                const paymentIntent = event.data.object as Stripe.PaymentIntent;
-                const conversationId = paymentIntent.metadata?.conversation_id;
-                const payerId = paymentIntent.metadata?.payer_id;
-                const stylistId = paymentIntent.metadata?.stylist_id;
-
-                if (conversationId) {
-                    // Mark the styling session completed (authoritative).
-                    const { error } = await supabase
-                        .from('styling_sessions')
-                        .update({
-                            status: 'completed',
-                            stripe_payment_intent_id: paymentIntent.id,
-                            completed_at: new Date().toISOString(),
-                        })
-                        .eq('conversation_id', conversationId)
-                        .eq('status', 'pending');
-
-                    if (error) console.error('Error updating session:', error);
-
-                    // Reflect completion on the pending payment-request message(s)
-                    // for this conversation only.
-                    const { data: messages } = await supabase
-                        .from('messages')
-                        .select('id, payment_request')
-                        .eq('conversation_id', conversationId)
-                        .not('payment_request', 'is', null);
-
-                    if (messages) {
-                        for (const msg of messages) {
-                            if (msg.payment_request?.status === 'pending') {
-                                await supabase
-                                    .from('messages')
-                                    .update({
-                                        payment_request: {
-                                            ...msg.payment_request,
-                                            status: 'completed',
-                                            transaction_id: paymentIntent.id,
-                                        },
-                                    })
-                                    .eq('id', msg.id);
-                            }
+                const intent: any = event.data.object;
+                const orderId = intent.metadata?.order_id;
+                if (intent.metadata?.kind === 'physical_goods' && orderId) {
+                    const finalized = await required(admin.rpc('finalize_marketplace_order', {
+                        p_order_id: orderId,
+                        p_payment_intent_id: intent.id,
+                    }));
+                    if (!finalized) {
+                        const { data: order, error } = await admin.from('orders')
+                            .select('status, stripe_payment_intent_id').eq('id', orderId).single();
+                        if (error || order?.stripe_payment_intent_id !== intent.id || !['paid', 'fulfilled'].includes(order.status)) {
+                            throw new Error('Order could not be finalized');
                         }
                     }
                 }
-                console.log(`payment_intent.succeeded handled (conv=${conversationId}, payer=${payerId}, stylist=${stylistId})`);
                 break;
             }
 
-            // ─── Payment failed ──────────────────────────────────────
-            case 'payment_intent.payment_failed': {
-                const paymentIntent = event.data.object as Stripe.PaymentIntent;
-                const conversationId = paymentIntent.metadata?.conversation_id;
-
-                if (conversationId) {
-                    await supabase
-                        .from('styling_sessions')
-                        .update({ status: 'declined' })
-                        .eq('conversation_id', conversationId)
-                        .eq('status', 'pending');
+            case 'payment_intent.payment_failed':
+            case 'payment_intent.canceled': {
+                const intent: any = event.data.object;
+                const orderId = intent.metadata?.order_id;
+                if (intent.metadata?.kind === 'physical_goods' && orderId) {
+                    await required(admin.rpc('release_marketplace_order', {
+                        p_order_id: orderId,
+                        p_reason: event.type === 'payment_intent.canceled' ? 'payment_canceled' : 'payment_failed',
+                    }));
                 }
                 break;
             }
 
-            // ─── Connect account updated ─────────────────────────────
+            case 'charge.refunded': {
+                const charge: any = event.data.object;
+                const intentId = await paymentIntentIdFromCharge(charge);
+                if (intentId) {
+                    const status = charge.amount_refunded >= charge.amount ? 'refunded' : 'partially_refunded';
+                    await required(admin.from('orders').update({
+                        status, refunded_amount: charge.amount_refunded, updated_at: now,
+                    }).eq('stripe_payment_intent_id', intentId));
+                }
+                break;
+            }
+
+            case 'charge.dispute.created':
+            case 'charge.dispute.closed': {
+                const dispute: any = event.data.object;
+                const intentId = typeof dispute.payment_intent === 'string' ? dispute.payment_intent : dispute.payment_intent?.id;
+                if (intentId) {
+                    const update: any = { dispute_status: dispute.status, updated_at: now };
+                    if (event.type === 'charge.dispute.created') update.status = 'disputed';
+                    if (event.type === 'charge.dispute.closed' && dispute.status === 'lost') update.status = 'chargeback';
+                    await required(admin.from('orders').update(update).eq('stripe_payment_intent_id', intentId));
+                }
+                break;
+            }
+
             case 'account.updated': {
-                const account = event.data.object as Stripe.Account;
-                if (account.charges_enabled && account.details_submitted) {
-                    const { error } = await supabase
-                        .from('private_users')
-                        .update({ stripe_onboarding_complete: true })
-                        .eq('stripe_account_id', account.id);
-
-                    if (error) console.error('Error updating onboarding status:', error);
-                }
+                const account: any = event.data.object;
+                const ready = account.details_submitted && account.payouts_enabled && account.capabilities?.transfers === 'active';
+                await required(admin.from('private_users').update({ stripe_onboarding_complete: !!ready }).eq('stripe_account_id', account.id));
                 break;
             }
 
             default:
-                console.log(`Unhandled event type: ${event.type}`);
+                break;
         }
-    } catch (error: any) {
-        console.error('Error processing webhook:', error);
-        return new Response(`Webhook handler error: ${error.message}`, { status: 500 });
-    }
 
-    return new Response(JSON.stringify({ received: true }), {
-        headers: { 'Content-Type': 'application/json' },
-    });
+        await required(admin.from('stripe_events').update({
+            status: 'processed', processed_at: now, updated_at: now, last_error: null,
+        }).eq('id', event.id));
+        return Response.json({ received: true });
+    } catch (error: any) {
+        console.error('Stripe event processing failed', event.id, event.type, error?.message);
+        await admin.from('stripe_events').update({
+            status: 'failed', last_error: String(error?.message || 'processing failed').slice(0, 1000), updated_at: new Date().toISOString(),
+        }).eq('id', event.id);
+        return new Response('Webhook processing failed', { status: 500 });
+    }
 });

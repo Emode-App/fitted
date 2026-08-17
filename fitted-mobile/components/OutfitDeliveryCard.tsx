@@ -57,7 +57,7 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                     {
                         backgroundColor: isDark ? '#1a1a2e' : '#ffffff',
                         borderColor: isDark ? '#2d2d5e' : '#e0e7ff',
-                        shadowColor: '#6366f1',
+                        boxShadow: '0px 4px 16px rgba(99, 102, 241, 0.08)',
                     }
                 ]}>
                     {/* Header */}
@@ -219,9 +219,6 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         borderWidth: 1,
         padding: 14,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 16,
         elevation: 4,
     },
     // Header

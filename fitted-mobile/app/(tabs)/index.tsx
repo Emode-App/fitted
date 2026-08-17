@@ -94,6 +94,7 @@ export default function FeedScreen() {
                         onUserPress={() => handleUserPress(item.user_id)}
                         onPostPress={() => router.push({ pathname: '/post/[id]', params: { id: item.id } })}
                         onDelete={() => handleDelete(item.id)}
+                        onBlocked={(blockedId) => usePostsStore.getState().removeUserFromFeed(blockedId)}
                         currentUserId={user?.id}
                     />
                 )}

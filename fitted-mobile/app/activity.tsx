@@ -15,7 +15,7 @@ interface NotificationWithDetails {
     id: string;
     user_id: string;
     actor_id: string;
-    type: 'like' | 'comment' | 'follow';
+    type: 'like' | 'comment' | 'follow' | 'order_sold' | 'order_shipped';
     post_id?: string;
     comment_id?: string;
     is_read: boolean;
@@ -81,10 +81,7 @@ export default function ActivityScreen() {
             // Follow notification -> go to follower's profile
             router.push({ pathname: '/user/[id]', params: { id: notification.actor_id } });
         } else if (notification.post_id) {
-            // Like/Comment notification -> go to the post
-            // TODO: Navigate to post detail screen when implemented
-            // For now navigate to the post owner's profile (which shows their posts)
-            router.push({ pathname: '/user/[id]', params: { id: notification.actor_id } });
+            router.push({ pathname: '/post/[id]', params: { id: notification.post_id } });
         }
     };
 
@@ -124,6 +121,10 @@ export default function ActivityScreen() {
                 return 'commented on your post';
             case 'follow':
                 return 'started following you';
+            case 'order_sold':
+                return notification.content ? `bought from you · $${notification.content}` : 'bought from you';
+            case 'order_shipped':
+                return notification.content ? `shipped your order · $${notification.content}` : 'shipped your order';
             default:
                 return '';
         }
@@ -137,6 +138,10 @@ export default function ActivityScreen() {
                 return <Feather name="message-circle" size={16} color="#0095f6" />;
             case 'follow':
                 return <Feather name="user-plus" size={16} color="#8b5cf6" />;
+            case 'order_sold':
+                return <Feather name="shopping-bag" size={16} color="#15803d" />;
+            case 'order_shipped':
+                return <Feather name="truck" size={16} color="#2563eb" />;
             default:
                 return null;
         }

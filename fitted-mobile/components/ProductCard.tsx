@@ -67,7 +67,6 @@ export default function ProductCard({ product, onPress, size = 'medium', onEdit,
                 {
                     width: cardSize.width,
                     backgroundColor: colors.backgroundSecondary,
-                    shadowColor: isDark ? '#000' : '#000',
                 }
             ]}
             onPress={onPress}
@@ -164,11 +163,7 @@ const styles = StyleSheet.create({
     container: {
         borderRadius: 12,
         overflow: 'hidden',
-        // Shadow for iOS
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
-        // Shadow for Android
+        boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.1)',
         elevation: 4,
     },
     image: {

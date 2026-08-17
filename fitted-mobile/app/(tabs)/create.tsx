@@ -42,17 +42,7 @@ const ITEM_WIDTH = (SCREEN_WIDTH - 48) / 2; // 2 columns with padding (same as m
  * Get product image URL using Bing Image Search (same as modal)
  */
 function getProductImageUrl(product: Product): string {
-    const searchTerm = `${product.brand} ${product.name} sneaker`;
-    return `https://tse2.mm.bing.net/th?q=${encodeURIComponent(searchTerm)}&w=500&h=500&c=7&rs=1&p=0`;
-}
-
-// Placeholder music tracks for selection (to be replaced with API)
-interface MusicTrack {
-    id: string;
-    name: string;
-    artist: string;
-    duration: string;
-    previewUrl?: string; // For future audio playback
+    return product.imageUrl || '';
 }
 
 const CANVAS_TUTORIAL_STEPS: TutorialStep[] = [
@@ -71,15 +61,6 @@ const CANVAS_TUTORIAL_STEPS: TutorialStep[] = [
         title: 'Generate & Post',
         body: 'Hit generate for an AI-rendered look, then share it to your feed or save it to your wardrobe.',
     },
-];
-
-const PLACEHOLDER_MUSIC_TRACKS: MusicTrack[] = [
-    { id: '1', name: 'No Music', artist: 'Silent', duration: '0:00' },
-    { id: '2', name: 'Trending Beat', artist: 'Popular Artist', duration: '0:30' },
-    { id: '3', name: 'Fashion Forward', artist: 'Style Beats', duration: '0:30' },
-    { id: '4', name: 'Street Vibes', artist: 'Urban Sound', duration: '0:30' },
-    { id: '5', name: 'Luxury Life', artist: 'High Fashion', duration: '0:30' },
-    { id: '6', name: 'Chill Mode', artist: 'Relaxed Fits', duration: '0:30' },
 ];
 
 interface CanvasItem {
@@ -203,7 +184,7 @@ function DraggableImage({
                             <Image
                                 source={{ uri: item.url }}
                                 style={{ width: '100%', height: '100%' }}
-                                contentFit="cover"
+                                contentFit="contain"
                             />
                         </View>
                         {/* Frame renders second (on top with transparent center) */}
@@ -274,12 +255,12 @@ function PreviewItem({ canvasItem, keepFrames }: { canvasItem: CanvasItem; keepF
             {keepFrames && canvasItem.usePolaroid ? (
                 <View style={{ width: 180, height: 180 }}>
                     <View style={{ position: 'absolute', top: 25, left: 25, width: 130, height: 130, overflow: 'hidden' }}>
-                        <Image source={{ uri: canvasItem.url }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                        <Image source={{ uri: canvasItem.url }} style={{ width: '100%', height: '100%' }} contentFit="contain" />
                     </View>
                     <Image source={POLAROID_FRAME} style={{ position: 'absolute', width: '100%', height: '100%' }} contentFit="contain" />
                 </View>
             ) : (
-                <Image source={{ uri: canvasItem.url }} style={{ width: 180, height: 180 }} contentFit="cover" />
+                <Image source={{ uri: canvasItem.url }} style={{ width: 180, height: 180 }} contentFit="contain" />
             )}
         </Animated.View>
     );
@@ -369,9 +350,6 @@ export default function CreateScreen() {
     // NEW: Keep frames toggle
     const [keepFrames, setKeepFrames] = useState(true);
 
-    // NEW: Music track (placeholder)
-    const [musicTrack, setMusicTrack] = useState<string | null>(null);
-
     // NEW: Item links for each canvas item
     const [itemLinks, setItemLinks] = useState<{
         [itemId: string]: { brand: string; name: string; price: string; url: string }
@@ -393,14 +371,9 @@ export default function CreateScreen() {
     // Capture state - used to hide control buttons during board capture
     const [isCapturing, setIsCapturing] = useState(false);
 
-    // Music modal state
-    const [showMusicModal, setShowMusicModal] = useState(false);
-
     // Save to device state
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
-    const [showSearchComingSoon, setShowSearchComingSoon] = useState(false);
-    const [musicSearchQuery, setMusicSearchQuery] = useState('');
 
     // Ref for capturing canvas as image
     const canvasRef = useRef<RNView>(null);
@@ -483,7 +456,6 @@ export default function CreateScreen() {
                     if (d.uploadMode) setUploadMode(d.uploadMode);
                     if (d.bottomTab) setBottomTab(d.bottomTab);
                     if (d.keepFrames !== undefined) setKeepFrames(d.keepFrames);
-                    if (d.musicTrack) setMusicTrack(d.musicTrack);
                     if (d.itemLinks) setItemLinks(d.itemLinks);
                     if (d.generatedImageUri) setGeneratedImageUri(d.generatedImageUri);
                     if (d.capturedBoardUri) setCapturedBoardUri(d.capturedBoardUri);
@@ -550,60 +522,50 @@ export default function CreateScreen() {
     };
 
     const pickImage = async () => {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-            Alert.alert('Permission needed', 'Please grant camera roll permissions');
-            return;
-        }
-
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
             allowsEditing: false,
+            allowsMultipleSelection: true,
             quality: 0.8,
         });
 
-        if (!result.canceled && result.assets[0]) {
-            const localUri = result.assets[0].uri;
-
-            // Add to canvas at center - store original URL for re-cropping
-            const newItem: CanvasItem = {
-                id: Date.now().toString(),
-                url: localUri,
-                originalUrl: localUri, // Keep original
-                x: CANVAS_WIDTH / 2 - 75,
-                y: 150,
+        if (!result.canceled && result.assets.length > 0) {
+            // Stagger each new item so a multi-pick doesn't stack exactly on top of itself
+            const STAGGER = 24;
+            const newItems: CanvasItem[] = result.assets.map((asset, index) => ({
+                id: `${Date.now()}_${index}`,
+                url: asset.uri,
+                originalUrl: asset.uri, // Keep original
+                x: CANVAS_WIDTH / 2 - 75 + index * STAGGER,
+                y: 150 + index * STAGGER,
                 usePolaroid: true, // Default to polaroid frame
                 scale: 1,
                 rotation: 0,
-            };
-            setCanvasItems([...canvasItems, newItem]);
+            }));
+            setCanvasItems([...canvasItems, ...newItems]);
 
             // Auto-save to wardrobe "Last Used" — upload to durable storage so the
             // image survives app restarts (the picker's local cache URI doesn't)
             if (user) {
-                try {
-                    const base64 = await FileSystem.readAsStringAsync(localUri, {
-                        encoding: FileSystem.EncodingType.Base64,
-                    });
-                    const filename = `wardrobe/${user.id}_${Date.now()}.jpg`;
-                    const publicUrl = await uploadImage('posts', filename, base64);
-                    if (publicUrl) {
-                        addAssetToWardrobe('last_used', { url: publicUrl });
+                for (const asset of result.assets) {
+                    try {
+                        const base64 = await FileSystem.readAsStringAsync(asset.uri, {
+                            encoding: FileSystem.EncodingType.Base64,
+                        });
+                        const filename = `${user.id}/wardrobe/${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+                        const publicUrl = await uploadImage('posts', filename, base64);
+                        if (publicUrl) {
+                            addAssetToWardrobe('last_used', { url: publicUrl });
+                        }
+                    } catch (error) {
+                        console.error('Failed to save wardrobe item:', error);
                     }
-                } catch (error) {
-                    console.error('Failed to save wardrobe item:', error);
                 }
             }
         }
     };
 
     const pickFacePhoto = async () => {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-            Alert.alert('Permission needed', 'Please grant camera roll permissions');
-            return;
-        }
-
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
             allowsEditing: true,
@@ -642,7 +604,6 @@ export default function CreateScreen() {
         setUploadMode('upload');
         setBottomTab('items');
         setKeepFrames(true);
-        setMusicTrack(null);
         setItemLinks({});
         setShareToInstagram(false);
         setShareToTikTok(false);
@@ -801,7 +762,6 @@ export default function CreateScreen() {
                 uploadMode,
                 bottomTab,
                 keepFrames,
-                musicTrack,
                 itemLinks,
                 generatedImageUri,
                 capturedBoardUri,
@@ -825,7 +785,7 @@ export default function CreateScreen() {
             // Actually, `thumbnail_url` expects a URL. I should upload it.
 
             if (thumbnailBase64) {
-                const filename = `drafts/${user.id}_${Date.now()}_thumb.jpg`;
+                const filename = `${user.id}/drafts/${Date.now()}_thumb.jpg`;
                 // Strip data URI prefix if present (uploadImage expects raw base64)
                 let rawBase64 = thumbnailBase64;
                 if (thumbnailBase64.includes(',')) {
@@ -1070,7 +1030,7 @@ export default function CreateScreen() {
 
             // Upload generated image
             if (generatedImageUri) {
-                const filename = `delivery_gen_${Date.now()}.jpg`;
+                const filename = `${user.id}/deliveries/generated_${Date.now()}.jpg`;
                 let base64 = '';
                 if (generatedImageUri.startsWith('data:')) {
                     base64 = generatedImageUri.split(',')[1];
@@ -1082,7 +1042,7 @@ export default function CreateScreen() {
 
             // Upload board image
             if (capturedBoardUri) {
-                const filename = `delivery_board_${Date.now()}.jpg`;
+                const filename = `${user.id}/deliveries/board_${Date.now()}.jpg`;
                 const base64 = await FileSystem.readAsStringAsync(capturedBoardUri, { encoding: FileSystem.EncodingType.Base64 });
                 publicBoardUrl = await uploadImage('posts', filename, base64);
             }
@@ -1216,7 +1176,7 @@ export default function CreateScreen() {
             // 1. Upload Generated Image
             if (generatedImageUri && generatedImageUri.length > 0) {
                 console.log('Processing generated image for upload...');
-                const filename = `gen_${Date.now()}.jpg`;
+                const filename = `${user.id}/posts/generated_${Date.now()}.jpg`;
                 let base64 = '';
 
                 // AI generation returns a Data URI (starts with "data:image..."),
@@ -1236,7 +1196,7 @@ export default function CreateScreen() {
             // 2. Upload Board Image (Collage)
             if (finalBoardImageUri && finalBoardImageUri.length > 0) {
                 console.log('Reading board image file:', finalBoardImageUri);
-                const filename = `board_${Date.now()}.jpg`;
+                const filename = `${user.id}/posts/board_${Date.now()}.jpg`;
                 const base64 = await FileSystem.readAsStringAsync(finalBoardImageUri, { encoding: FileSystem.EncodingType.Base64 });
                 publicBoardUrl = await uploadImage('posts', filename, base64);
             }
@@ -1315,7 +1275,7 @@ export default function CreateScreen() {
         setIsSaving(true);
         try {
             // Request permission
-            const { status } = await MediaLibrary.requestPermissionsAsync();
+            const { status } = await MediaLibrary.requestPermissionsAsync(true, []);
             if (status !== 'granted') {
                 Alert.alert('Permission Needed', 'Please allow access to save images to your device.');
                 setIsSaving(false);
@@ -1338,8 +1298,8 @@ export default function CreateScreen() {
                     fileUri = tempPath;
                 }
 
-                const asset = await MediaLibrary.createAssetAsync(fileUri);
-                if (asset) savedCount++;
+                await MediaLibrary.saveToLibraryAsync(fileUri);
+                savedCount++;
             };
 
             // Save AI generated image
@@ -1360,8 +1320,8 @@ export default function CreateScreen() {
                         quality: 0.95,
                         result: 'tmpfile',
                     });
-                    const asset = await MediaLibrary.createAssetAsync(boardUri);
-                    if (asset) savedCount++;
+                    await MediaLibrary.saveToLibraryAsync(boardUri);
+                    savedCount++;
                 } catch (e) {
                     console.warn('Failed to capture board for save:', e);
                 }
@@ -1569,7 +1529,7 @@ export default function CreateScreen() {
                                     {/* Floating Action Buttons (when items exist) */}
                                     {canvasItems.length > 0 && (
                                         <View style={styles.floatingActions}>
-                                            <Pressable style={[styles.floatingButton, { backgroundColor: '#fff' }]} onPress={() => setShowSearchComingSoon(true)}>
+                                            <Pressable style={[styles.floatingButton, { backgroundColor: '#fff' }]} onPress={() => setShowProductSearch(true)}>
                                                 <Feather name="search" size={20} color="#000" />
                                             </Pressable>
                                             <Pressable style={[styles.floatingButton, { backgroundColor: '#fff' }]} onPress={handleTakePicture}>
@@ -1583,32 +1543,8 @@ export default function CreateScreen() {
                                 </View>
                             )}
 
-                            {/* Inline Search UI - Coming Soon */}
+                            {/* Search products without fabricating fallback inventory or prices. */}
                             {uploadMode === 'search' && canvasItems.length === 0 && (
-                                <View style={[styles.canvasContainer, { backgroundColor: colors.background }]}>
-                                    <View style={{ padding: 24, alignItems: 'center', justifyContent: 'center', flex: 1, minHeight: 300 }}>
-                                        <View style={[styles.comingSoonIconCircle, { backgroundColor: 'rgba(147, 51, 234, 0.08)' }]}>
-                                            <Feather name="search" size={32} color="#9333EA" />
-                                        </View>
-                                        <Text style={{ color: colors.text, fontWeight: '700', fontSize: 18, marginTop: 16, letterSpacing: -0.3 }}>Product Search</Text>
-                                        <View style={[styles.comingSoonBadge, { marginTop: 10 }]}>
-                                            <Text style={styles.comingSoonText}>COMING SOON</Text>
-                                        </View>
-                                        <Text style={{ color: colors.textSecondary, marginTop: 12, textAlign: 'center', fontSize: 14, lineHeight: 20, paddingHorizontal: 20 }}>
-                                            Search and add items from StockX, GOAT & more directly to your fit. For now, upload your own images!
-                                        </Text>
-                                        <Pressable
-                                            style={{ marginTop: 20, backgroundColor: colors.primary, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10 }}
-                                            onPress={() => setUploadMode('upload')}
-                                        >
-                                            <Text style={{ color: colors.primaryForeground, fontWeight: '600', fontSize: 14 }}>Switch to Upload</Text>
-                                        </Pressable>
-                                    </View>
-                                </View>
-                            )}
-
-                            {/* Original Inline Search UI - hidden for MVP, enable when ready */}
-                            {false && uploadMode === 'search' && canvasItems.length === 0 && (
                                 <View style={[styles.canvasContainer, { backgroundColor: colors.background }]}>
                                     <View style={{ padding: 16, gap: 16 }}>
                                         {/* Search Input */}
@@ -1917,27 +1853,6 @@ export default function CreateScreen() {
                                 />
                             </View>
 
-                            {/* Add Music — Coming Soon */}
-                            <View style={styles.optionSection}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                                    <Text style={[styles.sectionLabel, { color: colors.textSecondary, marginBottom: 0 }]}>ADD MUSIC</Text>
-                                    <View style={styles.comingSoonBadge}>
-                                        <Text style={styles.comingSoonText}>COMING SOON</Text>
-                                    </View>
-                                </View>
-                                <View
-                                    style={[styles.musicRow, { backgroundColor: colors.backgroundSecondary, opacity: 0.5 }]}
-                                >
-                                    <View style={styles.musicIcon}>
-                                        <Feather name="music" size={18} color={colors.textSecondary} />
-                                    </View>
-                                    <Text style={[styles.musicText, { color: colors.placeholder }]}>
-                                        Pick a track...
-                                    </Text>
-                                    <Feather name="lock" size={16} color={colors.textTertiary} />
-                                </View>
-                            </View>
-
                             {/* Link Items */}
                             <View style={styles.optionSection}>
                                 <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>LINK ITEMS ({canvasItems.length})</Text>
@@ -2077,38 +1992,6 @@ export default function CreateScreen() {
                 onSelectProduct={handleProductSelect}
             />
 
-            {/* Search Coming Soon Modal */}
-            <Modal
-                visible={showSearchComingSoon}
-                transparent
-                animationType="fade"
-                onRequestClose={() => setShowSearchComingSoon(false)}
-            >
-                <Pressable style={styles.saveModalOverlay} onPress={() => setShowSearchComingSoon(false)}>
-                    <Pressable style={[styles.saveModalContent, { backgroundColor: colors.background }]} onPress={e => e.stopPropagation()}>
-                        <View style={styles.saveModalHandle} />
-                        <View style={{ alignItems: 'center', paddingVertical: 8 }}>
-                            <View style={[styles.comingSoonIconCircle, { backgroundColor: 'rgba(147, 51, 234, 0.08)' }]}>
-                                <Feather name="search" size={28} color="#9333EA" />
-                            </View>
-                            <Text style={[styles.saveModalTitle, { color: colors.text, marginTop: 16 }]}>Product Search</Text>
-                            <View style={[styles.comingSoonBadge, { marginTop: 10 }]}>
-                                <Text style={styles.comingSoonText}>COMING SOON</Text>
-                            </View>
-                            <Text style={{ color: colors.textSecondary, marginTop: 12, textAlign: 'center', fontSize: 14, lineHeight: 20, paddingHorizontal: 12 }}>
-                                Soon you'll be able to search and add items from StockX, GOAT & more directly to your fit.
-                            </Text>
-                        </View>
-                        <Pressable
-                            style={{ alignItems: 'center', paddingVertical: 16, marginTop: 12 }}
-                            onPress={() => setShowSearchComingSoon(false)}
-                        >
-                            <Text style={{ color: colors.textSecondary, fontWeight: '600', fontSize: 15 }}>Got it</Text>
-                        </Pressable>
-                    </Pressable>
-                </Pressable>
-            </Modal>
-
             {/* Save to Device Modal */}
             <Modal
                 visible={showSaveModal}
@@ -2199,69 +2082,6 @@ export default function CreateScreen() {
                         >
                             <Text style={[styles.saveModalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
                         </Pressable>
-                    </Pressable>
-                </Pressable>
-            </Modal>
-
-            {/* Music Selection Modal */}
-            <Modal
-                visible={showMusicModal}
-                transparent
-                animationType="slide"
-                onRequestClose={() => setShowMusicModal(false)}
-            >
-                <Pressable style={styles.musicModalOverlay} onPress={() => setShowMusicModal(false)}>
-                    <Pressable style={[styles.musicModalContent, { backgroundColor: colors.background }]} onPress={e => e.stopPropagation()}>
-                        <View style={styles.musicModalHandle} />
-                        <View style={styles.musicModalHeader}>
-                            <Text style={[styles.musicModalTitle, { color: colors.text }]}>Select Music</Text>
-                            <Pressable onPress={() => setShowMusicModal(false)}>
-                                <Feather name="x" size={24} color={colors.text} />
-                            </Pressable>
-                        </View>
-
-                        {/* Search Input for Music */}
-                        <View style={{ paddingHorizontal: 20, paddingBottom: 12 }}>
-                            <TextInput
-                                style={[styles.sceneInput, { backgroundColor: colors.backgroundSecondary, color: colors.text }]}
-                                placeholder="Search tracks..."
-                                placeholderTextColor={colors.placeholder}
-                                value={musicSearchQuery}
-                                onChangeText={setMusicSearchQuery}
-                            />
-                        </View>
-
-                        <ScrollView>
-                            {PLACEHOLDER_MUSIC_TRACKS.filter(track =>
-                                track.name.toLowerCase().includes(musicSearchQuery.toLowerCase()) ||
-                                track.artist.toLowerCase().includes(musicSearchQuery.toLowerCase())
-                            ).map((track) => (
-                                <Pressable
-                                    key={track.id}
-                                    style={[
-                                        styles.musicTrackRow,
-                                        musicTrack === track.name && { backgroundColor: colors.backgroundSecondary }
-                                    ]}
-                                    onPress={() => {
-                                        setMusicTrack(track.id === '1' ? null : track.name);
-                                        setShowMusicModal(false);
-                                    }}
-                                >
-                                    <View style={[styles.musicTrackIcon, { backgroundColor: colors.backgroundSecondary }]}>
-                                        <Feather name={track.id === '1' ? 'volume-x' : 'music'} size={20} color={colors.primary} />
-                                    </View>
-                                    <View style={styles.musicTrackInfo}>
-                                        <Text style={[styles.musicTrackName, { color: colors.text }]}>{track.name}</Text>
-                                        <Text style={[styles.musicTrackArtist, { color: colors.textSecondary }]}>{track.artist} • {track.duration}</Text>
-                                    </View>
-                                    {musicTrack === track.name && (
-                                        <View style={[styles.musicSelectButton, { backgroundColor: colors.primary }]}>
-                                            <Feather name="check" size={16} color="#fff" />
-                                        </View>
-                                    )}
-                                </Pressable>
-                            ))}
-                        </ScrollView>
                     </Pressable>
                 </Pressable>
             </Modal>
@@ -2653,10 +2473,7 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         gap: 6,
         marginTop: 12,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
+        boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.1)',
         elevation: 3,
     },
     checkboxGreen: {
@@ -2771,10 +2588,7 @@ const styles = StyleSheet.create({
     },
     toggleButtonActive: {
         backgroundColor: '#fff',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.08,
-        shadowRadius: 2,
+        boxShadow: '0px 1px 2px rgba(0, 0, 0, 0.08)',
         elevation: 2,
     },
     toggleText: {
@@ -2814,10 +2628,7 @@ const styles = StyleSheet.create({
         borderRadius: 22,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.15,
-        shadowRadius: 6,
+        boxShadow: '0px 2px 6px rgba(0, 0, 0, 0.15)',
         elevation: 5,
         borderWidth: 1,
         borderColor: '#f3f4f6',
@@ -2971,46 +2782,6 @@ const styles = StyleSheet.create({
     keepFramesText: {
         fontSize: 14,
         fontWeight: '500',
-    },
-    musicRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 14,
-        borderRadius: 12,
-        gap: 12,
-    },
-    musicIcon: {
-        width: 36,
-        height: 36,
-        borderRadius: 8,
-        backgroundColor: '#F1F1F1',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    musicText: {
-        flex: 1,
-        fontSize: 14,
-    },
-    comingSoonBadge: {
-        backgroundColor: 'rgba(147, 51, 234, 0.1)',
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: 'rgba(147, 51, 234, 0.2)',
-    },
-    comingSoonIconCircle: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    comingSoonText: {
-        fontSize: 9,
-        fontWeight: '800',
-        color: '#9333EA',
-        letterSpacing: 0.5,
     },
     linkItemCard: {
         flexDirection: 'row',
@@ -3176,84 +2947,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         fontSize: 12,
         backgroundColor: '#f9fafb',
-    },
-    // Music button styles
-    musicButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderRadius: 12,
-        borderWidth: 1,
-        marginTop: 12,
-        gap: 12,
-    },
-    musicButtonText: {
-        flex: 1,
-        fontSize: 15,
-        fontWeight: '500',
-    },
-    // Music modal styles
-    musicModalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        justifyContent: 'flex-end',
-    },
-    musicModalContent: {
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        paddingTop: 16,
-        paddingBottom: 40,
-        maxHeight: '70%',
-    },
-    musicModalHandle: {
-        width: 40,
-        height: 4,
-        borderRadius: 2,
-        backgroundColor: '#ccc',
-        alignSelf: 'center',
-        marginBottom: 16,
-    },
-    musicModalHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: 20,
-        marginBottom: 16,
-    },
-    musicModalTitle: {
-        fontSize: 18,
-        fontWeight: '700',
-    },
-    musicTrackRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 20,
-        paddingVertical: 12,
-        gap: 12,
-    },
-    musicTrackIcon: {
-        width: 48,
-        height: 48,
-        borderRadius: 8,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    musicTrackInfo: {
-        flex: 1,
-    },
-    musicTrackName: {
-        fontSize: 15,
-        fontWeight: '600',
-    },
-    musicTrackArtist: {
-        fontSize: 13,
-        marginTop: 2,
-    },
-    musicSelectButton: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 16,
     },
     shareRow: {
         flexDirection: 'row',

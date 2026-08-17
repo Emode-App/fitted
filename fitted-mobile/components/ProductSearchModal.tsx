@@ -26,8 +26,7 @@ const ITEM_WIDTH = (SCREEN_WIDTH - 48) / 2; // 2 columns with padding
  * Get product image URL using Bing Image Search
  */
 function getProductImageUrl(product: Product): string {
-    const searchTerm = `${product.brand} ${product.name} sneaker`;
-    return `https://tse2.mm.bing.net/th?q=${encodeURIComponent(searchTerm)}&w=500&h=500&c=7&rs=1&p=0`;
+    return product.imageUrl || '';
 }
 
 interface ProductSearchModalProps {

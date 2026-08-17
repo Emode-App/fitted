@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
     View, Text, StyleSheet, Pressable, FlatList,
-    Dimensions, SafeAreaView, ScrollView, Alert, TextInput,
+    Dimensions, SafeAreaView, ScrollView, Alert, TextInput, Linking,
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -27,9 +27,10 @@ import Animated, {
     Easing,
 } from 'react-native-reanimated';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { purchaseSubscription } from '@/services/revenueCatService';
+import { getSubscriptionPrice, purchaseSubscription, restorePurchases, type SubscriptionType } from '@/services/revenueCatService';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
+import { LEGAL } from '@/constants/legal';
 
 const { width: SW } = Dimensions.get('window');
 export const ONBOARDING_KEY = 'has_onboarded';
@@ -70,48 +71,45 @@ const PLANS = [
         id: 'proTryOns' as const,
         label: 'Pro Try-Ons',
         emoji: '✨',
-        price: '$10/mo',
+        price: 'Monthly',
         tagline: 'For the experimenters',
         icon: 'cpu' as const,
         gradient: ['#06b6d4', '#3b82f6'] as const,
         perks: [
-            'Unlimited AI outfit generations',
-            'Access all AI styles & models',
-            'Higher-resolution outputs',
-            'Priority rendering queue',
-            'Save unlimited AI looks to wardrobe',
+            'Up to 100 AI outfit generations per day',
+            'Combine up to 6 clothing references',
+            'Private saved try-on history',
+            'Access restored across devices',
         ],
     },
     {
         id: 'business' as const,
         label: 'Business',
         emoji: '🛍️',
-        price: '$15/mo',
+        price: 'Monthly',
         tagline: 'For brands & sellers',
         icon: 'shopping-bag' as const,
         gradient: ['#8b5cf6', '#ec4899'] as const,
         perks: [
-            'Business badge on your profile',
-            'Create a shoppable storefront',
-            'List & sell clothing directly in-app',
-            'Accept payments through the app',
-            'Sales analytics dashboard',
+            'Business badge and profile shop',
+            'Create physical product listings',
+            'Accept eligible physical-goods orders',
+            'View sales and fulfillment status',
         ],
     },
     {
         id: 'stylist' as const,
         label: 'Stylist',
         emoji: '👑',
-        price: '$25/mo',
+        price: 'Monthly',
         tagline: 'For professional stylists',
         icon: 'star' as const,
         gradient: ['#f59e0b', '#ef4444'] as const,
         perks: [
             'Verified stylist badge on profile',
-            'Appear in stylist discovery',
-            'Accept styling requests from users',
-            'Set your rate & earn from sessions',
-            'Priority placement in suggestions',
+            'Set a public styling rate',
+            'Receive styling requests in messages',
+            'Restore access across devices',
         ],
     },
 ];
@@ -277,6 +275,7 @@ export default function OnboardingScreen() {
     const [step, setStep] = useState<'slides' | 'profile' | 'paywall'>('slides');
     const [activePlan, setActivePlan] = useState(0);
     const [purchasing, setPurchasing] = useState(false);
+    const [storePrices, setStorePrices] = useState<Record<SubscriptionType, string | null>>({ stylist: null, business: null, proTryOns: null });
 
     const user = useAuthStore((state) => state.user);
     const updateProfile = useAuthStore((state) => state.updateProfile);
@@ -295,6 +294,12 @@ export default function OnboardingScreen() {
     const [savingProfile, setSavingProfile] = useState(false);
 
     const isLastSlide = currentIndex === SLIDES.length - 1;
+
+    useEffect(() => {
+        if (step !== 'paywall') return;
+        Promise.all((['proTryOns', 'business', 'stylist'] as SubscriptionType[]).map(async (type) => [type, await getSubscriptionPrice(type)] as const))
+            .then((entries) => setStorePrices(Object.fromEntries(entries) as Record<SubscriptionType, string | null>));
+    }, [step]);
 
     const scrollHandler = useAnimatedScrollHandler({
         onScroll: (e) => {
@@ -320,11 +325,6 @@ export default function OnboardingScreen() {
     };
 
     const pickAvatar = async () => {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-            Alert.alert('Permission needed', 'Please grant photo library access to add a profile photo.');
-            return;
-        }
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
             allowsEditing: true,
@@ -351,12 +351,12 @@ export default function OnboardingScreen() {
                 const response = await fetch(avatarUri);
                 const blob = await response.blob();
                 const arrayBuffer = await new Response(blob).arrayBuffer();
-                const fileName = `avatars/${user.id}/${Date.now()}.jpg`;
+                const fileName = `${user.id}/avatar_${Date.now()}.jpg`;
                 const { error: uploadError } = await supabase.storage
-                    .from('posts')
+                    .from('avatars')
                     .upload(fileName, arrayBuffer, { contentType: 'image/jpeg', upsert: true });
                 if (!uploadError) {
-                    const { data: urlData } = supabase.storage.from('posts').getPublicUrl(fileName);
+                    const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(fileName);
                     updates.avatar_url = urlData.publicUrl;
                 }
             }
@@ -398,6 +398,16 @@ export default function OnboardingScreen() {
         } else if (error && error !== 'cancelled') {
             Alert.alert('Purchase Failed', error);
         }
+    };
+
+    const handleRestore = async () => {
+        setPurchasing(true);
+        const { success, activeEntitlements, error } = await restorePurchases();
+        setPurchasing(false);
+        if (!success) return Alert.alert('Restore Failed', error || 'Could not restore purchases.');
+        Alert.alert('Purchases Restored', activeEntitlements.length ? 'Your active subscriptions were restored.' : 'No active subscriptions were found.', [
+            { text: 'Continue', onPress: completeOnboarding },
+        ]);
     };
 
     // ─── PROFILE SETUP ───────────────────────────────────────────
@@ -564,6 +574,7 @@ export default function OnboardingScreen() {
     // ─── PAYWALL ─────────────────────────────────────────────────
     if (step === 'paywall') {
         const plan = PLANS[activePlan];
+        const displayPrice = storePrices[plan.id] || plan.price;
         return (
             <View style={styles.container}>
                 <StatusBar style="light" />
@@ -624,7 +635,7 @@ export default function OnboardingScreen() {
                                         <Text style={styles.planName}>{plan.label}</Text>
                                         <Text style={styles.planTagline}>{plan.tagline}</Text>
                                     </View>
-                                    <Text style={styles.planPrice}>{plan.price}</Text>
+                                    <Text style={styles.planPrice}>{displayPrice}</Text>
                                 </View>
 
                                 <View style={styles.planDivider} />
@@ -648,7 +659,7 @@ export default function OnboardingScreen() {
                         {/* Footer CTA */}
                         <View style={styles.paywallFooter}>
                             <GradientButton
-                                label={purchasing ? 'Processing...' : `Subscribe · ${plan.price}`}
+                                label={purchasing ? 'Processing...' : `Subscribe · ${displayPrice}`}
                                 onPress={handleSubscribe}
                                 disabled={purchasing}
                                 colors={plan.gradient}
@@ -656,6 +667,14 @@ export default function OnboardingScreen() {
                             <Pressable onPress={completeOnboarding} style={styles.skipBtn}>
                                 <Text style={styles.skipText}>Continue for free  →</Text>
                             </Pressable>
+                            <Pressable onPress={handleRestore} style={styles.skipBtn} disabled={purchasing}>
+                                <Text style={styles.skipText}>Restore Purchases</Text>
+                            </Pressable>
+                            <Text style={styles.skipText}>
+                                Renews monthly until canceled.{' '}
+                                <Text style={{ textDecorationLine: 'underline' }} onPress={() => Linking.openURL(LEGAL.termsUrl)}>Terms</Text>{' · '}
+                                <Text style={{ textDecorationLine: 'underline' }} onPress={() => Linking.openURL(LEGAL.privacyPolicyUrl)}>Privacy</Text>
+                            </Text>
                         </View>
 
                     </View>

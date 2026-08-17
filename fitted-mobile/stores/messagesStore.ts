@@ -178,92 +178,13 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
     },
 
     sendPaymentRequest: async (conversationId: string, senderId: string, amount: number, description: string) => {
-        try {
-            const paymentRequest: PaymentRequest = {
-                type: 'request',
-                amount,
-                description,
-                status: 'pending',
-                currency: 'USD',
-            };
-
-            const { error } = await supabase.from('messages').insert({
-                conversation_id: conversationId,
-                sender_id: senderId,
-                text: `Payment request: $${amount.toFixed(2)}`,
-                payment_request: paymentRequest,
-            });
-
-            if (!error) {
-                get().fetchMessages(conversationId);
-            }
-        } catch (error) {
-            console.error('Error sending payment request:', error);
-        }
+        void conversationId; void senderId; void amount; void description;
+        console.warn('Paid styling requests are disabled in this release.');
     },
 
     respondToPayment: async (messageId: string, conversationId: string, responderId: string, action: 'accept' | 'decline') => {
-        try {
-            // Get the current message to access payment_request data
-            const { messages } = get();
-            const message = messages.find(m => m.id === messageId);
-            if (!message?.payment_request) return;
-
-            const newStatus = action === 'accept' ? 'completed' : 'failed';
-
-            // Update the payment_request status on the message
-            const updatedPaymentRequest: PaymentRequest = {
-                ...message.payment_request,
-                status: newStatus,
-                transaction_id: action === 'accept' ? `sim_${Date.now()}` : undefined,
-            };
-
-            const { error: updateError } = await supabase
-                .from('messages')
-                .update({ payment_request: updatedPaymentRequest })
-                .eq('id', messageId);
-
-            if (updateError) {
-                console.error('Error updating payment status:', updateError);
-                return;
-            }
-
-            // If accepted, create a styling session record
-            if (action === 'accept') {
-                const { error: sessionError } = await supabase
-                    .from('styling_sessions')
-                    .insert({
-                        stylist_id: message.sender_id,
-                        client_id: responderId,
-                        conversation_id: conversationId,
-                        message_id: messageId,
-                        amount: message.payment_request.amount,
-                        description: message.payment_request.description,
-                        status: 'completed',
-                        completed_at: new Date().toISOString(),
-                    });
-
-                if (sessionError) {
-                    console.error('Error creating styling session:', sessionError);
-                }
-            }
-
-            // Send a system-style follow-up message
-            const statusText = action === 'accept'
-                ? `✅ Payment of $${message.payment_request.amount.toFixed(2)} accepted`
-                : `❌ Payment request declined`;
-
-            await supabase.from('messages').insert({
-                conversation_id: conversationId,
-                sender_id: responderId,
-                text: statusText,
-            });
-
-            // Refresh messages to show updated state
-            get().fetchMessages(conversationId);
-        } catch (error) {
-            console.error('Error responding to payment:', error);
-        }
+        void messageId; void conversationId; void responderId; void action;
+        console.warn('Paid styling requests are disabled in this release.');
     },
 
     sendStylingDelivery: async (conversationId: string, senderId: string, delivery: StylingDelivery) => {

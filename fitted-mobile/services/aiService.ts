@@ -2,6 +2,9 @@
 // API key stays server-side and never ships in the app bundle.
 
 import { supabase } from './supabase';
+import { captureException } from './monitoring';
+import { searchProducts as searchCatalogProducts } from './productSearch';
+import { ensureAiFaceConsent } from './privacyService';
 
 /**
  * Generates a realistic outfit image via the ai-proxy edge function
@@ -16,6 +19,13 @@ export async function generateOutfit(
         throw new Error('At least one clothing item is required');
     }
 
+    if (facePhotoBase64) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user || !(await ensureAiFaceConsent(user.id))) {
+            throw new Error('AI face consent is required before generating with a face photo.');
+        }
+    }
+
     try {
         const { data, error } = await supabase.functions.invoke('ai-proxy', {
             body: {
@@ -26,15 +36,41 @@ export async function generateOutfit(
             },
         });
 
-        if (error) throw new Error(error.message || 'Outfit generation failed');
+        if (error) {
+            // Supabase wraps non-2xx as FunctionsHttpError; surface the server reason,
+            // and give a friendly message when the proxy rate-limits the user (429).
+            let reason = error.message || 'Outfit generation failed';
+            let rateLimited = false;
+            try {
+                const body = await error.context?.json?.();
+                if (body?.code === 'rate_limited' || body?.code === 'daily_limit') {
+                    rateLimited = true;
+                    const secs = body.retryAfterSeconds || 0;
+                    const mins = Math.ceil(secs / 60);
+                    reason = secs > 0
+                        ? `You've hit the outfit-generation limit. Try again in about ${mins} minute${mins === 1 ? '' : 's'}.`
+                        : "You've hit the outfit-generation limit. Please try again later.";
+                } else if (body?.error) {
+                    reason = body.error;
+                }
+            } catch {
+                // ignore parse failures, fall back to error.message
+            }
+            const e: any = new Error(reason);
+            e.isRateLimit = rateLimited;
+            throw e;
+        }
         if (!data?.image) throw new Error(data?.error || 'No image generated in response.');
         return data.image as string;
-    } catch (error) {
+    } catch (error: any) {
         console.error('Outfit generation error:', error);
+        // Report genuine failures; rate-limiting is an expected user-facing case.
+        if (!error?.isRateLimit) {
+            captureException(error, { feature: 'generate-outfit' });
+        }
         throw error;
     }
 }
-
 export interface Product {
     id: string;
     name: string;
@@ -44,10 +80,9 @@ export interface Product {
     imageUrl?: string;
     purchaseLink: string;
 }
-
 /**
- * Searches for products via the ai-proxy edge function (Gemini server-side).
- * Falls back to mock data on any failure.
+ * Searches the authenticated product catalog proxy. Product names, images, and
+ * prices come from the upstream catalog rather than an LLM or local mock data.
  */
 export async function searchProducts(query: string): Promise<Product[]> {
     if (!query.trim()) {
@@ -55,128 +90,18 @@ export async function searchProducts(query: string): Promise<Product[]> {
     }
 
     try {
-        const { data, error } = await supabase.functions.invoke('ai-proxy', {
-            body: { action: 'search-products', query },
-        });
-
-        if (error) {
-            console.error('Search error:', error.message);
-            return getMockResults(query);
-        }
-
-        const items = data?.products;
-        if (!Array.isArray(items)) {
-            return getMockResults(query);
-        }
-
-        return items.map((item: any, index: number) => {
-            let link = item.purchaseLink;
-
-            // Sanitizer: filter out garbage links the model sometimes returns.
-            if (typeof link !== 'string' || link.includes('vertexaisearch') || link.includes('google.com')) {
-                link = `https://stockx.com/search?s=${encodeURIComponent(item.name || query)}`;
-            }
-
-            return {
-                id: item.sku || `product-${index}`,
-                name: item.name || 'Unknown Product',
-                brand: item.brand || 'Unknown Brand',
-                price: item.price || 0,
-                sku: item.sku,
-                imageUrl: item.imageUrl,
-                purchaseLink: link,
-            };
-        });
+        const { products } = await searchCatalogProducts(query, 12);
+        return products.map((item) => ({
+            id: item.id,
+            name: item.name,
+            brand: item.brand,
+            price: item.lastSale || item.retailPrice || 0,
+            sku: item.styleId || undefined,
+            imageUrl: item.imageUrl || item.thumbnail || undefined,
+            purchaseLink: `https://stockx.com/search?s=${encodeURIComponent(`${item.brand} ${item.name}`)}`,
+        }));
     } catch (error) {
         console.error('Search error:', error);
-        return getMockResults(query);
+        return [];
     }
-}
-
-/**
- * Mock results for development/demo purposes
- */
-function getMockResults(query: string): Product[] {
-    const mockProducts: Product[] = [
-        {
-            id: '1',
-            name: 'Air Jordan 1 Retro High OG Chicago',
-            brand: 'Jordan',
-            price: 180,
-            sku: 'DZ5485-612',
-            imageUrl: 'https://images.stockx.com/images/Air-Jordan-1-Retro-High-OG-Chicago-Lost-and-Found.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-            purchaseLink: 'https://stockx.com/air-jordan-1-retro-high-og-chicago-lost-and-found',
-        },
-        {
-            id: '2',
-            name: 'Nike Dunk Low Retro White Black Panda',
-            brand: 'Nike',
-            price: 110,
-            sku: 'DD1391-100',
-            imageUrl: 'https://images.stockx.com/images/Nike-Dunk-Low-Retro-White-Black-2021.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-            purchaseLink: 'https://stockx.com/nike-dunk-low-retro-white-black-panda',
-        },
-        {
-            id: '3',
-            name: 'Yeezy Boost 350 V2 Zebra',
-            brand: 'adidas',
-            price: 230,
-            sku: 'GW0266',
-            imageUrl: 'https://images.stockx.com/images/adidas-Yeezy-Boost-350-V2-Zebra-2022.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-            purchaseLink: 'https://stockx.com/adidas-yeezy-boost-350-v2-zebra-2022',
-        },
-        {
-            id: '4',
-            name: 'New Balance 550 White Green',
-            brand: 'New Balance',
-            price: 110,
-            sku: 'BB550WT1',
-            imageUrl: 'https://images.stockx.com/images/New-Balance-550-White-Green.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-            purchaseLink: 'https://stockx.com/new-balance-550-white-green',
-        },
-        {
-            id: '5',
-            name: 'Nike Air Force 1 Low White',
-            brand: 'Nike',
-            price: 100,
-            sku: 'CW2288-111',
-            imageUrl: 'https://images.stockx.com/images/Nike-Air-Force-1-Low-White-07.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-            purchaseLink: 'https://stockx.com/nike-air-force-1-low-white-07',
-        },
-        {
-            id: '6',
-            name: 'Jordan 4 Retro Military Black',
-            brand: 'Jordan',
-            price: 210,
-            sku: 'DH6927-111',
-            imageUrl: 'https://images.stockx.com/images/Air-Jordan-4-Retro-Military-Black.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-            purchaseLink: 'https://stockx.com/air-jordan-4-retro-military-black',
-        },
-        {
-            id: '7',
-            name: 'Nike SB Dunk Low Travis Scott',
-            brand: 'Nike',
-            price: 1200,
-            sku: 'CT5053-001',
-            imageUrl: 'https://images.stockx.com/images/Nike-SB-Dunk-Low-Travis-Scott.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-            purchaseLink: 'https://stockx.com/nike-sb-dunk-low-travis-scott',
-        },
-        {
-            id: '8',
-            name: 'adidas Samba OG White Black',
-            brand: 'adidas',
-            price: 100,
-            sku: 'B75806',
-            imageUrl: 'https://images.stockx.com/images/adidas-Samba-OG-White-Black.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-            purchaseLink: 'https://stockx.com/adidas-samba-og-white-black',
-        },
-    ];
-
-    // Filter by query
-    const filtered = mockProducts.filter(p =>
-        p.name.toLowerCase().includes(query.toLowerCase()) ||
-        p.brand.toLowerCase().includes(query.toLowerCase())
-    );
-
-    return filtered.length > 0 ? filtered : mockProducts.slice(0, 4);
 }

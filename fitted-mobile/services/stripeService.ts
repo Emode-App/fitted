@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { captureException } from './monitoring';
 
 // ============================================
 // STRIPE SERVICE
@@ -20,8 +21,9 @@ interface PaymentIntentResponse {
  * The edge function verifies the caller is a participant of the conversation,
  * looks up the stylist's connected account server-side, and computes the fee.
  *
- * Throws Error('stylist_not_connected') when the stylist has no payout account
- * so the caller can fall back to the simulated flow.
+ * This endpoint is disabled for the first release. Physical-goods checkout uses
+ * createOrderPayment instead; paid styling must not be represented as complete
+ * without a dedicated server-side order and webhook state machine.
  */
 export async function fetchPaymentIntent(
     amount: number,
@@ -50,6 +52,10 @@ export async function fetchPaymentIntent(
             if (body?.error) reason = body.error;
         } catch {
             // ignore parse failures
+        }
+        // 'stylist_not_connected' is an expected fallback, not a failure to report.
+        if (reason !== 'stylist_not_connected') {
+            captureException(error, { feature: 'create-payment-intent', conversationId, reason });
         }
         throw new Error(reason);
     }
@@ -85,19 +91,15 @@ export async function checkConnectStatus(userId: string): Promise<{
     onboardingComplete: boolean;
     accountId: string | null;
 }> {
-    const { data, error } = await supabase
-        .from('private_users')
-        .select('stripe_account_id, stripe_onboarding_complete')
-        .eq('id', userId)
-        .single();
+    const { data, error } = await supabase.functions.invoke('connect-status', { body: {} });
 
     if (error || !data) {
         return { hasAccount: false, onboardingComplete: false, accountId: null };
     }
 
     return {
-        hasAccount: !!data.stripe_account_id,
-        onboardingComplete: data.stripe_onboarding_complete === true,
-        accountId: data.stripe_account_id || null,
+        hasAccount: data.hasAccount === true,
+        onboardingComplete: data.onboardingComplete === true,
+        accountId: null,
     };
 }

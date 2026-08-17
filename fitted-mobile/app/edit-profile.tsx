@@ -182,12 +182,6 @@ export default function EditProfileScreen() {
     };
 
     const pickImage = async (type: 'avatar' | 'header') => {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-            Alert.alert('Permission needed', 'Please grant camera roll permissions');
-            return;
-        }
-
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
             allowsEditing: type === 'avatar',
@@ -264,10 +258,11 @@ export default function EditProfileScreen() {
             const blob = await response.blob();
             const arrayBuffer = await new Response(blob).arrayBuffer();
 
-            const fileName = `${folder}/${user?.id}/${Date.now()}.jpg`;
+            if (!user?.id) return null;
+            const fileName = `${user.id}/${folder}_${Date.now()}.jpg`;
 
             const { error } = await supabase.storage
-                .from('posts')
+                .from('avatars')
                 .upload(fileName, arrayBuffer, {
                     contentType: 'image/jpeg',
                     upsert: true,
@@ -279,7 +274,7 @@ export default function EditProfileScreen() {
             }
 
             const { data: urlData } = supabase.storage
-                .from('posts')
+                .from('avatars')
                 .getPublicUrl(fileName);
 
             return urlData.publicUrl;

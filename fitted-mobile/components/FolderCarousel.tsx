@@ -184,10 +184,7 @@ const styles = StyleSheet.create({
         borderColor: '#e5e7eb',
         borderRadius: 16,
         padding: 6,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
+        boxShadow: '0px 1px 2px rgba(0, 0, 0, 0.05)',
         elevation: 1,
     },
     arrowButtonRight: {
@@ -210,10 +207,7 @@ const styles = StyleSheet.create({
     folderTabActive: {
         backgroundColor: '#000',
         borderColor: '#000',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.15,
-        shadowRadius: 4,
+        boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.15)',
         elevation: 3,
     },
     folderTabInactive: {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, Pressable, Alert, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, Pressable, Alert, ActivityIndicator, Platform, Linking, Modal } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
@@ -7,8 +7,16 @@ import QRCode from 'react-native-qrcode-svg';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
+import { LEGAL } from '@/constants/legal';
+import { createOrderPayment } from '@/services/orderService';
 import DressingRoom from '@/components/DressingRoom';
 import { useMarketplaceStore } from '@/stores/marketplaceStore';
+import { registerForPush } from '@/services/pushNotifications';
+import { revokeAiFaceConsent } from '@/services/privacyService';
+import { submitSupportRequest } from '@/services/supportService';
+import { useStripeCheckout } from '@/hooks/useStripeCheckout';
+import StripeConnectOnboarding from '@/components/StripeConnectOnboarding';
+import { checkConnectStatus } from '@/services/stripeService';
 
 interface LoginSession {
     id: string;
@@ -85,28 +93,43 @@ const MenuLink = ({ icon, label, onPress }: { icon: string; label: string; onPre
 // 4. Privacy & Security
 export const PrivacyPage = ({ onBack, onNavigate }: { onBack: () => void; onNavigate: (view: any) => void }) => {
     const { colors, isDark } = useTheme();
-    const { user, updateProfile } = useAuthStore();
-    const [isPrivate, setIsPrivate] = useState(false);
+    const { user, updateProfile, setUser } = useAuthStore();
     const [showActivity, setShowActivity] = useState(user?.show_activity_status ?? true);
+    const [revoking, setRevoking] = useState(false);
 
     const handleActivityChange = (value: boolean) => {
         setShowActivity(value);
         updateProfile({ show_activity_status: value });
     };
 
+    const handleRevokeAiConsent = () => Alert.alert(
+        'Remove AI Face Data?',
+        'This removes your saved face photo, private generated try-ons, and face photos you shared in messages. Published posts are not removed. You can opt in again later.',
+        [
+            { text: 'Cancel', style: 'cancel' },
+            {
+                text: 'Remove Data', style: 'destructive', onPress: async () => {
+                    setRevoking(true);
+                    try {
+                        await revokeAiFaceConsent();
+                        if (user) setUser({ ...user, ai_face_url: undefined });
+                        Alert.alert('AI Face Data Removed', 'Consent was revoked and private face-derived data was deleted.');
+                    } catch (error: any) {
+                        Alert.alert('Could Not Remove Data', error?.message || 'Please try again.');
+                    } finally {
+                        setRevoking(false);
+                    }
+                },
+            },
+        ],
+    );
+
     return (
         <>
             <Header title="Privacy & Security" onBack={onBack} />
             <ScrollView style={styles.scrollContent}>
-                {/* Account Privacy Group */}
-                <SectionTitle title="Account Privacy" />
+                <SectionTitle title="Visibility" />
                 <View style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6' }]}>
-                    <ToggleRow
-                        label="Private Account"
-                        subtext="Only approved followers can see your fits"
-                        value={isPrivate}
-                        onValueChange={setIsPrivate}
-                    />
                     <ToggleRow
                         label="Show Activity Status"
                         value={showActivity}
@@ -118,8 +141,30 @@ export const PrivacyPage = ({ onBack, onNavigate }: { onBack: () => void; onNavi
                 <View style={{ height: 24 }} />
                 <SectionTitle title="Data & Security" />
                 <View style={{ gap: 12 }}>
-                    <MenuLink icon="shield" label="Two-Factor Authentication" onPress={() => onNavigate('2fa')} />
                     <MenuLink icon="monitor" label="Login Activity" onPress={() => onNavigate('loginActivity')} />
+                    <MenuLink icon="shield" label="Privacy Policy" onPress={() => Linking.openURL(LEGAL.privacyPolicyUrl)} />
+                    <MenuLink icon="file-text" label="Terms of Use" onPress={() => Linking.openURL(LEGAL.termsUrl)} />
+                    <MenuLink
+                        icon="credit-card"
+                        label="Manage Subscriptions"
+                        onPress={() => Linking.openURL(
+                            Platform.OS === 'ios'
+                                ? 'itms-apps://apps.apple.com/account/subscriptions'
+                                : Platform.OS === 'android'
+                                    ? 'https://play.google.com/store/account/subscriptions?package=com.emode.app'
+                                    : LEGAL.supportUrl,
+                        )}
+                    />
+                    <TouchableOpacity
+                        disabled={revoking}
+                        style={[styles.menuLink, { backgroundColor: isDark ? '#27272a' : '#f9fafb' }]}
+                        onPress={handleRevokeAiConsent}
+                    >
+                        <View style={styles.menuLinkLeft}>
+                            <Feather name="trash-2" size={20} color="#dc2626" />
+                            <Text style={[styles.menuLinkLabel, { color: '#dc2626' }]}>{revoking ? 'Removing AI face data…' : 'Revoke AI Face Consent'}</Text>
+                        </View>
+                    </TouchableOpacity>
                 </View>
             </ScrollView>
         </>
@@ -406,18 +451,30 @@ export const LoginActivityPage = ({ onBack }: { onBack: () => void }) => {
                 { text: 'Log Out', style: 'destructive', onPress: () => signOut() },
             ]);
         } else {
-            Alert.alert('Remove Session', `Remove login record for ${session.device_name}?`, [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Remove', style: 'destructive',
-                    onPress: async () => {
-                        await supabase.from('login_sessions').delete().eq('id', session.id);
-                        setSessions(prev => prev.filter(s => s.id !== session.id));
-                    },
-                },
-            ]);
+            Alert.alert('Session Security', 'For security, emode signs out all other devices together. Use “Sign Out All Other Devices” below.');
         }
     };
+
+    const signOutOtherDevices = () => Alert.alert(
+        'Sign Out Other Devices?',
+        'This revokes refresh access for every other signed-in device. This device stays signed in.',
+        [
+            { text: 'Cancel', style: 'cancel' },
+            {
+                text: 'Sign Out Others', style: 'destructive', onPress: async () => {
+                    const { error } = await supabase.auth.signOut({ scope: 'others' });
+                    if (error) return Alert.alert('Could Not Sign Out Devices', error.message);
+                    if (user?.id) {
+                        let query = supabase.from('login_sessions').delete().eq('user_id', user.id);
+                        if (currentSessionId) query = query.neq('id', currentSessionId);
+                        await query;
+                    }
+                    setSessions((items) => items.filter((item) => item.id === currentSessionId));
+                    Alert.alert('Other Devices Signed Out', 'Existing access tokens may remain valid briefly, but they cannot be refreshed.');
+                },
+            },
+        ],
+    );
 
     const formatTime = (ts: string) => {
         const diff = Date.now() - new Date(ts).getTime();
@@ -514,18 +571,23 @@ export const LoginActivityPage = ({ onBack }: { onBack: () => void }) => {
                                     {session.platform === 'ios' ? 'iOS' : session.platform === 'android' ? 'Android' : session.platform}
                                 </Text>
                             </View>
-                            <TouchableOpacity onPress={() => handleRemoveSession(session)} hitSlop={12}>
+                            {isCurrent && <TouchableOpacity onPress={() => handleRemoveSession(session)} hitSlop={12}>
                                 <Text style={{
                                     fontSize: 13,
                                     color: isCurrent ? '#ef4444' : colors.textSecondary,
                                     fontWeight: '600',
                                 }}>
-                                    {isCurrent ? 'Log Out' : 'Remove'}
+                                    Log Out
                                 </Text>
-                            </TouchableOpacity>
+                            </TouchableOpacity>}
                         </View>
                     );
                 })}
+                {sessions.some((session) => session.id !== currentSessionId) && (
+                    <Pressable style={[styles.button, { backgroundColor: '#dc2626', marginTop: 24 }]} onPress={signOutOtherDevices}>
+                        <Text style={{ color: '#fff', fontWeight: '600', textAlign: 'center' }}>Sign Out All Other Devices</Text>
+                    </Pressable>
+                )}
             </ScrollView>
         </>
     );
@@ -534,35 +596,75 @@ export const LoginActivityPage = ({ onBack }: { onBack: () => void }) => {
 // 7. Notifications
 export const NotificationsPage = ({ onBack }: { onBack: () => void }) => {
     const { colors, isDark } = useTheme();
-    const [pauseAll, setPauseAll] = useState(false);
-    const [likes, setLikes] = useState(true);
-    const [comments, setComments] = useState(true);
-    const [newFollowers, setNewFollowers] = useState(true);
-    const [stylistUpdates, setStylistUpdates] = useState(true);
-    const [trendAlerts, setTrendAlerts] = useState(false);
-    const [appUpdates, setAppUpdates] = useState(true);
+    const user = useAuthStore((state) => state.user);
+    const [preferences, setPreferences] = useState({ likes: true, comments: true, follows: true, orders: true });
+    const [loading, setLoading] = useState(true);
+    const [enablingPush, setEnablingPush] = useState(false);
+
+    useEffect(() => {
+        (async () => {
+            if (!user?.id) return setLoading(false);
+            const { data } = await supabase.from('user_settings').select('notification_preferences').eq('user_id', user.id).single();
+            if (data?.notification_preferences) setPreferences((current) => ({ ...current, ...data.notification_preferences }));
+            setLoading(false);
+        })();
+    }, [user?.id]);
+
+    const save = async (next: typeof preferences) => {
+        if (!user?.id) return;
+        const previous = preferences;
+        setPreferences(next);
+        const { error } = await supabase.from('user_settings').update({
+            notification_preferences: next,
+            updated_at: new Date().toISOString(),
+        }).eq('user_id', user.id);
+        if (error) {
+            setPreferences(previous);
+            Alert.alert('Could Not Save', 'Your notification preference was not changed.');
+        }
+    };
+
+    const pauseAll = !Object.values(preferences).some(Boolean);
+    const setPreference = (key: keyof typeof preferences, value: boolean) => save({ ...preferences, [key]: value });
 
     return (
         <>
             <Header title="Notifications" onBack={onBack} />
             <ScrollView style={styles.scrollContent}>
+                {loading ? <ActivityIndicator color={colors.text} /> : <>
                 <View style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6', marginBottom: 24 }]}>
-                    <ToggleRow label="Pause All" value={pauseAll} onValueChange={setPauseAll} />
+                    <ToggleRow label="Pause All" value={pauseAll} onValueChange={(value) => save(value
+                        ? { likes: false, comments: false, follows: false, orders: false }
+                        : { likes: true, comments: true, follows: true, orders: true })} />
                 </View>
 
                 <SectionTitle title="Interactions" />
                 <View style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6', marginBottom: 24 }]}>
-                    <ToggleRow label="Likes" value={likes} onValueChange={setLikes} />
-                    <ToggleRow label="Comments" value={comments} onValueChange={setComments} />
-                    <ToggleRow label="New Followers" value={newFollowers} onValueChange={setNewFollowers} />
+                    <ToggleRow label="Likes" value={preferences.likes} onValueChange={(value) => setPreference('likes', value)} />
+                    <ToggleRow label="Comments" value={preferences.comments} onValueChange={(value) => setPreference('comments', value)} />
+                    <ToggleRow label="New Followers" value={preferences.follows} onValueChange={(value) => setPreference('follows', value)} />
                 </View>
 
-                <SectionTitle title="App" />
+                <SectionTitle title="Marketplace" />
                 <View style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6' }]}>
-                    <ToggleRow label="Stylist Updates" value={stylistUpdates} onValueChange={setStylistUpdates} />
-                    <ToggleRow label="Trend Alerts" value={trendAlerts} onValueChange={setTrendAlerts} />
-                    <ToggleRow label="App Updates" value={appUpdates} onValueChange={setAppUpdates} />
+                    <ToggleRow label="Order Updates" value={preferences.orders} onValueChange={(value) => setPreference('orders', value)} />
                 </View>
+                <Pressable
+                    disabled={enablingPush || !user?.id}
+                    style={[styles.button, { backgroundColor: colors.primary, marginTop: 24 }]}
+                    onPress={async () => {
+                        if (!user?.id) return;
+                        setEnablingPush(true);
+                        const enabled = await registerForPush(user.id);
+                        setEnablingPush(false);
+                        Alert.alert(enabled ? 'Push Notifications Enabled' : 'Permission Not Granted', enabled
+                            ? 'This device can now receive the categories enabled above.'
+                            : 'You can allow notifications later in your device settings.');
+                    }}
+                >
+                    {enablingPush ? <ActivityIndicator color={colors.primaryForeground} /> : <Text style={{ color: colors.primaryForeground, fontWeight: '600', textAlign: 'center' }}>Enable Push Notifications on This Device</Text>}
+                </Pressable>
+                </>}
             </ScrollView>
         </>
     );
@@ -615,6 +717,17 @@ export const HelpPage = ({ onBack, onNavigate }: { onBack: () => void; onNavigat
     const { colors, isDark } = useTheme();
     const [showHelpForm, setShowHelpForm] = useState(false);
     const [helpSent, setHelpSent] = useState(false);
+    const [helpEmail, setHelpEmail] = useState('');
+    const [helpMessage, setHelpMessage] = useState('');
+    const [helpSending, setHelpSending] = useState(false);
+
+    const sendHelp = async () => {
+        setHelpSending(true);
+        const { error } = await submitSupportRequest({ email: helpEmail, subject: 'In-app help request', message: helpMessage });
+        setHelpSending(false);
+        if (error) return Alert.alert('Could Not Send Request', error);
+        setHelpSent(true);
+    };
 
     return (
         <>
@@ -623,7 +736,9 @@ export const HelpPage = ({ onBack, onNavigate }: { onBack: () => void; onNavigat
                 <View style={{ gap: 12, marginBottom: 24 }}>
                     <MenuLink icon="file-text" label="FAQs" onPress={() => onNavigate('faqs')} />
                     <MenuLink icon="mail" label="Contact Us" onPress={() => onNavigate('contact')} />
-                    <MenuLink icon="shield" label="Privacy Policy" onPress={() => { }} />
+                    <MenuLink icon="shield" label="Privacy Policy" onPress={() => Linking.openURL(LEGAL.privacyPolicyUrl)} />
+                    <MenuLink icon="file-text" label="Terms of Service" onPress={() => Linking.openURL(LEGAL.termsUrl)} />
+                    <MenuLink icon="trash-2" label="Account Deletion Help" onPress={() => Linking.openURL(LEGAL.accountDeletionUrl)} />
                 </View>
 
                 {/* Live Chat Box */}
@@ -639,23 +754,13 @@ export const HelpPage = ({ onBack, onNavigate }: { onBack: () => void; onNavigat
                         <Text style={{ fontSize: 14, fontWeight: '700', color: isDark ? '#60a5fa' : '#1d4ed8' }}>Need direct help?</Text>
                     </View>
 
-                    <Pressable style={{
-                        backgroundColor: isDark ? 'rgba(30, 58, 138, 0.5)' : '#bfdbfe',
-                        padding: 12, borderRadius: 12, alignItems: 'center', marginBottom: 12
-                    }} disabled>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <Feather name="lock" size={14} color={isDark ? '#3b82f6' : '#60a5fa'} />
-                            <Text style={{ fontSize: 12, fontWeight: '700', color: isDark ? '#3b82f6' : '#60a5fa' }}>Start Live Chat (Locked)</Text>
-                        </View>
-                    </Pressable>
-
                     {!showHelpForm && !helpSent && (
                         <Pressable
                             style={{
                                 backgroundColor: isDark ? '#18181b' : '#ffffff',
                                 padding: 12, borderRadius: 12, alignItems: 'center',
                                 borderWidth: 1, borderColor: isDark ? 'rgba(30, 58, 138, 0.5)' : '#dbeafe',
-                                shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 2, shadowOffset: { width: 0, height: 1 }
+                                boxShadow: '0px 1px 2px rgba(0, 0, 0, 0.05)'
                             }}
                             onPress={() => setShowHelpForm(true)}
                         >
@@ -669,19 +774,26 @@ export const HelpPage = ({ onBack, onNavigate }: { onBack: () => void; onNavigat
                                 style={[styles.input, { backgroundColor: colors.background, color: colors.text, marginBottom: 8 }]}
                                 placeholder="Email"
                                 placeholderTextColor={colors.placeholder}
+                                value={helpEmail}
+                                onChangeText={setHelpEmail}
+                                keyboardType="email-address"
+                                autoCapitalize="none"
                             />
                             <TextInput
                                 style={[styles.input, { backgroundColor: colors.background, color: colors.text, marginBottom: 8, height: 80 }]}
                                 placeholder="How can we help?"
                                 placeholderTextColor={colors.placeholder}
                                 multiline
+                                value={helpMessage}
+                                onChangeText={setHelpMessage}
+                                maxLength={5000}
                             />
                             <View style={{ flexDirection: 'row', gap: 8 }}>
                                 <Pressable style={[styles.button, { backgroundColor: isDark ? '#3f3f46' : '#e5e7eb', flex: 1 }]} onPress={() => setShowHelpForm(false)}>
                                     <Text style={{ color: colors.text }}>Cancel</Text>
                                 </Pressable>
-                                <Pressable style={[styles.button, { backgroundColor: '#2563eb', flex: 1 }]} onPress={() => setHelpSent(true)}>
-                                    <Text style={{ color: '#fff' }}>Send Request</Text>
+                                <Pressable disabled={helpSending} style={[styles.button, { backgroundColor: '#2563eb', flex: 1 }]} onPress={sendHelp}>
+                                    {helpSending ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff' }}>Send Request</Text>}
                                 </Pressable>
                             </View>
                         </View>
@@ -744,6 +856,17 @@ export const FAQsPage = ({ onBack }: { onBack: () => void }) => {
 export const ContactPage = ({ onBack }: { onBack: () => void }) => {
     const { colors, isDark } = useTheme();
     const [sent, setSent] = useState(false);
+    const [email, setEmail] = useState('');
+    const [message, setMessage] = useState('');
+    const [sending, setSending] = useState(false);
+
+    const send = async () => {
+        setSending(true);
+        const result = await submitSupportRequest({ email, subject: 'Contact request', message });
+        setSending(false);
+        if (result.error) return Alert.alert('Could Not Send Message', result.error);
+        setSent(true);
+    };
 
     if (sent) {
         return (
@@ -772,6 +895,10 @@ export const ContactPage = ({ onBack }: { onBack: () => void }) => {
                             style={[styles.input, { backgroundColor: isDark ? '#27272a' : '#f9fafb', color: colors.text, borderColor: isDark ? '#3f3f46' : '#e5e7eb' }]}
                             placeholder="your@email.com"
                             placeholderTextColor={colors.placeholder}
+                            value={email}
+                            onChangeText={setEmail}
+                            keyboardType="email-address"
+                            autoCapitalize="none"
                         />
                     </View>
                     <View>
@@ -782,13 +909,17 @@ export const ContactPage = ({ onBack }: { onBack: () => void }) => {
                             placeholderTextColor={colors.placeholder}
                             multiline
                             numberOfLines={6}
+                            value={message}
+                            onChangeText={setMessage}
+                            maxLength={5000}
                         />
                     </View>
                     <Pressable
                         style={[styles.button, { backgroundColor: isDark ? '#ffffff' : '#000000', marginTop: 8 }]}
-                        onPress={() => setSent(true)}
+                        onPress={send}
+                        disabled={sending}
                     >
-                        <Text style={{ color: isDark ? '#000000' : '#ffffff', fontWeight: '600' }}>Send Message</Text>
+                        {sending ? <ActivityIndicator color={isDark ? '#000000' : '#ffffff'} /> : <Text style={{ color: isDark ? '#000000' : '#ffffff', fontWeight: '600' }}>Send Message</Text>}
                     </Pressable>
                 </View>
             </ScrollView>
@@ -1110,6 +1241,31 @@ const styles = StyleSheet.create({
         padding: 16,
         borderTopWidth: 1,
     },
+    shipOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'flex-end',
+    },
+    shipSheet: {
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        paddingHorizontal: 20,
+        paddingTop: 12,
+        paddingBottom: 32,
+        maxHeight: '88%',
+    },
+    shipHandle: {
+        width: 40,
+        height: 4,
+        borderRadius: 2,
+        alignSelf: 'center',
+        marginBottom: 16,
+    },
+    shipTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        marginBottom: 16,
+    },
 });
 
 // 12. Dressing Room
@@ -1127,8 +1283,27 @@ export const CartPage = ({ onBack }: { onBack: () => void }) => {
     const { colors, isDark } = useTheme();
     const { user } = useAuthStore();
     const { cartItems, removeFromCart, isLoadingCart } = useMarketplaceStore();
+    const stripeCheckout = useStripeCheckout();
 
     const total = cartItems.reduce((sum, item) => sum + (item.price || 0), 0);
+
+    const [showShipping, setShowShipping] = useState(false);
+    const [processing, setProcessing] = useState(false);
+    const [ship, setShip] = useState({ name: '', line1: '', line2: '', city: '', state: '', postal_code: '', country: 'US' });
+    const [selectedSizes, setSelectedSizes] = useState<Record<string, string | null>>({});
+
+    useEffect(() => {
+        setSelectedSizes((current) => {
+            const next: Record<string, string | null> = {};
+            for (const item of cartItems) {
+                const available = item.sizes || [];
+                next[item.id] = current[item.id] && available.includes(current[item.id] as string)
+                    ? current[item.id]
+                    : (available[0] || null);
+            }
+            return next;
+        });
+    }, [cartItems]);
 
     const handleRemove = async (productId: string) => {
         if (!user?.id) return;
@@ -1147,10 +1322,88 @@ export const CartPage = ({ onBack }: { onBack: () => void }) => {
     };
 
     const handleCheckout = () => {
-        Alert.alert('Checkout', ` Proceed to checkout? Total: $${total.toFixed(2)}`, [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Pay Now', onPress: () => Alert.alert('Success', 'Order placed successfully!') }
-        ]);
+        if (cartItems.length === 0) return;
+        setShowShipping(true);
+    };
+
+    // Group the cart by seller and run one Stripe PaymentSheet per seller
+    // (each is a Connect destination charge to that seller). The order is recorded
+    // server-side; the Stripe webhook marks it paid.
+    const runCheckout = async () => {
+        if (!user?.id) return;
+
+        const required: (keyof typeof ship)[] = ['name', 'line1', 'city', 'state', 'postal_code', 'country'];
+        if (required.some((k) => !ship[k]?.trim())) {
+            Alert.alert('Missing info', 'Please complete your shipping address.');
+            return;
+        }
+
+        if (!stripeCheckout.available) {
+            Alert.alert('Checkout unavailable', 'Payments require the full app build (not available in Expo Go).');
+            return;
+        }
+
+        const groups: Record<string, typeof cartItems> = {};
+        for (const item of cartItems) {
+            const sid = item.seller_id;
+            if (!sid) continue;
+            (groups[sid] ||= []).push(item);
+        }
+        const sellerIds = Object.keys(groups);
+        if (sellerIds.length === 0) {
+            Alert.alert('Unavailable', 'These items are no longer available.');
+            return;
+        }
+
+        setProcessing(true);
+        let completed = 0;
+        let skipped = 0;
+        try {
+            for (const sid of sellerIds) {
+                const groupItems = groups[sid];
+                const items = groupItems.map((p) => ({ product_id: p.id, size: selectedSizes[p.id] || null }));
+
+                let pay;
+                try {
+                    pay = await createOrderPayment(sid, items, { ...ship });
+                } catch (e: any) {
+                    if (e?.message === 'seller_not_connected') { skipped++; continue; }
+                    throw e;
+                }
+
+                const { error: initError } = await stripeCheckout.initPaymentSheet({
+                    paymentIntentClientSecret: pay.clientSecret,
+                    customerId: pay.customerId,
+                    customerEphemeralKeySecret: pay.ephemeralKey,
+                    merchantDisplayName: 'Emode',
+                    allowsDelayedPaymentMethods: false,
+                    returnURL: 'emode://stripe-return',
+                });
+                if (initError) { Alert.alert('Error', initError.message); break; }
+
+                const { error: presentError } = await stripeCheckout.presentPaymentSheet();
+                if (presentError) {
+                    if (presentError.code !== 'Canceled') Alert.alert('Payment Failed', presentError.message);
+                    break; // stop the run on cancel/failure
+                }
+
+                // Paid — remove this seller's items from the cart.
+                for (const p of groupItems) await removeFromCart(p.id, user.id);
+                completed++;
+            }
+
+            if (completed > 0) {
+                setShowShipping(false);
+                const extra = skipped > 0 ? ` ${skipped} seller${skipped > 1 ? 's' : ''} couldn't accept payment yet and ${skipped > 1 ? 'were' : 'was'} skipped.` : '';
+                Alert.alert('Order Placed 🎉', `Your ${completed > 1 ? `${completed} orders have` : 'order has'} been placed. The seller will be notified to ship your items.${extra}`);
+            } else if (skipped > 0) {
+                Alert.alert('Seller not ready', "This seller hasn't finished setting up payouts, so checkout isn't available for their items yet.");
+            }
+        } catch (e: any) {
+            Alert.alert('Checkout Error', e?.message || 'Something went wrong during checkout.');
+        } finally {
+            setProcessing(false);
+        }
     };
 
     if (isLoadingCart) {
@@ -1199,9 +1452,35 @@ export const CartPage = ({ onBack }: { onBack: () => void }) => {
                                     <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={2}>
                                         {item.name}
                                     </Text>
-                                    <Text style={{ fontSize: 13, color: colors.textSecondary }}>
-                                        Size: {(item.sizes && item.sizes.length > 0) ? item.sizes[0] : 'N/A'}
-                                    </Text>
+                                    {item.sizes?.length ? (
+                                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
+                                            {item.sizes.map((size) => {
+                                                const selected = selectedSizes[item.id] === size;
+                                                return (
+                                                    <Pressable
+                                                        key={size}
+                                                        accessibilityRole="radio"
+                                                        accessibilityState={{ selected }}
+                                                        onPress={() => setSelectedSizes((current) => ({ ...current, [item.id]: size }))}
+                                                        style={{
+                                                            borderWidth: 1,
+                                                            borderColor: selected ? colors.primary : colors.border,
+                                                            backgroundColor: selected ? colors.primary : colors.background,
+                                                            borderRadius: 8,
+                                                            paddingHorizontal: 9,
+                                                            paddingVertical: 4,
+                                                        }}
+                                                    >
+                                                        <Text style={{ fontSize: 12, fontWeight: '600', color: selected ? colors.primaryForeground : colors.textSecondary }}>
+                                                            {size}
+                                                        </Text>
+                                                    </Pressable>
+                                                );
+                                            })}
+                                        </View>
+                                    ) : (
+                                        <Text style={{ fontSize: 13, color: colors.textSecondary }}>One size</Text>
+                                    )}
                                     <Text style={{ fontSize: 15, fontWeight: '700', color: colors.primary, marginTop: 4 }}>
                                         ${item.price?.toFixed(2)}
                                     </Text>
@@ -1231,7 +1510,7 @@ export const CartPage = ({ onBack }: { onBack: () => void }) => {
                     }
                 ]}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 16 }}>
-                        <Text style={{ fontSize: 16, color: colors.textSecondary }}>Total</Text>
+                        <Text style={{ fontSize: 16, color: colors.textSecondary }}>Subtotal</Text>
                         <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>${total.toFixed(2)}</Text>
                     </View>
                     <Pressable
@@ -1242,6 +1521,386 @@ export const CartPage = ({ onBack }: { onBack: () => void }) => {
                     </Pressable>
                 </View>
             )}
+
+            {/* Shipping address → per-seller Stripe PaymentSheet */}
+            <Modal
+                visible={showShipping}
+                transparent
+                animationType="slide"
+                onRequestClose={() => { if (!processing) setShowShipping(false); }}
+            >
+                <View style={styles.shipOverlay}>
+                    <View style={[styles.shipSheet, { backgroundColor: colors.background }]}>
+                        <View style={[styles.shipHandle, { backgroundColor: isDark ? '#3f3f46' : '#e5e7eb' }]} />
+                        <Text style={[styles.shipTitle, { color: colors.text }]}>Shipping Address</Text>
+                        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 8 }}>
+                            {([
+                                { key: 'name', ph: 'Full name', cap: 'words' },
+                                { key: 'line1', ph: 'Address', cap: 'words' },
+                                { key: 'line2', ph: 'Apt, suite (optional)', cap: 'words' },
+                                { key: 'city', ph: 'City', cap: 'words' },
+                                { key: 'state', ph: 'State / Province', cap: 'characters' },
+                                { key: 'postal_code', ph: 'ZIP / Postal code', cap: 'characters' },
+                                { key: 'country', ph: 'Country (e.g. US)', cap: 'characters' },
+                            ] as const).map((f) => (
+                                <TextInput
+                                    key={f.key}
+                                    style={[styles.input, { backgroundColor: isDark ? '#27272a' : '#f9fafb', color: colors.text, borderColor: isDark ? '#3f3f46' : '#e5e7eb', marginBottom: 10 }]}
+                                    placeholder={f.ph}
+                                    placeholderTextColor={colors.placeholder}
+                                    value={(ship as any)[f.key]}
+                                    onChangeText={(t) => setShip((s) => ({ ...s, [f.key]: t }))}
+                                    autoCapitalize={f.cap as any}
+                                    editable={!processing}
+                                />
+                            ))}
+                            <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 12 }}>
+                                Total ${total.toFixed(2)} • You'll confirm payment on the next step. Items from different sellers are charged separately.
+                            </Text>
+                            <Pressable
+                                style={[styles.button, { backgroundColor: colors.primary, opacity: processing ? 0.6 : 1 }]}
+                                onPress={runCheckout}
+                                disabled={processing}
+                            >
+                                {processing
+                                    ? <ActivityIndicator color="#fff" />
+                                    : <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Continue to Payment</Text>}
+                            </Pressable>
+                            <Pressable style={{ alignItems: 'center', padding: 12 }} onPress={() => { if (!processing) setShowShipping(false); }}>
+                                <Text style={{ color: colors.textSecondary }}>Cancel</Text>
+                            </Pressable>
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
+        </>
+    );
+};
+
+// 14. My Orders (buyer order history)
+interface OrderRow {
+    id: string;
+    status: string;
+    subtotal_amount: number;
+    created_at: string;
+    shipping: any;
+    seller?: { id: string; username?: string; handle?: string; avatar_url?: string } | null;
+    items: { id: string; name: string; price_amount: number; size?: string | null; image_url?: string | null }[];
+}
+
+const ORDER_STATUS: Record<string, { label: string; color: string; bg: string }> = {
+    pending: { label: 'Pending', color: '#b45309', bg: 'rgba(245,158,11,0.15)' },
+    paid: { label: 'Paid', color: '#15803d', bg: 'rgba(34,197,94,0.15)' },
+    fulfilled: { label: 'Shipped', color: '#1d4ed8', bg: 'rgba(37,99,235,0.15)' },
+    failed: { label: 'Failed', color: '#b91c1c', bg: 'rgba(239,68,68,0.15)' },
+    cancelled: { label: 'Cancelled', color: '#6b7280', bg: 'rgba(107,114,128,0.15)' },
+};
+
+export const OrdersPage = ({ onBack }: { onBack: () => void }) => {
+    const { colors, isDark } = useTheme();
+    const { user } = useAuthStore();
+    const [orders, setOrders] = useState<OrderRow[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        (async () => {
+            if (!user?.id) { setLoading(false); return; }
+            const { data, error } = await supabase
+                .from('orders')
+                .select(`
+                    id, status, subtotal_amount, created_at, shipping,
+                    seller:users!orders_seller_id_fkey(id, username, handle, avatar_url),
+                    items:order_items(id, name, price_amount, size, image_url)
+                `)
+                .eq('buyer_id', user.id)
+                .order('created_at', { ascending: false });
+            if (!error && data) setOrders(data as any);
+            if (error) console.error('Error loading orders:', error.message);
+            setLoading(false);
+        })();
+    }, [user?.id]);
+
+    const fmtDate = (ts: string) =>
+        new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+    if (loading) {
+        return (
+            <>
+                <Header title="My Orders" onBack={onBack} />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                    <ActivityIndicator color={colors.text} />
+                </View>
+            </>
+        );
+    }
+
+    if (orders.length === 0) {
+        return (
+            <>
+                <Header title="My Orders" onBack={onBack} />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 }}>
+                    <Feather name="package" size={48} color={colors.textTertiary} />
+                    <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text, marginTop: 16 }}>No orders yet</Text>
+                    <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center' }}>
+                        Items you buy from the marketplace will show up here.
+                    </Text>
+                </View>
+            </>
+        );
+    }
+
+    return (
+        <>
+            <Header title="My Orders" onBack={onBack} />
+            <ScrollView style={styles.scrollContent} contentContainerStyle={{ paddingBottom: 40 }}>
+                {orders.map((order) => {
+                    const st = ORDER_STATUS[order.status] || ORDER_STATUS.pending;
+                    return (
+                        <View
+                            key={order.id}
+                            style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6', padding: 14, marginBottom: 14 }]}
+                        >
+                            {/* Seller + status */}
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                                    {order.seller?.avatar_url
+                                        ? <Image source={{ uri: order.seller.avatar_url }} style={{ width: 28, height: 28, borderRadius: 14 }} />
+                                        : <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: isDark ? '#27272a' : '#f3f4f6' }} />}
+                                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }} numberOfLines={1}>
+                                        {order.seller?.handle || order.seller?.username || 'Seller'}
+                                    </Text>
+                                </View>
+                                <View style={{ backgroundColor: st.bg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
+                                    <Text style={{ fontSize: 11, fontWeight: '700', color: st.color }}>{st.label}</Text>
+                                </View>
+                            </View>
+
+                            {/* Items */}
+                            <View style={{ gap: 10 }}>
+                                {order.items?.map((it) => (
+                                    <View key={it.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                        <View style={{ width: 44, height: 44, borderRadius: 8, overflow: 'hidden', backgroundColor: isDark ? '#27272a' : '#f3f4f6' }}>
+                                            {it.image_url ? <Image source={{ uri: it.image_url }} style={{ width: '100%', height: '100%' }} contentFit="cover" /> : null}
+                                        </View>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={{ fontSize: 13, fontWeight: '500', color: colors.text }} numberOfLines={1}>{it.name}</Text>
+                                            {it.size ? <Text style={{ fontSize: 12, color: colors.textSecondary }}>Size {it.size}</Text> : null}
+                                        </View>
+                                        <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>${(it.price_amount / 100).toFixed(2)}</Text>
+                                    </View>
+                                ))}
+                            </View>
+
+                            {/* Date + total */}
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: isDark ? '#27272a' : '#f3f4f6' }}>
+                                <Text style={{ fontSize: 12, color: colors.textTertiary }}>{fmtDate(order.created_at)}</Text>
+                                <Text style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>${(order.subtotal_amount / 100).toFixed(2)}</Text>
+                            </View>
+                        </View>
+                    );
+                })}
+            </ScrollView>
+        </>
+    );
+};
+
+// 15. Sales (incoming orders for sellers)
+interface SaleRow {
+    id: string;
+    status: string;
+    subtotal_amount: number;
+    platform_fee_amount: number;
+    created_at: string;
+    shipping: { name?: string; line1?: string; line2?: string; city?: string; state?: string; postal_code?: string; country?: string } | null;
+    buyer?: { id: string; username?: string; handle?: string; avatar_url?: string } | null;
+    items: { id: string; name: string; price_amount: number; size?: string | null; image_url?: string | null }[];
+}
+
+export const SalesPage = ({ onBack }: { onBack: () => void }) => {
+    const { colors, isDark } = useTheme();
+    const { user } = useAuthStore();
+    const [sales, setSales] = useState<SaleRow[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [updatingId, setUpdatingId] = useState<string | null>(null);
+    const [showPayoutSetup, setShowPayoutSetup] = useState(false);
+    const [payoutReady, setPayoutReady] = useState<boolean | null>(null);
+
+    useEffect(() => {
+        (async () => {
+            if (!user?.id) { setLoading(false); return; }
+            const { data, error } = await supabase
+                .from('orders')
+                .select(`
+                    id, status, subtotal_amount, platform_fee_amount, created_at, shipping,
+                    buyer:users!orders_buyer_id_fkey(id, username, handle, avatar_url),
+                    items:order_items(id, name, price_amount, size, image_url)
+                `)
+                .eq('seller_id', user.id)
+                .in('status', ['paid', 'fulfilled'])
+                .order('created_at', { ascending: false });
+            if (!error && data) setSales(data as any);
+            if (error) console.error('Error loading sales:', error.message);
+            setLoading(false);
+        })();
+    }, [user?.id]);
+
+    useEffect(() => {
+        if (!user?.id) return;
+        checkConnectStatus(user.id)
+            .then((status) => setPayoutReady(status.onboardingComplete))
+            .catch(() => setPayoutReady(false));
+    }, [user?.id, showPayoutSetup]);
+
+    const markShipped = (order: SaleRow) => {
+        Alert.alert('Mark as Shipped', "Confirm you've shipped this order to the buyer?", [
+            { text: 'Cancel', style: 'cancel' },
+            {
+                text: 'Mark Shipped',
+                onPress: async () => {
+                    setUpdatingId(order.id);
+                    const { error } = await supabase.from('orders').update({ status: 'fulfilled' }).eq('id', order.id);
+                    setUpdatingId(null);
+                    if (error) { Alert.alert('Error', error.message); return; }
+                    setSales((prev) => prev.map((s) => (s.id === order.id ? { ...s, status: 'fulfilled' } : s)));
+                },
+            },
+        ]);
+    };
+
+    const fmtDate = (ts: string) =>
+        new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const fmtAddress = (s: SaleRow['shipping']) => {
+        if (!s) return '';
+        return [s.name, s.line1, s.line2, [s.city, s.state].filter(Boolean).join(', '), s.postal_code, s.country]
+            .filter(Boolean).join('\n');
+    };
+
+    if (loading) {
+        return (
+            <>
+                <Header title="Sales" onBack={onBack} />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                    <ActivityIndicator color={colors.text} />
+                </View>
+            </>
+        );
+    }
+
+    if (sales.length === 0) {
+        return (
+            <>
+                <Header title="Sales" onBack={onBack} />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 }}>
+                    <Feather name="shopping-bag" size={48} color={colors.textTertiary} />
+                    <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text, marginTop: 16 }}>No sales yet</Text>
+                    <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center' }}>
+                        When someone buys your items, their orders show up here to fulfill.
+                    </Text>
+                    <Pressable
+                        style={[styles.button, { backgroundColor: colors.primary, marginTop: 20, paddingHorizontal: 18 }]}
+                        onPress={() => setShowPayoutSetup(true)}
+                    >
+                        <Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>
+                            {payoutReady ? 'Review Payout Account' : 'Set Up Seller Payouts'}
+                        </Text>
+                    </Pressable>
+                </View>
+                <StripeConnectOnboarding visible={showPayoutSetup} onClose={() => setShowPayoutSetup(false)} onComplete={() => setShowPayoutSetup(false)} />
+            </>
+        );
+    }
+
+    return (
+        <>
+            <Header title="Sales" onBack={onBack} />
+            <ScrollView style={styles.scrollContent} contentContainerStyle={{ paddingBottom: 40 }}>
+                <Pressable
+                    style={[styles.card, { borderColor: colors.border, backgroundColor: colors.background, padding: 14, marginBottom: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
+                    onPress={() => setShowPayoutSetup(true)}
+                >
+                    <View style={{ flex: 1 }}>
+                        <Text style={{ color: colors.text, fontWeight: '700' }}>Seller payouts</Text>
+                        <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                            {payoutReady ? 'Stripe setup is complete' : 'Complete Stripe setup before buyers can check out'}
+                        </Text>
+                    </View>
+                    <Feather name="chevron-right" size={20} color={colors.textTertiary} />
+                </Pressable>
+                {sales.map((order) => {
+                    const st = ORDER_STATUS[order.status] || ORDER_STATUS.paid;
+                    const payout = (order.subtotal_amount - order.platform_fee_amount) / 100;
+                    return (
+                        <View
+                            key={order.id}
+                            style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6', padding: 14, marginBottom: 14 }]}
+                        >
+                            {/* Buyer + status */}
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                                    {order.buyer?.avatar_url
+                                        ? <Image source={{ uri: order.buyer.avatar_url }} style={{ width: 28, height: 28, borderRadius: 14 }} />
+                                        : <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: isDark ? '#27272a' : '#f3f4f6' }} />}
+                                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }} numberOfLines={1}>
+                                        {order.buyer?.handle || order.buyer?.username || 'Buyer'}
+                                    </Text>
+                                </View>
+                                <View style={{ backgroundColor: st.bg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
+                                    <Text style={{ fontSize: 11, fontWeight: '700', color: st.color }}>{st.label}</Text>
+                                </View>
+                            </View>
+
+                            {/* Items */}
+                            <View style={{ gap: 10 }}>
+                                {order.items?.map((it) => (
+                                    <View key={it.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                        <View style={{ width: 44, height: 44, borderRadius: 8, overflow: 'hidden', backgroundColor: isDark ? '#27272a' : '#f3f4f6' }}>
+                                            {it.image_url ? <Image source={{ uri: it.image_url }} style={{ width: '100%', height: '100%' }} contentFit="cover" /> : null}
+                                        </View>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={{ fontSize: 13, fontWeight: '500', color: colors.text }} numberOfLines={1}>{it.name}</Text>
+                                            {it.size ? <Text style={{ fontSize: 12, color: colors.textSecondary }}>Size {it.size}</Text> : null}
+                                        </View>
+                                        <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>${(it.price_amount / 100).toFixed(2)}</Text>
+                                    </View>
+                                ))}
+                            </View>
+
+                            {/* Shipping address (seller needs this to fulfill) */}
+                            {order.shipping ? (
+                                <View style={{ marginTop: 12, padding: 10, borderRadius: 10, backgroundColor: isDark ? '#27272a' : '#f9fafb' }}>
+                                    <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textSecondary, marginBottom: 4, textTransform: 'uppercase' }}>Ship to</Text>
+                                    <Text style={{ fontSize: 13, color: colors.text, lineHeight: 18 }}>{fmtAddress(order.shipping)}</Text>
+                                </View>
+                            ) : null}
+
+                            {/* Payout + date + action */}
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: isDark ? '#27272a' : '#f3f4f6' }}>
+                                <View>
+                                    <Text style={{ fontSize: 12, color: colors.textTertiary }}>{fmtDate(order.created_at)}</Text>
+                                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#15803d', marginTop: 2 }}>You earn ${payout.toFixed(2)}</Text>
+                                </View>
+                                {order.status === 'paid' ? (
+                                    <Pressable
+                                        style={[styles.button, { backgroundColor: colors.primary, paddingHorizontal: 16 }]}
+                                        onPress={() => markShipped(order)}
+                                        disabled={updatingId === order.id}
+                                    >
+                                        {updatingId === order.id
+                                            ? <ActivityIndicator color="#fff" size="small" />
+                                            : <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Mark Shipped</Text>}
+                                    </Pressable>
+                                ) : (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                        <Feather name="check-circle" size={16} color="#15803d" />
+                                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#15803d' }}>Shipped</Text>
+                                    </View>
+                                )}
+                            </View>
+                        </View>
+                    );
+                })}
+            </ScrollView>
+            <StripeConnectOnboarding visible={showPayoutSetup} onClose={() => setShowPayoutSetup(false)} onComplete={() => setShowPayoutSetup(false)} />
         </>
     );
 };

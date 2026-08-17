@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { Product, DressingRoomItem } from '@/types';
 import { supabase } from '@/services/supabase';
-import { getSignedUrl } from '@/services/privateMedia';
+import { PRIVATE_BUCKET, getSignedUrl } from '@/services/privateMedia';
 import { generateOutfit } from '@/services/aiService';
 import * as FileSystem from 'expo-file-system/legacy';
 
@@ -271,8 +271,11 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
                     .single();
 
                 if (cached?.generated_image_url) {
-                    set({ generatedOutfitUrl: cached.generated_image_url });
-                    return cached.generated_image_url;
+                    const cachedUrl = await getSignedUrl(cached.generated_image_url);
+                    if (cachedUrl) {
+                        set({ generatedOutfitUrl: cachedUrl });
+                        return cachedUrl;
+                    }
                 }
             } catch {
                 // No cache hit, continue to generate
@@ -362,32 +365,29 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
 
             // Upload to Supabase Storage
             const base64Data = generatedImage.split(',')[1];
-            const fileName = `dressing-room/${userId}/${cacheKey}_${Date.now()}.png`;
+            const fileName = `generated/${userId}/${cacheKey}_${Date.now()}.png`;
 
             const { error: uploadError } = await supabase.storage
-                .from('products')
+                .from(PRIVATE_BUCKET)
                 .upload(fileName, decode(base64Data), {
                     contentType: 'image/png',
                 });
 
             if (uploadError) throw uploadError;
 
-            const { data: urlData } = supabase.storage
-                .from('products')
-                .getPublicUrl(fileName);
-
-            const publicUrl = urlData.publicUrl;
+            const privateUrl = await getSignedUrl(fileName);
+            if (!privateUrl) throw new Error('Could not open the generated outfit');
 
             // Cache the result
             await supabase.from('dressing_room_outfits').insert({
                 user_id: userId,
                 product_ids: selectedDressingRoomIds,
                 cache_key: cacheKey,
-                generated_image_url: publicUrl,
+                generated_image_url: fileName,
             });
 
-            set({ generatedOutfitUrl: publicUrl });
-            return publicUrl;
+            set({ generatedOutfitUrl: privateUrl });
+            return privateUrl;
 
         } catch (error) {
             console.error('Error generating outfit:', error);

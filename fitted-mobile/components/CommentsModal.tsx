@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, TextInput, Pressable, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, View, Animated, PanResponder, Dimensions } from 'react-native';
+import { StyleSheet, TextInput, Pressable, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, View, Animated, PanResponder, Dimensions, Alert } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
@@ -10,6 +10,7 @@ import { supabase } from '@/services/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { useTheme } from '@/hooks/useTheme';
 import { Comment, User } from '@/types';
+import { blockUser, reportContent } from '@/services/moderation';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MODAL_HEIGHT = SCREEN_HEIGHT * 0.5;
@@ -54,7 +55,7 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                     Animated.timing(translateY, {
                         toValue: MODAL_HEIGHT,
                         duration: 150,
-                        useNativeDriver: true,
+                        useNativeDriver: Platform.OS !== 'web',
                     }).start(() => {
                         onClose();
                     });
@@ -62,7 +63,7 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                     Animated.timing(translateY, {
                         toValue: 0,
                         duration: 150,
-                        useNativeDriver: true,
+                        useNativeDriver: Platform.OS !== 'web',
                     }).start();
                 }
             },
@@ -221,6 +222,27 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
         }
     };
 
+    const showCommentActions = (comment: CommentWithUser) => {
+        if (!user || comment.user_id === user.id) return;
+        Alert.alert('Comment Options', `Take action on ${comment.user?.username || 'this user'}?`, [
+            { text: 'Cancel', style: 'cancel' },
+            {
+                text: 'Report Comment', onPress: async () => {
+                    const result = await reportContent({ contentType: 'comment', contentId: comment.id, reportedUserId: comment.user_id, reason: 'Objectionable comment' });
+                    Alert.alert(result.error ? 'Could Not Report' : 'Report Received', result.error || 'Thank you. Our moderation team will review this comment.');
+                },
+            },
+            {
+                text: 'Block User', style: 'destructive', onPress: async () => {
+                    const result = await blockUser(comment.user_id);
+                    if (result.error) return Alert.alert('Could Not Block User', result.error);
+                    setComments((items) => items.filter((item) => item.user_id !== comment.user_id));
+                    Alert.alert('User Blocked', 'You will no longer see or receive interactions from this account.');
+                },
+            },
+        ]);
+    };
+
     const renderComment = ({ item }: { item: CommentWithUser }) => (
         <View style={styles.commentItem}>
             <Pressable style={styles.avatarContainer} onPress={() => handleCommentUserPress(item.user?.id)}>
@@ -254,6 +276,11 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                     fill={likedComments.has(item.id) ? '#ff3b5c' : 'transparent'}
                 />
             </Pressable>
+            {item.user_id !== user?.id && (
+                <Pressable style={styles.likeButton} onPress={() => showCommentActions(item)} accessibilityLabel="Comment moderation options">
+                    <Feather name="more-horizontal" size={15} color={colors.textTertiary} />
+                </Pressable>
+            )}
         </View>
     );
 
@@ -375,13 +402,7 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 20,
         borderTopRightRadius: 20,
         height: MODAL_HEIGHT,
-        shadowColor: "#000",
-        shadowOffset: {
-            width: 0,
-            height: -2,
-        },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
+        boxShadow: '0px -2px 3.84px rgba(0, 0, 0, 0.25)',
         elevation: 5,
     },
     dragHandleContainer: {

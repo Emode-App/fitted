@@ -6,6 +6,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { Platform } from 'react-native';
+import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-reanimated';
 import { Inter_700Bold, Inter_900Black } from '@expo-google-fonts/inter';
@@ -13,8 +14,15 @@ import { ONBOARDING_KEY } from './onboarding';
 
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
-import { STRIPE_CONFIG } from '@/constants/payments';
 import { initializeRevenueCat, identifyUser } from '@/services/revenueCatService';
+import { initMonitoring, withMonitoring, setMonitoringUser } from '@/services/monitoring';
+import { addNotificationResponseListener } from '@/services/pushNotifications';
+import AppStripeProvider from '@/components/AppStripeProvider';
+import { applySupabaseAuthLink } from '@/services/authLinks';
+
+// Initialize crash/error reporting before anything else runs. No-op in Expo Go
+// or without EXPO_PUBLIC_SENTRY_DSN set.
+initMonitoring();
 
 export {
   ErrorBoundary,
@@ -30,7 +38,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { CustomSplashScreen } from '@/components/CustomSplashScreen';
 
-export default function RootLayout() {
+function RootLayout() {
   const [loaded, error] = useFonts({
     Inter_700Bold,
     Inter_900Black,
@@ -56,14 +64,35 @@ export default function RootLayout() {
     initializeRevenueCat().catch(() => {});
   }, []);
 
-  // Identify user with RevenueCat when authenticated
+  // Identify user with RevenueCat + Sentry when authenticated
   useEffect(() => {
     if (isAuthenticated && user?.id) {
       identifyUser(user.id).catch(() => {});
+      setMonitoringUser({ id: user.id });
+    } else {
+      setMonitoringUser(null);
     }
   }, [isAuthenticated, user?.id]);
 
+  // Route to Activity when an order push is tapped (also handles cold starts).
+  useEffect(() => {
+    const unsubscribe = addNotificationResponseListener((data) => {
+      if (data?.type === 'order_sold' || data?.type === 'order_shipped') {
+        router.push('/activity');
+      }
+    });
+    return unsubscribe;
+  }, []);
+
   // Timeout fallback for web to prevent permanent white screen
+  useEffect(() => {
+    Linking.getInitialURL().then((url) => applySupabaseAuthLink(url)).catch(() => {});
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      applySupabaseAuthLink(url).catch(() => {});
+    });
+    return () => subscription.remove();
+  }, []);
+
   useEffect(() => {
     if (Platform.OS === 'web') {
       console.log('[Layout] Setting up 3s timeout fallback for web');
@@ -82,9 +111,10 @@ export default function RootLayout() {
     const checkRedirect = async () => {
       const inAuthGroup = segments[0] === 'auth';
       const inOnboarding = segments[0] === 'onboarding';
+      const inPasswordReset = (segments[0] as string | undefined) === 'reset-password';
 
       if (!isAuthenticated) {
-        if (!inAuthGroup) {
+        if (!inAuthGroup && !inPasswordReset) {
           router.replace('/auth');
         }
         return;
@@ -121,15 +151,6 @@ export default function RootLayout() {
     return null;
   }
 
-  // Dynamically check if StripeProvider is available (dev builds only)
-  let StripeProvider: any = null;
-  try {
-    const stripeMod = require('@stripe/stripe-react-native');
-    StripeProvider = stripeMod.StripeProvider;
-  } catch {
-    // @stripe/stripe-react-native not installed or not available in Expo Go
-  }
-
   const content = (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <RootLayoutNav />
@@ -139,20 +160,7 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 
-  // Wrap with StripeProvider if available (dev builds)
-  if (StripeProvider && STRIPE_CONFIG.publishableKey) {
-    return (
-      <StripeProvider
-        publishableKey={STRIPE_CONFIG.publishableKey}
-        urlScheme={STRIPE_CONFIG.urlScheme}
-        merchantIdentifier={STRIPE_CONFIG.merchantIdentifier}
-      >
-        {content}
-      </StripeProvider>
-    );
-  }
-
-  return content;
+  return <AppStripeProvider>{content}</AppStripeProvider>;
 }
 
 function RootLayoutNav() {
@@ -175,6 +183,7 @@ function RootLayoutNav() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="auth" options={{ headerShown: false }} />
         <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+        <Stack.Screen name="reset-password" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="post" options={{ headerShown: false }} />
         <Stack.Screen name="user" options={{ headerShown: false }} />
@@ -182,3 +191,7 @@ function RootLayoutNav() {
     </ThemeProvider>
   );
 }
+
+// Wrap with Sentry so render errors and profiling are captured (no-op when
+// monitoring is disabled, e.g. Expo Go or no DSN).
+export default withMonitoring(RootLayout);

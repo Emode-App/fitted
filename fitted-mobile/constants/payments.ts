@@ -11,7 +11,8 @@ export const STRIPE_CONFIG = {
 };
 
 export const REVENUECAT_CONFIG = {
-    apiKey: process.env.EXPO_PUBLIC_REVENUECAT_API_KEY || '',
+    iosApiKey: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY || process.env.EXPO_PUBLIC_REVENUECAT_API_KEY || '',
+    androidApiKey: process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY || process.env.EXPO_PUBLIC_REVENUECAT_API_KEY || '',
     // Product identifiers — must match what you create in App Store Connect / Google Play Console
     products: {
         stylistMonthly: 'emode_stylist_monthly',

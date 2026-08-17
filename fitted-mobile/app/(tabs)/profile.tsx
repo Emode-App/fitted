@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { usePostsStore } from '@/stores/postsStore';
 import { supabase } from '@/services/supabase';
 import { PRIVATE_BUCKET, getSignedUrl } from '@/services/privateMedia';
+import { ensureAiFaceConsent } from '@/services/privacyService';
 import { Post } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
 import ProfileView, { Draft } from '@/components/ProfileView';
@@ -146,6 +147,9 @@ export default function ProfileScreen() {
         if (!user?.id) return;
 
         try {
+            const consented = await ensureAiFaceConsent(user.id);
+            if (!consented) return;
+
             const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ['images'],
                 allowsEditing: true,

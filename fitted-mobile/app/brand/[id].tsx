@@ -29,7 +29,6 @@ export default function BrandDetailScreen() {
     const fetchBrandItems = async () => {
         try {
             setLoading(true);
-            // In a real app, fetch from DB. Here we use the search service or mock fallback.
             const results = await searchProducts(`${brandName} clothing`);
 
             if (results && results.length > 0) {
@@ -51,15 +50,7 @@ export default function BrandDetailScreen() {
                     };
                 });
                 setItems(mappedItems);
-            } else {
-                // Fallback mock if search fails just to show UI structure
-                setItems([
-                    { id: '1', brand: brandName, name: 'Logo Tee', price: 76, image_url: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&q=80&w=500', purchase_link: '' },
-                    { id: '2', brand: brandName, name: 'Track Shorts', price: 89, image_url: 'https://images.unsplash.com/photo-1591195853828-11db59a44f6b?auto=format&fit=crop&q=80&w=500', purchase_link: '' },
-                    { id: '3', brand: brandName, name: 'Denim Jacket', price: 120, image_url: 'https://images.unsplash.com/photo-1576871337622-98d48d1cf531?auto=format&fit=crop&q=80&w=500', purchase_link: '' },
-                    { id: '4', brand: brandName, name: 'Knit Beanie', price: 45, image_url: 'https://images.unsplash.com/photo-1576871337632-b9aef4c17ab9?auto=format&fit=crop&q=80&w=500', purchase_link: '' },
-                ]);
-            }
+            } else setItems([]);
         } catch (e) {
             console.error(e);
         } finally {
@@ -105,7 +96,7 @@ export default function BrandDetailScreen() {
                         <View style={{ height: 200, justifyContent: 'center' }}>
                             <ActivityIndicator color={colors.text} />
                         </View>
-                    ) : (
+                    ) : items.length > 0 ? (
                         <View style={styles.grid}>
                             {items.map((item) => (
                                 <Pressable key={item.id} style={styles.card}>
@@ -124,6 +115,10 @@ export default function BrandDetailScreen() {
                                 </Pressable>
                             ))}
                         </View>
+                    ) : (
+                        <Text style={{ color: colors.textSecondary, textAlign: 'center', paddingVertical: 40 }}>
+                            No verified products found right now.
+                        </Text>
                     )}
                 </View>
 

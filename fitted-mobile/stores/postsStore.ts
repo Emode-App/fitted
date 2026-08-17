@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../services/supabase';
 import { Post, User } from '../types';
+import { getBlockedUserIds } from '../services/moderation';
 
 interface PostsState {
     posts: Post[];
@@ -17,6 +18,7 @@ interface PostsState {
     toggleLike: (postId: string) => Promise<void>;
     toggleSave: (postId: string) => Promise<void>;
     deletePost: (postId: string) => Promise<void>;
+    removeUserFromFeed: (userId: string) => void;
 }
 
 export const usePostsStore = create<PostsState>((set, get) => ({
@@ -32,8 +34,11 @@ export const usePostsStore = create<PostsState>((set, get) => ({
         try {
             const { currentUserId } = get();
 
+            // Exclude posts from users the current user has blocked (Guideline 1.2).
+            const blockedIds = await getBlockedUserIds();
+
             // Fetch posts with user info
-            const { data, error } = await supabase
+            let query = supabase
                 .from('posts')
                 .select(`
           *,
@@ -41,6 +46,12 @@ export const usePostsStore = create<PostsState>((set, get) => ({
         `)
                 .order('created_at', { ascending: false })
                 .limit(20);
+
+            if (blockedIds.length > 0) {
+                query = query.not('user_id', 'in', `(${blockedIds.join(',')})`);
+            }
+
+            const { data, error } = await query;
 
             if (error) throw error;
 
@@ -311,5 +322,11 @@ export const usePostsStore = create<PostsState>((set, get) => ({
             // Revert on error
             set({ posts });
         }
+    },
+
+    // Instantly drop a blocked user's posts from the in-memory feed so the block
+    // takes visible effect without waiting for a refetch.
+    removeUserFromFeed: (userId: string) => {
+        set({ posts: get().posts.filter(p => p.user_id !== userId) });
     },
 }));

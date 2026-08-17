@@ -34,7 +34,7 @@ export default function PaymentRequestModal({ visible, onClose, onSend, recipien
         if (visible) {
             Animated.spring(slideAnim, {
                 toValue: 1,
-                useNativeDriver: true,
+                useNativeDriver: Platform.OS !== 'web',
                 tension: 65,
                 friction: 11,
             }).start();
@@ -259,10 +259,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 24,
         paddingBottom: 40,
         paddingTop: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -8 },
-        shadowOpacity: 0.15,
-        shadowRadius: 24,
+        boxShadow: '0px -8px 24px rgba(0, 0, 0, 0.15)',
         elevation: 20,
     },
     header: {

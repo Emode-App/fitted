@@ -25,13 +25,14 @@ import {
     NotificationsPage,
     AppearancePage,
     HelpPage,
-    TwoFactorPage,
     LoginActivityPage,
     FAQsPage,
     ContactPage,
     DraftsPage,
     DressingRoomPage,
     CartPage,
+    OrdersPage,
+    SalesPage,
     DraftItem,
 } from './SettingsPages';
 import BusinessSubscriptionModal from './BusinessSubscriptionModal';
@@ -43,14 +44,14 @@ type SettingsView =
     | 'notifications'
     | 'privacy'
     | 'help'
-    | '2fa'
     | 'loginActivity'
     | 'faqs'
     | 'contact'
     | 'drafts'
-    | 'drafts'
     | 'dressingRoom'
-    | 'cart';
+    | 'cart'
+    | 'orders'
+    | 'sales';
 
 interface SettingsDrawerProps {
     visible: boolean;
@@ -66,6 +67,7 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
     const [currentView, setCurrentView] = useState<SettingsView>(initialView);
     const { colors, isDark } = useTheme();
     const signOut = useAuthStore((state) => state.signOut);
+    const deleteAccount = useAuthStore((state) => state.deleteAccount);
     const user = useAuthStore((state) => state.user);
     const updateProfile = useAuthStore((state) => state.updateProfile);
     const { dressingRoomBadgeCount, cartItems } = useMarketplaceStore();
@@ -88,12 +90,12 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
                     toValue: 0,
                     duration: 300,
                     easing: Easing.out(Easing.poly(4)),
-                    useNativeDriver: true,
+                    useNativeDriver: Platform.OS !== 'web',
                 }),
                 Animated.timing(fadeAnim, {
                     toValue: 1,
                     duration: 300,
-                    useNativeDriver: true,
+                    useNativeDriver: Platform.OS !== 'web',
                 }),
             ]).start();
         } else {
@@ -102,12 +104,12 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
                     toValue: -width,
                     duration: 250,
                     easing: Easing.in(Easing.poly(4)),
-                    useNativeDriver: true,
+                    useNativeDriver: Platform.OS !== 'web',
                 }),
                 Animated.timing(fadeAnim, {
                     toValue: 0,
                     duration: 250,
-                    useNativeDriver: true,
+                    useNativeDriver: Platform.OS !== 'web',
                 }),
             ]).start(({ finished }) => {
                 if (finished) {
@@ -136,8 +138,41 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
         );
     };
 
-    const handleBusinessSwitch = () => {
-        Alert.alert('Switch Account Type', 'Are you sure you want to switch to a Business Account?');
+    const handleDeleteAccount = () => {
+        Alert.alert(
+            'Delete Account',
+            'This permanently deletes your account, posts, messages, wardrobe, and all associated data. This cannot be undone.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: () => {
+                        // Second confirmation — deletion is irreversible.
+                        Alert.alert(
+                            'Are you absolutely sure?',
+                            'Your account and everything in it will be permanently removed.',
+                            [
+                                { text: 'Cancel', style: 'cancel' },
+                                {
+                                    text: 'Delete Forever',
+                                    style: 'destructive',
+                                    onPress: async () => {
+                                        try {
+                                            await deleteAccount();
+                                            onClose();
+                                            router.replace('/auth');
+                                        } catch (e: any) {
+                                            Alert.alert('Error', e?.message || 'Could not delete your account. Please try again.');
+                                        }
+                                    },
+                                },
+                            ]
+                        );
+                    },
+                },
+            ]
+        );
     };
 
     const renderMenu = () => (
@@ -171,6 +206,22 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
                             isDark={isDark}
                             badge={cartItems.length}
                         />
+                        <MenuItem
+                            icon="package"
+                            label="My Orders"
+                            onPress={() => setCurrentView('orders')}
+                            colors={colors}
+                            isDark={isDark}
+                        />
+                        {(user?.is_business_account || user?.is_verified_stylist) && (
+                            <MenuItem
+                                icon="trending-up"
+                                label="Sales"
+                                onPress={() => setCurrentView('sales')}
+                                colors={colors}
+                                isDark={isDark}
+                            />
+                        )}
                         <MenuItem
                             icon="user"
                             label="Edit Profile"
@@ -272,12 +323,23 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
                         <Feather name="log-out" size={20} color="#dc2626" />
                         <Text style={styles.logoutText}>Log Out</Text>
                     </TouchableOpacity>
+
+                    {/* Delete Account — required for App Store (Guideline 5.1.1(v)) */}
+                    <TouchableOpacity
+                        style={styles.deleteAccountButton}
+                        onPress={handleDeleteAccount}
+                    >
+                        <Feather name="trash-2" size={18} color={isDark ? '#71717a' : '#9ca3af'} />
+                        <Text style={[styles.deleteAccountText, { color: isDark ? '#71717a' : '#9ca3af' }]}>
+                            Delete Account
+                        </Text>
+                    </TouchableOpacity>
                 </View>
 
                 {/* Footer */}
                 <View style={[styles.footer, { borderTopColor: colors.border }]}>
                     <Text style={[styles.footerText, { color: isDark ? '#52525b' : '#9ca3af' }]}>Emode v1.0.0</Text>
-                    <Text style={[styles.footerSubtext, { color: isDark ? '#3f3f46' : '#d1d5db' }]}>Powered by Nano Banana Pro</Text>
+                    <Text style={[styles.footerSubtext, { color: isDark ? '#3f3f46' : '#d1d5db' }]}>Fashion, community, and AI-assisted try-ons</Text>
                 </View>
             </ScrollView>
         </>
@@ -291,7 +353,6 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
             case 'help': return <HelpPage onBack={() => setCurrentView('menu')} onNavigate={setCurrentView as any} />;
 
             // Sub-pages (Level 2)
-            case '2fa': return <TwoFactorPage onBack={() => setCurrentView('privacy')} />;
             case 'loginActivity': return <LoginActivityPage onBack={() => setCurrentView('privacy')} />;
             case 'faqs': return <FAQsPage onBack={() => setCurrentView('help')} />;
             case 'contact': return <ContactPage onBack={() => setCurrentView('help')} />;
@@ -303,6 +364,8 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
             );
             case 'dressingRoom': return <DressingRoomPage onBack={() => setCurrentView('menu')} />;
             case 'cart': return <CartPage onBack={() => setCurrentView('menu')} />;
+            case 'orders': return <OrdersPage onBack={() => setCurrentView('menu')} />;
+            case 'sales': return <SalesPage onBack={() => setCurrentView('menu')} />;
 
             default: return renderMenu();
         }
@@ -415,13 +478,7 @@ const styles = StyleSheet.create({
         borderBottomRightRadius: 24,
         overflow: 'hidden',
         borderRightWidth: 1, // Border on right
-        shadowColor: "#000",
-        shadowOffset: {
-            width: 4,
-            height: 0,
-        },
-        shadowOpacity: 0.30,
-        shadowRadius: 4.65,
+        boxShadow: '4px 0px 4.65px rgba(0, 0, 0, 0.3)',
         elevation: 8,
     },
     header: {
@@ -498,6 +555,18 @@ const styles = StyleSheet.create({
         fontSize: 15,
         fontWeight: '500',
         color: '#dc2626',
+    },
+    deleteAccountButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 12,
+        marginTop: 8,
+    },
+    deleteAccountText: {
+        fontSize: 13,
+        fontWeight: '500',
     },
     footer: {
         alignItems: 'center',

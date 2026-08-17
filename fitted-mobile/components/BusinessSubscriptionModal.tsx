@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -7,6 +7,7 @@ import {
     Pressable,
     ActivityIndicator,
     Alert,
+    Linking,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,7 +19,9 @@ import {
     purchaseBusinessSubscription,
     restorePurchases,
     syncSubscriptionToSupabase,
+    getSubscriptionPrice,
 } from '@/services/revenueCatService';
+import { LEGAL } from '@/constants/legal';
 
 interface BusinessSubscriptionModalProps {
     visible: boolean;
@@ -31,12 +34,15 @@ export default function BusinessSubscriptionModal({ visible, onClose }: Business
     const setUser = useAuthStore((state) => state.setUser);
     const [loading, setLoading] = useState(false);
     const [restoring, setRestoring] = useState(false);
+    const [price, setPrice] = useState<string | null>(null);
+
+    useEffect(() => { if (visible) getSubscriptionPrice('business').then(setPrice); }, [visible]);
 
     const benefits = [
-        'Embedded shop on your profile',
-        'Product listings & inventory management',
-        'Visitor count & analytics dashboard',
-        'Green verified boutique badge',
+        'Business account badge and profile shop',
+        'Create and manage physical product listings',
+        'Accept eligible physical-goods orders',
+        'View sales and fulfillment status',
     ];
 
     const handlePurchase = async () => {
@@ -126,8 +132,8 @@ export default function BusinessSubscriptionModal({ visible, onClose }: Business
                         <View style={styles.pricingHeader}>
                             <Text style={[styles.pricingTitle, { color: colors.text }]}>Business Account</Text>
                             <View style={styles.priceRow}>
-                                <Text style={[styles.price, { color: colors.text }]}>$15</Text>
-                                <Text style={[styles.priceUnit, { color: colors.textSecondary }]}>/mo</Text>
+                                <Text style={[styles.price, { color: colors.text }]}>{price || 'Monthly'}</Text>
+                                {price && <Text style={[styles.priceUnit, { color: colors.textSecondary }]}>/month</Text>}
                             </View>
                         </View>
 
@@ -170,7 +176,9 @@ export default function BusinessSubscriptionModal({ visible, onClose }: Business
                     </Pressable>
 
                     <Text style={[styles.legalText, { color: colors.textTertiary }]}>
-                        Subscription renews monthly. Cancel anytime in your device settings.
+                        Renews monthly until canceled in store settings.{' '}
+                        <Text style={{ textDecorationLine: 'underline' }} onPress={() => Linking.openURL(LEGAL.termsUrl)}>Terms</Text>{' · '}
+                        <Text style={{ textDecorationLine: 'underline' }} onPress={() => Linking.openURL(LEGAL.privacyPolicyUrl)}>Privacy</Text>
                     </Text>
                 </View>
             </View>
@@ -180,7 +188,7 @@ export default function BusinessSubscriptionModal({ visible, onClose }: Business
 
 const styles = StyleSheet.create({
     overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
-    modalContent: { width: '85%', maxWidth: 360, borderRadius: 24, padding: 24, paddingTop: 32, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.25, shadowRadius: 20, elevation: 10 },
+    modalContent: { width: '85%', maxWidth: 360, borderRadius: 24, padding: 24, paddingTop: 32, alignItems: 'center', boxShadow: '0px 10px 20px rgba(0, 0, 0, 0.25)', elevation: 10 },
     closeButton: { position: 'absolute', top: 16, right: 16, width: 32, height: 32, justifyContent: 'center', alignItems: 'center' },
     iconWrapper: { marginBottom: 20 },
     iconCircle: { width: 80, height: 80, borderRadius: 40, justifyContent: 'center', alignItems: 'center' },

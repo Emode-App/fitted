@@ -10,6 +10,7 @@ import { useMarketplaceStore } from '@/stores/marketplaceStore';
 import { useAuthStore } from '@/stores/authStore';
 import { Product } from '@/types';
 import TutorialModal, { useFirstVisitTutorial, TutorialStep } from '@/components/TutorialModal';
+import { reportContent } from '@/services/moderation';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ITEM_SIZE = (SCREEN_WIDTH - 48) / 2;
@@ -128,11 +129,6 @@ export default function DressingRoomPreview({ visible, onClose }: DressingRoomPr
                 quality: 0.8,
             });
         } else {
-            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (status !== 'granted') {
-                Alert.alert('Permission needed', 'Gallery permission is required.');
-                return;
-            }
             result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ['images'],
                 quality: 0.8,
@@ -151,6 +147,11 @@ export default function DressingRoomPreview({ visible, onClose }: DressingRoomPr
 
     const removeUploadedImage = (id: string) => {
         setUploadedImages(prev => prev.filter(img => img.id !== id));
+    };
+
+    const reportGeneratedOutfit = async () => {
+        const result = await reportContent({ contentType: 'ai_generation', reason: 'Unsafe or inappropriate AI-generated outfit' });
+        Alert.alert(result.error ? 'Could Not Report' : 'Report Received', result.error || 'Thank you. This AI output was sent to the safety team for review.');
     };
 
     const renderItem = ({ item }: { item: Product }) => {
@@ -224,7 +225,11 @@ export default function DressingRoomPreview({ visible, onClose }: DressingRoomPr
                         <Feather name="arrow-left" size={24} color={colors.text} />
                     </Pressable>
                     <Text style={[styles.headerTitle, { color: colors.text }]}>Outfit Preview</Text>
-                    <View style={{ width: 40 }} />
+                    {generatedOutfitUrl ? (
+                        <Pressable onPress={reportGeneratedOutfit} style={styles.backButton} accessibilityLabel="Report AI-generated image">
+                            <Feather name="flag" size={20} color={colors.textSecondary} />
+                        </Pressable>
+                    ) : <View style={{ width: 40 }} />}
                 </View>
 
                 {/* Generated Image - Square */}
@@ -301,7 +306,7 @@ export default function DressingRoomPreview({ visible, onClose }: DressingRoomPr
                     <Pressable
                         style={styles.regenerateButton}
                         onPress={handleRegenerate}
-                        disabled={isGeneratingOutfit || selectedDressingRoomIds.length === 0}
+                        disabled={isGeneratingOutfit || (selectedDressingRoomIds.length === 0 && uploadedImages.length === 0)}
                     >
                         <LinearGradient
                             colors={isGeneratingOutfit ? ['#6b7280', '#9ca3af'] : ['#9333EA', '#EC4899']}

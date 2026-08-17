@@ -2,7 +2,9 @@
 // Manages light/dark/system theme preference
 
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+// Expo web currently emits dependency ESM inside a classic script. Loading the
+// CommonJS middleware entry avoids Zustand's `import.meta.env` devtools branch.
+const { persist, createJSONStorage } = require('zustand/middleware') as typeof import('zustand/middleware');
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Appearance } from 'react-native';
 

@@ -24,6 +24,7 @@ export interface User {
         fits: number;
     };
     is_verified_stylist?: boolean;
+    has_pro_tryons?: boolean;
     rate?: string;
     show_activity_status?: boolean;
     favorite_brand?: string;
@@ -176,7 +177,7 @@ export interface Folder {
     is_default?: boolean;
 }
 
-export type NotificationType = 'like' | 'comment' | 'follow';
+export type NotificationType = 'like' | 'comment' | 'follow' | 'order_sold' | 'order_shipped';
 
 export interface Notification {
     id: string;

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -7,6 +7,7 @@ import {
     Pressable,
     ActivityIndicator,
     Alert,
+    Linking,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,7 +20,10 @@ import {
     restorePurchases,
     syncSubscriptionToSupabase,
     FREE_DAILY_TRYON_LIMIT,
+    PRO_DAILY_TRYON_LIMIT,
+    getSubscriptionPrice,
 } from '@/services/revenueCatService';
+import { LEGAL } from '@/constants/legal';
 
 interface ProTryOnsModalProps {
     visible: boolean;
@@ -33,12 +37,15 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
     const setUser = useAuthStore((state) => state.setUser);
     const [loading, setLoading] = useState(false);
     const [restoring, setRestoring] = useState(false);
+    const [price, setPrice] = useState<string | null>(null);
+
+    useEffect(() => { if (visible) getSubscriptionPrice('proTryOns').then(setPrice); }, [visible]);
 
     const benefits = [
-        'Unlimited daily dressing room try-ons',
-        'Priority AI generation queue',
-        'HD outfit renders',
-        'No daily reset countdown',
+        `Up to ${PRO_DAILY_TRYON_LIMIT} AI try-ons each day`,
+        'Combine up to 6 clothing references',
+        'Private saved try-on history',
+        'Access restored across your devices',
     ];
 
     const handlePurchase = async () => {
@@ -57,9 +64,9 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
 
             // The server re-verifies with RevenueCat before granting.
             const flags = await syncSubscriptionToSupabase(user.id, 'proTryOns');
-            if (flags?.subscription_status === 'pro_tryons') {
-                setUser({ ...user, subscription_status: 'pro_tryons' as any });
-                Alert.alert('Upgraded! ✨', 'You now have unlimited dressing room try-ons.');
+            if (flags?.has_pro_tryons) {
+                setUser({ ...user, has_pro_tryons: true, subscription_status: flags.subscription_status });
+                Alert.alert('Upgraded!', `You can now create up to ${PRO_DAILY_TRYON_LIMIT} AI try-ons each day.`);
                 onClose();
             } else {
                 Alert.alert('Almost there', 'Your purchase was received but we could not verify it yet. Tap "Restore Purchases" in a moment.');
@@ -84,7 +91,7 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
 
             if (activeEntitlements.includes('pro_tryons')) {
                 const flags = await syncSubscriptionToSupabase(user.id, 'proTryOns');
-                setUser({ ...user, subscription_status: (flags?.subscription_status as any) || 'pro_tryons' });
+                setUser({ ...user, has_pro_tryons: !!flags?.has_pro_tryons, subscription_status: flags?.subscription_status || 'active' });
                 Alert.alert('Restored!', 'Your Pro Try-Ons subscription has been restored.');
                 onClose();
             } else {
@@ -119,17 +126,17 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
                     {/* Icon */}
                     <View style={styles.iconWrapper}>
                         <LinearGradient colors={['#ec4899', '#be185d']} style={styles.iconCircle}>
-                            <MaterialCommunityIcons name="infinity" size={40} color="#fff" />
+                            <MaterialCommunityIcons name="creation" size={40} color="#fff" />
                         </LinearGradient>
                     </View>
 
                     {/* Title */}
                     <Text style={[styles.title, { color: colors.text }]}>
-                        Unlimited{'\n'}Try-Ons
+                        Pro{'\n'}Try-Ons
                     </Text>
 
                     <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-                        Remove the {FREE_DAILY_TRYON_LIMIT}/day limit and try on as{'\n'}many outfits as you want.
+                        Expand your allowance from {FREE_DAILY_TRYON_LIMIT} to {PRO_DAILY_TRYON_LIMIT} AI try-ons per day.
                     </Text>
 
                     {/* Pricing card */}
@@ -137,8 +144,8 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
                         <View style={styles.pricingHeader}>
                             <Text style={[styles.pricingTitle, { color: colors.text }]}>Pro Try-Ons</Text>
                             <View style={styles.priceRow}>
-                                <Text style={[styles.price, { color: colors.text }]}>$10</Text>
-                                <Text style={[styles.priceUnit, { color: colors.textSecondary }]}>/mo</Text>
+                                <Text style={[styles.price, { color: colors.text }]}>{price || 'Monthly'}</Text>
+                                {price && <Text style={[styles.priceUnit, { color: colors.textSecondary }]}>/month</Text>}
                             </View>
                         </View>
 
@@ -165,7 +172,7 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
                             {loading ? (
                                 <ActivityIndicator color="#fff" />
                             ) : (
-                                <Text style={styles.purchaseButtonText}>Go Unlimited</Text>
+                                <Text style={styles.purchaseButtonText}>Upgrade to Pro</Text>
                             )}
                         </LinearGradient>
                     </Pressable>
@@ -181,7 +188,9 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
                     </Pressable>
 
                     <Text style={[styles.legalText, { color: colors.textTertiary }]}>
-                        Subscription renews monthly. Cancel anytime in your device settings.
+                        Renews monthly until canceled in store settings.{' '}
+                        <Text style={{ textDecorationLine: 'underline' }} onPress={() => Linking.openURL(LEGAL.termsUrl)}>Terms</Text>{' · '}
+                        <Text style={{ textDecorationLine: 'underline' }} onPress={() => Linking.openURL(LEGAL.privacyPolicyUrl)}>Privacy</Text>
                     </Text>
                 </View>
             </View>
@@ -191,7 +200,7 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
 
 const styles = StyleSheet.create({
     overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
-    modalContent: { width: '85%', maxWidth: 360, borderRadius: 24, padding: 24, paddingTop: 32, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.25, shadowRadius: 20, elevation: 10 },
+    modalContent: { width: '85%', maxWidth: 360, borderRadius: 24, padding: 24, paddingTop: 32, alignItems: 'center', boxShadow: '0px 10px 20px rgba(0, 0, 0, 0.25)', elevation: 10 },
     closeButton: { position: 'absolute', top: 16, right: 16, width: 32, height: 32, justifyContent: 'center', alignItems: 'center' },
     limitBanner: { backgroundColor: 'rgba(239, 68, 68, 0.1)', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, marginBottom: 12 },
     limitBannerText: { color: '#ef4444', fontSize: 12, fontWeight: '600' },

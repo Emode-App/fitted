@@ -75,24 +75,20 @@ export default function DressingRoom() {
                 quality: 0.8,
             });
         } else {
-            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (status !== 'granted') {
-                Alert.alert('Permission needed', 'Gallery permission is required.');
-                return;
-            }
             result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ['images'],
+                allowsMultipleSelection: true,
                 quality: 0.8,
             });
         }
 
-        if (!result.canceled && result.assets[0]) {
-            const newItem: UploadedItem = {
-                id: 'upload_' + Date.now(),
-                uri: result.assets[0].uri,
+        if (!result.canceled && result.assets.length > 0) {
+            const newItems: UploadedItem[] = result.assets.map((asset, index) => ({
+                id: `upload_${Date.now()}_${index}`,
+                uri: asset.uri,
                 name: 'Uploaded Item',
-            };
-            setUploadedItems(prev => [...prev, newItem]);
+            }));
+            setUploadedItems(prev => [...prev, ...newItems]);
         }
     };
 

@@ -7,6 +7,7 @@ import {
     Pressable,
     ActivityIndicator,
     Linking,
+    Alert,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -44,13 +45,11 @@ export default function StripeConnectOnboarding({ visible, onClose, onComplete }
             // Step 3: Open Stripe's hosted onboarding in the browser
             await Linking.openURL(url);
 
-            // User will complete onboarding in the browser and return via deep link
-            // The webhook will update stripe_onboarding_complete
-            onComplete();
+            // Completion is checked against Stripe on the stripe-return route.
             onClose();
         } catch (error: any) {
             console.error('Connect onboarding error:', error);
-            alert(error.message || 'Failed to start onboarding. Please try again.');
+            Alert.alert('Could Not Start Onboarding', error.message || 'Please try again.');
             setStep('info');
         } finally {
             setLoading(false);
@@ -99,20 +98,20 @@ export default function StripeConnectOnboarding({ visible, onClose, onComplete }
 
                             {/* Title */}
                             <Text style={[styles.title, { color: colors.text }]}>
-                                Connect Your{'\n'}Bank Account
+                                Set Up Seller{'\n'}Payouts
                             </Text>
 
                             {/* Subtitle */}
                             <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-                                To receive payments from clients, you need to set up payouts through Stripe.
+                                Stripe verifies sellers and sends payouts for eligible physical-goods orders.
                             </Text>
 
                             {/* Benefits */}
                             <View style={[styles.benefitsCard, { backgroundColor: colors.backgroundSecondary, borderColor: colors.border }]}>
                                 {[
-                                    { icon: 'shield' as const, text: 'Secure, encrypted bank connection' },
-                                    { icon: 'zap' as const, text: 'Payouts in 2-3 business days' },
-                                    { icon: 'percent' as const, text: 'Emode keeps only 15% platform fee' },
+                                    { icon: 'shield' as const, text: 'Stripe-hosted identity and payout setup' },
+                                    { icon: 'zap' as const, text: 'Payout timing and availability are shown by Stripe' },
+                                    { icon: 'percent' as const, text: 'The platform fee is deducted from eligible sales' },
                                 ].map((item, i) => (
                                     <View key={i} style={styles.benefitItem}>
                                         <View style={[styles.checkCircle, { backgroundColor: 'rgba(99, 102, 241, 0.12)' }]}>
@@ -171,10 +170,7 @@ const styles = StyleSheet.create({
         padding: 24,
         paddingTop: 32,
         alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.25,
-        shadowRadius: 20,
+        boxShadow: '0px 10px 20px rgba(0, 0, 0, 0.25)',
         elevation: 10,
     },
     closeButton: {

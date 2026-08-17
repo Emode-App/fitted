@@ -62,9 +62,7 @@ serve(async (req: Request) => {
         const business = isActive(ENTITLEMENTS.businessAccount);
         const pro = isActive(ENTITLEMENTS.proTryOns);
 
-        const subscription_status = (verified || business)
-            ? 'active'
-            : (pro ? 'pro_tryons' : 'none');
+        const subscription_status = (verified || business || pro) ? 'active' : 'none';
 
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
         const { error: updateError } = await supabase
@@ -72,6 +70,7 @@ serve(async (req: Request) => {
             .update({
                 is_verified_stylist: verified,
                 is_business_account: business,
+                has_pro_tryons: pro,
                 subscription_status,
             })
             .eq('id', user.id);
@@ -84,6 +83,7 @@ serve(async (req: Request) => {
         return json({
             is_verified_stylist: verified,
             is_business_account: business,
+            has_pro_tryons: pro,
             subscription_status,
         });
     } catch (error: any) {

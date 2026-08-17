@@ -5,6 +5,7 @@ import {
     StyleSheet,
     Pressable,
     Animated,
+    Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -37,12 +38,12 @@ export default function PaymentCard({ paymentRequest, isOwnMessage, onAccept, on
                     Animated.timing(pulseAnim, {
                         toValue: 1.02,
                         duration: 1500,
-                        useNativeDriver: true,
+                        useNativeDriver: Platform.OS !== 'web',
                     }),
                     Animated.timing(pulseAnim, {
                         toValue: 1,
                         duration: 1500,
-                        useNativeDriver: true,
+                        useNativeDriver: Platform.OS !== 'web',
                     }),
                 ])
             );
@@ -109,7 +110,9 @@ export default function PaymentCard({ paymentRequest, isOwnMessage, onAccept, on
                 {
                     backgroundColor: isDark ? '#1a1a2e' : '#ffffff',
                     borderColor,
-                    shadowColor: isCompleted ? '#10b981' : '#000',
+                    boxShadow: isCompleted
+                        ? '0px 4px 12px rgba(16, 185, 129, 0.08)'
+                        : '0px 4px 12px rgba(0, 0, 0, 0.08)',
                 }
             ]}>
                 {/* Header Row */}
@@ -241,9 +244,6 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         borderWidth: 1,
         padding: 16,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 12,
         elevation: 4,
     },
     // Header

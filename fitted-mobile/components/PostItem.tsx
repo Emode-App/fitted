@@ -7,6 +7,7 @@ import * as Haptics from 'expo-haptics';
 import MentionText from '@/components/MentionText';
 import { Post, ClothingItem } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
+import { reportContent, blockUser } from '@/services/moderation';
 
 const { width } = Dimensions.get('window');
 const POST_SIZE = width;
@@ -20,6 +21,7 @@ interface PostItemProps {
     onUserPress: () => void;
     onPostPress?: () => void;
     onDelete?: () => void;
+    onBlocked?: (blockedUserId: string) => void;
     currentUserId?: string;
 }
 
@@ -86,7 +88,7 @@ function ItemLinkModal({
     );
 }
 
-export default function PostItem({ post, onLike, onComment, onShare, onSave, onUserPress, onPostPress, onDelete, currentUserId }: PostItemProps) {
+export default function PostItem({ post, onLike, onComment, onShare, onSave, onUserPress, onPostPress, onDelete, onBlocked, currentUserId }: PostItemProps) {
     const { colors } = useTheme();
     const user = post.user;
     const flatListRef = useRef<FlatList>(null);
@@ -124,6 +126,54 @@ export default function PostItem({ post, onLike, onComment, onShare, onSave, onU
                     text: 'Delete',
                     style: 'destructive',
                     onPress: () => onDelete?.()
+                },
+            ]
+        );
+    };
+
+    const handleReport = () => {
+        setMenuVisible(false);
+        Alert.alert(
+            'Report Post',
+            'Report this post for objectionable content? Our team will review it.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Report',
+                    style: 'destructive',
+                    onPress: async () => {
+                        const { error } = await reportContent({
+                            contentType: 'post',
+                            contentId: post.id,
+                            reportedUserId: post.user_id,
+                        });
+                        Alert.alert(
+                            error ? 'Error' : 'Reported',
+                            error || 'Thanks for letting us know. We\'ll review this post.'
+                        );
+                    },
+                },
+            ]
+        );
+    };
+
+    const handleBlock = () => {
+        setMenuVisible(false);
+        const name = post.user?.username || 'this user';
+        Alert.alert(
+            'Block User',
+            `Block ${name}? You won't see their posts, and they won't be able to interact with you.`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Block',
+                    style: 'destructive',
+                    onPress: async () => {
+                        if (!post.user_id) return;
+                        const { error } = await blockUser(post.user_id);
+                        if (error) { Alert.alert('Error', error); return; }
+                        onBlocked?.(post.user_id);
+                    },
                 },
             ]
         );
@@ -361,6 +411,18 @@ export default function PostItem({ post, onLike, onComment, onShare, onSave, onU
                                 <RNText style={[styles.menuItemText, { color: '#ff4444' }]}>Delete Post</RNText>
                             </Pressable>
                         )}
+                        {!isOwnPost && (
+                            <>
+                                <Pressable style={styles.menuItem} onPress={handleReport}>
+                                    <Feather name="flag" size={20} color={colors.text} />
+                                    <RNText style={[styles.menuItemText, { color: colors.text }]}>Report Post</RNText>
+                                </Pressable>
+                                <Pressable style={styles.menuItem} onPress={handleBlock}>
+                                    <Feather name="slash" size={20} color="#ff4444" />
+                                    <RNText style={[styles.menuItemText, { color: '#ff4444' }]}>Block User</RNText>
+                                </Pressable>
+                            </>
+                        )}
                         <Pressable style={styles.menuItem} onPress={() => setMenuVisible(false)}>
                             <Feather name="x" size={20} color={colors.textTertiary} />
                             <RNText style={[styles.menuItemText, { color: colors.textTertiary }]}>Cancel</RNText>
@@ -486,10 +548,7 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         borderRadius: 20,
         gap: 6,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.15,
-        shadowRadius: 4,
+        boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.15)',
         elevation: 3,
     },
     tagPillPositioned: {

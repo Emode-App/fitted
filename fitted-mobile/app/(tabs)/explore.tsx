@@ -134,11 +134,6 @@ export default function ExploreScreen() {
         router.push({ pathname: '/user/[id]', params: { id: userId } });
     };
 
-    const handleViewHashtag = (tag: string) => {
-        // TODO: Implement hashtag page
-        console.log('View hashtag:', tag);
-    };
-
     // Trending brands derived from the brands featured across recent fits
     const trendingBrands = useMemo(() => computeTrendingBrands(posts), [posts]);
 
@@ -211,7 +206,6 @@ export default function ExploreScreen() {
                         brandResults={brandResults}
                         productResults={productResults}
                         loading={searching}
-                        onViewHashtag={handleViewHashtag}
                         onViewProfile={handleViewProfile}
                         onViewProduct={setSelectedProduct}
                     />

@@ -13,12 +13,10 @@ export interface Product {
     retailPrice?: number;
     lastSale?: number;
 }
-
 export interface SearchResult {
     products: Product[];
     total: number;
 }
-
 /**
  * Search for sneakers/products using KicksDB API
  */
@@ -34,14 +32,13 @@ export async function searchProducts(query: string, limit: number = 20): Promise
 
         if (error || !data?.raw) {
             if (error) console.error('Product search error:', error.message);
-            return getMockResults(query);
+            return { products: [], total: 0 };
         }
 
         return transformResponse(data.raw);
     } catch (error) {
         console.error('Product search error:', error);
-        // Return mock data on error for development
-        return getMockResults(query);
+        return { products: [], total: 0 };
     }
 }
 
@@ -66,72 +63,5 @@ function transformResponse(data: any): SearchResult {
     return {
         products,
         total: data.total || data.nbHits || data.count || products.length,
-    };
-}
-
-/**
- * Mock results for development/demo purposes
- */
-function getMockResults(query: string): SearchResult {
-    const mockProducts: Product[] = [
-        {
-            id: '1',
-            name: 'Air Jordan 1 Retro High OG',
-            brand: 'Jordan',
-            imageUrl: 'https://images.stockx.com/images/Air-Jordan-1-Retro-High-OG-Chicago-Lost-and-Found.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-            thumbnail: 'https://images.stockx.com/images/Air-Jordan-1-Retro-High-OG-Chicago-Lost-and-Found.jpg?fit=fill&bg=FFFFFF&w=200&h=150&auto=format,compress&q=90',
-            styleId: 'DZ5485-612',
-            retailPrice: 180,
-            lastSale: 245,
-        },
-        {
-            id: '2',
-            name: 'Nike Dunk Low Panda',
-            brand: 'Nike',
-            imageUrl: 'https://images.stockx.com/images/Nike-Dunk-Low-Retro-White-Black-2021.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-            thumbnail: 'https://images.stockx.com/images/Nike-Dunk-Low-Retro-White-Black-2021.jpg?fit=fill&bg=FFFFFF&w=200&h=150&auto=format,compress&q=90',
-            styleId: 'DD1391-100',
-            retailPrice: 110,
-            lastSale: 95,
-        },
-        {
-            id: '3',
-            name: 'Yeezy Boost 350 V2 Zebra',
-            brand: 'adidas',
-            imageUrl: 'https://images.stockx.com/images/adidas-Yeezy-Boost-350-V2-Zebra-2022.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-            thumbnail: 'https://images.stockx.com/images/adidas-Yeezy-Boost-350-V2-Zebra-2022.jpg?fit=fill&bg=FFFFFF&w=200&h=150&auto=format,compress&q=90',
-            styleId: 'GW0266',
-            retailPrice: 230,
-            lastSale: 265,
-        },
-        {
-            id: '4',
-            name: 'New Balance 550 White Green',
-            brand: 'New Balance',
-            imageUrl: 'https://images.stockx.com/images/New-Balance-550-White-Green.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-            thumbnail: 'https://images.stockx.com/images/New-Balance-550-White-Green.jpg?fit=fill&bg=FFFFFF&w=200&h=150&auto=format,compress&q=90',
-            styleId: 'BB550WT1',
-            retailPrice: 110,
-            lastSale: 125,
-        },
-    ].filter(p =>
-        p.name.toLowerCase().includes(query.toLowerCase()) ||
-        p.brand.toLowerCase().includes(query.toLowerCase())
-    );
-
-    // If no matches, return all mock data
-    return {
-        products: mockProducts.length > 0 ? mockProducts : [
-            {
-                id: 'mock-1',
-                name: `${query} Sneaker`,
-                brand: 'Nike',
-                imageUrl: 'https://images.stockx.com/images/Air-Jordan-1-Retro-High-OG-Chicago-Lost-and-Found.jpg?fit=fill&bg=FFFFFF&w=700&h=500&auto=format,compress&q=90',
-                thumbnail: 'https://images.stockx.com/images/Air-Jordan-1-Retro-High-OG-Chicago-Lost-and-Found.jpg?fit=fill&bg=FFFFFF&w=200&h=150&auto=format,compress&q=90',
-                styleId: 'MOCK-001',
-                retailPrice: 150,
-            },
-        ],
-        total: mockProducts.length || 1,
     };
 }

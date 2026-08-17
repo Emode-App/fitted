@@ -1,318 +1,175 @@
-import { Platform } from 'react-native';
 import { supabase } from './supabase';
 import { REVENUECAT_CONFIG } from '@/constants/payments';
+import { Platform } from 'react-native';
 
-// ============================================
-// REVENUECAT SERVICE
-// Handles IAP subscriptions:
-//   1. Stylist Verification ($25/mo)
-//   2. Business Account ($15/mo)
-//   3. Pro Try-Ons / Unlimited dressing room ($10/mo)
-// ============================================
-
-// RevenueCat SDK is imported dynamically to avoid crashes in Expo Go
 let Purchases: any = null;
+let initialization: Promise<boolean> | null = null;
+let configured = false;
 
-// Daily try-on limit for free users
 export const FREE_DAILY_TRYON_LIMIT = 15;
+export const PRO_DAILY_TRYON_LIMIT = 100;
+export type SubscriptionType = 'stylist' | 'business' | 'proTryOns';
 
-/**
- * Initialize RevenueCat SDK. Call once on app startup.
- * Gracefully handles missing native module (Expo Go).
- */
-export async function initializeRevenueCat(userId?: string): Promise<boolean> {
-    try {
-        const rc = require('react-native-purchases');
-        Purchases = rc.default || rc;
-
-        if (!REVENUECAT_CONFIG.apiKey) {
-            console.warn('[RevenueCat] No API key configured');
-            return false;
-        }
-
-        await Purchases.configure({
-            apiKey: REVENUECAT_CONFIG.apiKey,
-            appUserID: userId || null,
-        });
-
-        console.log('[RevenueCat] Initialized successfully');
-        return true;
-    } catch (error: any) {
-        console.warn('[RevenueCat] Not available (expected in Expo Go):', error.message);
-        Purchases = null;
-        return false;
-    }
-}
-
-/**
- * Identify the current user with RevenueCat (call after login).
- */
-export async function identifyUser(userId: string): Promise<void> {
-    if (!Purchases) return;
-    try {
-        await Purchases.logIn(userId);
-        console.log('[RevenueCat] User identified:', userId);
-    } catch (error) {
-        console.error('[RevenueCat] Failed to identify user:', error);
-    }
-}
-
-// ============================================
-// GENERIC PURCHASE HELPER
-// ============================================
-
-type SubscriptionType = 'stylist' | 'business' | 'proTryOns';
-
-const SUBSCRIPTION_META: Record<SubscriptionType, {
-    productId: string;
-    entitlementId: string;
-    dbField: string;
-    dbValue: any;
-}> = {
-    stylist: {
-        productId: REVENUECAT_CONFIG.products.stylistMonthly,
-        entitlementId: REVENUECAT_CONFIG.entitlements.verifiedStylist,
-        dbField: 'is_verified_stylist',
-        dbValue: true,
-    },
-    business: {
-        productId: REVENUECAT_CONFIG.products.businessMonthly,
-        entitlementId: REVENUECAT_CONFIG.entitlements.businessAccount,
-        dbField: 'is_business_account',
-        dbValue: true,
-    },
-    proTryOns: {
-        productId: REVENUECAT_CONFIG.products.proTryOnsMonthly,
-        entitlementId: REVENUECAT_CONFIG.entitlements.proTryOns,
-        dbField: 'subscription_status', // We'll use a separate field
-        dbValue: 'pro_tryons',
-    },
+const SUBSCRIPTIONS: Record<SubscriptionType, { productId: string; entitlementId: string }> = {
+    stylist: { productId: REVENUECAT_CONFIG.products.stylistMonthly, entitlementId: REVENUECAT_CONFIG.entitlements.verifiedStylist },
+    business: { productId: REVENUECAT_CONFIG.products.businessMonthly, entitlementId: REVENUECAT_CONFIG.entitlements.businessAccount },
+    proTryOns: { productId: REVENUECAT_CONFIG.products.proTryOnsMonthly, entitlementId: REVENUECAT_CONFIG.entitlements.proTryOns },
 };
 
-/**
- * Purchase a subscription of the given type.
- * Returns { success, error } — error='cancelled' if user cancelled.
- */
-export async function purchaseSubscription(type: SubscriptionType): Promise<{
-    success: boolean;
-    error?: string;
-}> {
-    if (!Purchases) {
-        return {
-            success: false,
-            error: 'In-app purchases are not available. Please use a development build to test purchases.',
-        };
+export async function initializeRevenueCat(userId?: string): Promise<boolean> {
+    if (!initialization) {
+        initialization = (async () => {
+            try {
+                const module = require('react-native-purchases');
+                Purchases = module.default || module;
+                const apiKey = Platform.OS === 'ios'
+                    ? REVENUECAT_CONFIG.iosApiKey
+                    : REVENUECAT_CONFIG.androidApiKey;
+                if (!apiKey) {
+                    console.warn(`[RevenueCat] ${Platform.OS} public SDK key is not configured`);
+                    Purchases = null;
+                    return false;
+                }
+                await Purchases.configure({ apiKey, ...(userId ? { appUserID: userId } : {}) });
+                configured = true;
+                return true;
+            } catch (error: any) {
+                console.warn('[RevenueCat] Native SDK unavailable:', error?.message);
+                Purchases = null;
+                return false;
+            }
+        })();
     }
+    const ready = await initialization;
+    if (ready && userId) await identifyUser(userId);
+    return ready;
+}
 
-    const meta = SUBSCRIPTION_META[type];
-
+export async function identifyUser(userId: string): Promise<void> {
+    if (initialization) await initialization;
+    else await initializeRevenueCat();
+    if (!Purchases || !configured) return;
     try {
-        const offerings = await Purchases.getOfferings();
-        const currentOffering = offerings.current;
-
-        if (!currentOffering) {
-            return { success: false, error: 'No subscription offerings available' };
-        }
-
-        // Find the correct package
-        const pkg = currentOffering.availablePackages?.find(
-            (p: any) => p.product?.identifier === meta.productId
-        ) || currentOffering.monthly || currentOffering.availablePackages?.[0];
-
-        if (!pkg) {
-            return { success: false, error: `Subscription package not found for ${type}` };
-        }
-
-        const { customerInfo } = await Purchases.purchasePackage(pkg);
-        const isActive = customerInfo.entitlements.active[meta.entitlementId];
-
-        if (isActive) {
-            return { success: true };
-        } else {
-            return { success: false, error: 'Purchase completed but entitlement not active' };
-        }
-    } catch (error: any) {
-        if (error.userCancelled) {
-            return { success: false, error: 'cancelled' };
-        }
-        console.error(`[RevenueCat] ${type} purchase error:`, error);
-        return { success: false, error: error.message || 'Purchase failed' };
+        await Purchases.logIn(userId);
+        await syncSubscriptionToSupabase(userId);
+    } catch (error) {
+        console.error('[RevenueCat] Could not identify user:', error);
     }
 }
 
-// ============================================
-// CONVENIENCE WRAPPERS
-// ============================================
+export async function logOutPurchases(): Promise<void> {
+    if (!Purchases) return;
+    try { await Purchases.logOut(); } catch { /* Local Supabase sign-out must still proceed. */ }
+}
 
-/** Purchase the Stylist Subscription ($25/mo) */
+async function exactPackage(type: SubscriptionType): Promise<any | null> {
+    if (!Purchases && !(await initializeRevenueCat())) return null;
+    const offerings = await Purchases.getOfferings();
+    const packages = offerings.current?.availablePackages || [];
+    return packages.find((item: any) => item.product?.identifier === SUBSCRIPTIONS[type].productId) || null;
+}
+
+export async function getSubscriptionPrice(type: SubscriptionType): Promise<string | null> {
+    try {
+        const pkg = await exactPackage(type);
+        return pkg?.product?.priceString || pkg?.product?.price?.formatted || null;
+    } catch {
+        return null;
+    }
+}
+
+export async function purchaseSubscription(type: SubscriptionType): Promise<{ success: boolean; error?: string }> {
+    try {
+        const pkg = await exactPackage(type);
+        if (!pkg) return { success: false, error: 'This subscription is not available from the store right now.' };
+        const { customerInfo } = await Purchases.purchasePackage(pkg);
+        if (!customerInfo?.entitlements?.active?.[SUBSCRIPTIONS[type].entitlementId]) {
+            return { success: false, error: 'The store completed the purchase, but access is not active yet. Try Restore Purchases.' };
+        }
+        const flags = await syncSubscriptionToSupabase(undefined, type);
+        if (!flags) return { success: false, error: 'The purchase was received but could not be verified by the server yet. Try Restore Purchases.' };
+        return { success: true };
+    } catch (error: any) {
+        if (error?.userCancelled) return { success: false, error: 'cancelled' };
+        console.error(`[RevenueCat] ${type} purchase failed:`, error);
+        return { success: false, error: error?.message || 'Purchase failed' };
+    }
+}
+
 export const purchaseStylistSubscription = () => purchaseSubscription('stylist');
-
-/** Purchase the Business Account Subscription ($15/mo) */
 export const purchaseBusinessSubscription = () => purchaseSubscription('business');
-
-/** Purchase the Pro Try-Ons Subscription ($10/mo) */
 export const purchaseProTryOnsSubscription = () => purchaseSubscription('proTryOns');
 
-// ============================================
-// STATUS CHECKS
-// ============================================
-
-/**
- * Check if the user has an active entitlement of the given type.
- */
-export async function checkEntitlement(type: SubscriptionType): Promise<{
-    isActive: boolean;
-    expirationDate?: string;
-}> {
-    if (!Purchases) {
-        return { isActive: false };
-    }
-
+export async function checkEntitlement(type: SubscriptionType): Promise<{ isActive: boolean; expirationDate?: string }> {
+    if (!Purchases && !(await initializeRevenueCat())) return { isActive: false };
     try {
-        const customerInfo = await Purchases.getCustomerInfo();
-        const meta = SUBSCRIPTION_META[type];
-        const entitlement = customerInfo.entitlements.active[meta.entitlementId];
-
-        return {
-            isActive: !!entitlement,
-            expirationDate: entitlement?.expirationDate,
-        };
-    } catch (error) {
-        console.error(`[RevenueCat] ${type} status check error:`, error);
+        const info = await Purchases.getCustomerInfo();
+        const entitlement = info.entitlements.active[SUBSCRIPTIONS[type].entitlementId];
+        return { isActive: !!entitlement, expirationDate: entitlement?.expirationDate };
+    } catch {
         return { isActive: false };
     }
 }
 
-/** Check if user has active Stylist subscription */
 export const checkStylistSubscription = () => checkEntitlement('stylist');
-
-/** Check if user has active Business Account subscription */
 export const checkBusinessSubscription = () => checkEntitlement('business');
-
-/** Check if user has active Pro Try-Ons subscription */
 export const checkProTryOnsSubscription = () => checkEntitlement('proTryOns');
 
-// ============================================
-// RESTORE & SYNC
-// ============================================
-
-/**
- * Restore previous purchases (e.g., after reinstall or new device).
- */
-export async function restorePurchases(): Promise<{
-    success: boolean;
-    activeEntitlements: string[];
-    error?: string;
-}> {
-    if (!Purchases) {
-        return {
-            success: false,
-            activeEntitlements: [],
-            error: 'In-app purchases are not available in Expo Go.',
-        };
+export async function restorePurchases(): Promise<{ success: boolean; activeEntitlements: string[]; error?: string }> {
+    if (!Purchases && !(await initializeRevenueCat())) {
+        return { success: false, activeEntitlements: [], error: 'In-app purchases require an installed development or store build.' };
     }
-
     try {
-        const customerInfo = await Purchases.restorePurchases();
-        const activeEntitlements = Object.keys(customerInfo.entitlements.active);
-
+        const info = await Purchases.restorePurchases();
+        const activeEntitlements = Object.keys(info.entitlements.active || {});
+        const flags = await syncSubscriptionToSupabase();
+        if (!flags) return { success: false, activeEntitlements, error: 'Purchases were restored by the store but server verification is still pending.' };
         return { success: true, activeEntitlements };
     } catch (error: any) {
-        console.error('[RevenueCat] Restore error:', error);
-        return { success: false, activeEntitlements: [], error: error.message };
+        return { success: false, activeEntitlements: [], error: error?.message || 'Restore failed' };
     }
 }
 
 export interface EntitlementFlags {
     is_verified_stylist: boolean;
     is_business_account: boolean;
-    subscription_status: string;
+    has_pro_tryons: boolean;
+    subscription_status: 'none' | 'active' | 'expired' | 'canceled';
 }
 
-/**
- * Ask the server to (re)verify this user's entitlements with RevenueCat and
- * write the resulting flags. The client can no longer set these flags directly
- * — the `sync-entitlement` edge function checks RevenueCat with a secret key and
- * is the only writer of is_verified_stylist / is_business_account.
- *
- * `type` is accepted for call-site compatibility but the server always syncs all
- * entitlements at once. Returns the verified flags, or null on failure.
- */
 export async function syncSubscriptionToSupabase(
     _userId?: string,
     _type?: SubscriptionType,
-    _isActive?: boolean
+    _isActive?: boolean,
 ): Promise<EntitlementFlags | null> {
     try {
-        const { data, error } = await supabase.functions.invoke('sync-entitlement', {
-            body: { type: _type },
-        });
-        if (error) {
-            console.error('[RevenueCat] sync-entitlement failed:', error.message);
-            return null;
-        }
+        const { data, error } = await supabase.functions.invoke('sync-entitlement', { body: {} });
+        if (error) return null;
         return data as EntitlementFlags;
-    } catch (error) {
-        console.error('[RevenueCat] Sync error:', error);
+    } catch {
         return null;
     }
 }
 
-// ============================================
-// DAILY TRY-ON USAGE TRACKING
-// ============================================
-
-/**
- * Get today's try-on usage count for a user.
- */
 export async function getDailyTryOnCount(userId: string): Promise<number> {
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-
-    const { data, error } = await supabase
+    const start = new Date();
+    start.setUTCHours(0, 0, 0, 0);
+    const { count, error } = await supabase
         .from('generations')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', userId)
-        .gte('created_at', `${today}T00:00:00Z`)
-        .lt('created_at', `${today}T23:59:59Z`);
-
-    if (error) {
-        console.error('[TryOn] Error fetching daily count:', error);
-        return 0;
-    }
-
-    // The count is in the response headers when using head: true
-    // Fallback: query with count
-    const { count } = await supabase
-        .from('generations')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .gte('created_at', `${today}T00:00:00Z`);
-
-    return count || 0;
+        .eq('status', 'succeeded')
+        .gte('created_at', start.toISOString());
+    return error ? 0 : count || 0;
 }
 
-/**
- * Check if user can perform a try-on (has remaining free uses or has Pro subscription).
- */
-export async function canPerformTryOn(userId: string): Promise<{
-    allowed: boolean;
-    remaining: number;
-    isPro: boolean;
-}> {
-    // Check if user has Pro Try-Ons subscription
-    const { isActive: isPro } = await checkProTryOnsSubscription();
-
-    if (isPro) {
-        return { allowed: true, remaining: Infinity, isPro: true };
-    }
-
-    // Check daily usage
-    const usedToday = await getDailyTryOnCount(userId);
-    const remaining = Math.max(0, FREE_DAILY_TRYON_LIMIT - usedToday);
-
-    return {
-        allowed: remaining > 0,
-        remaining,
-        isPro: false,
-    };
+export async function canPerformTryOn(userId: string): Promise<{ allowed: boolean; remaining: number; isPro: boolean }> {
+    const [{ data: profile }, used] = await Promise.all([
+        supabase.from('users').select('has_pro_tryons').eq('id', userId).single(),
+        getDailyTryOnCount(userId),
+    ]);
+    const isPro = !!profile?.has_pro_tryons;
+    const limit = isPro ? PRO_DAILY_TRYON_LIMIT : FREE_DAILY_TRYON_LIMIT;
+    const remaining = Math.max(0, limit - used);
+    return { allowed: remaining > 0, remaining, isPro };
 }

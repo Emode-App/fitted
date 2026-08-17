@@ -376,6 +376,7 @@ export default function PostDetailScreen() {
                         await deletePost(post.id);
                         router.back();
                     }}
+                    onBlocked={() => router.back()}
                     currentUserId={user?.id}
                 />
 

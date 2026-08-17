@@ -7,6 +7,8 @@ import { router } from 'expo-router';
 import { Product } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
 import { useMarketplaceStore } from '@/stores/marketplaceStore';
+import { useAuthStore } from '@/stores/authStore';
+import { reportContent } from '@/services/moderation';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -19,6 +21,7 @@ interface ProductDetailModalProps {
 export default function ProductDetailModal({ visible, product, onClose }: ProductDetailModalProps) {
     const { colors, isDark } = useTheme();
     const { addToDressingRoom, sendToCanvas } = useMarketplaceStore();
+    const user = useAuthStore((state) => state.user);
     const [currentImageIndex, setCurrentImageIndex] = useState(0);
     const [showToast, setShowToast] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
@@ -78,6 +81,11 @@ export default function ProductDetailModal({ visible, product, onClose }: Produc
         }
     };
 
+    const reportProduct = async () => {
+        const result = await reportContent({ contentType: 'product', contentId: product.id, reportedUserId: product.seller_id, reason: 'Prohibited or misleading marketplace listing' });
+        Alert.alert(result.error ? 'Could Not Report' : 'Report Received', result.error || 'Thank you. The listing was sent to the moderation team.');
+    };
+
     return (
         <Modal
             visible={visible}
@@ -92,7 +100,11 @@ export default function ProductDetailModal({ visible, product, onClose }: Produc
                         <Feather name="x" size={24} color={colors.text} />
                     </Pressable>
                     <Text style={[styles.headerTitle, { color: colors.text }]}>Product Details</Text>
-                    <View style={{ width: 40 }} />
+                    {product.seller_id !== user?.id ? (
+                        <Pressable onPress={reportProduct} style={styles.closeButton} accessibilityLabel="Report product listing">
+                            <Feather name="flag" size={20} color={colors.textSecondary} />
+                        </Pressable>
+                    ) : <View style={{ width: 40 }} />}
                 </View>
 
                 <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -7,6 +7,7 @@ import {
     Pressable,
     ActivityIndicator,
     Alert,
+    Linking,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,7 +19,9 @@ import {
     purchaseStylistSubscription,
     restorePurchases,
     syncSubscriptionToSupabase,
+    getSubscriptionPrice,
 } from '@/services/revenueCatService';
+import { LEGAL } from '@/constants/legal';
 
 interface StylistModalProps {
     visible: boolean;
@@ -31,11 +34,14 @@ export default function StylistModal({ visible, onClose }: StylistModalProps) {
     const setUser = useAuthStore((state) => state.setUser);
     const [loading, setLoading] = useState(false);
     const [restoring, setRestoring] = useState(false);
+    const [price, setPrice] = useState<string | null>(null);
+
+    useEffect(() => { if (visible) getSubscriptionPrice('stylist').then(setPrice); }, [visible]);
 
     const benefits = [
-        'Blue Verified Badge on profile',
-        'Process payments directly in DMs',
-        'Rank on the "Featured Stylists" leaderboard',
+        'Verified stylist badge on your profile',
+        'Set a public styling rate',
+        'Receive styling inquiries in messages',
     ];
 
     const handlePurchase = async () => {
@@ -60,7 +66,7 @@ export default function StylistModal({ visible, onClose }: StylistModalProps) {
             const flags = await syncSubscriptionToSupabase(user.id, 'stylist');
             if (flags?.is_verified_stylist) {
                 setUser({ ...user, is_verified_stylist: true, subscription_status: flags.subscription_status as any });
-                Alert.alert('Congratulations! 🎉', 'You are now a Verified Stylist! You can start accepting styling requests.');
+                Alert.alert('Congratulations! 🎉', 'You are now a Verified Stylist and can receive styling inquiries.');
                 onClose();
             } else {
                 Alert.alert('Almost there', 'Your purchase was received but we could not verify it yet. Tap "Restore Purchases" in a moment.');
@@ -135,7 +141,7 @@ export default function StylistModal({ visible, onClose }: StylistModalProps) {
 
                     {/* Subtitle */}
                     <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-                        Unlock professional tools and start{'\n'}earning from your style.
+                        Showcase your credentials and connect{'\n'}with people seeking style advice.
                     </Text>
 
                     {/* Pricing card */}
@@ -143,8 +149,8 @@ export default function StylistModal({ visible, onClose }: StylistModalProps) {
                         <View style={styles.pricingHeader}>
                             <Text style={[styles.pricingTitle, { color: colors.text }]}>Stylist Subscription</Text>
                             <View style={styles.priceRow}>
-                                <Text style={[styles.price, { color: colors.text }]}>$25</Text>
-                                <Text style={[styles.priceUnit, { color: colors.textSecondary }]}>/mo</Text>
+                                <Text style={[styles.price, { color: colors.text }]}>{price || 'Monthly'}</Text>
+                                {price && <Text style={[styles.priceUnit, { color: colors.textSecondary }]}>/month</Text>}
                             </View>
                         </View>
 
@@ -190,7 +196,9 @@ export default function StylistModal({ visible, onClose }: StylistModalProps) {
 
                     {/* Legal note */}
                     <Text style={[styles.legalText, { color: colors.textTertiary }]}>
-                        Subscription renews monthly. Cancel anytime in your device settings.
+                        Renews monthly until canceled in store settings.{' '}
+                        <Text style={{ textDecorationLine: 'underline' }} onPress={() => Linking.openURL(LEGAL.termsUrl)}>Terms</Text>{' · '}
+                        <Text style={{ textDecorationLine: 'underline' }} onPress={() => Linking.openURL(LEGAL.privacyPolicyUrl)}>Privacy</Text>
                     </Text>
                 </View>
             </View>
@@ -212,10 +220,7 @@ const styles = StyleSheet.create({
         padding: 24,
         paddingTop: 32,
         alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.25,
-        shadowRadius: 20,
+        boxShadow: '0px 10px 20px rgba(0, 0, 0, 0.25)',
         elevation: 10,
     },
     closeButton: {

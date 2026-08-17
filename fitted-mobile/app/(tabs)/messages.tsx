@@ -15,13 +15,11 @@ import { User, Message } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
 import { Input, Button } from '@/components/Shared';
 import StylistModal from '@/components/StylistModal';
-import PaymentRequestModal from '@/components/PaymentRequestModal';
 import PaymentCard from '@/components/PaymentCard';
 import OutfitDeliveryCard from '@/components/OutfitDeliveryCard';
-import StripeConnectOnboarding from '@/components/StripeConnectOnboarding';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { fetchPaymentIntent, checkConnectStatus } from '@/services/stripeService';
+import { blockUser, reportContent } from '@/services/moderation';
 
 // Height of the persistent header rendered above the tab content (see (tabs)/_layout.tsx).
 // KeyboardAvoidingView measures its own position relative to its parent (not the screen),
@@ -39,8 +37,6 @@ export default function MessagesScreen() {
     const fetchConversations = useMessagesStore((state) => state.fetchConversations);
     const fetchMessages = useMessagesStore((state) => state.fetchMessages);
     const sendMessage = useMessagesStore((state) => state.sendMessage);
-    const sendPaymentRequest = useMessagesStore((state) => state.sendPaymentRequest);
-    const respondToPayment = useMessagesStore((state) => state.respondToPayment);
     const sendFacePhoto = useMessagesStore((state) => state.sendFacePhoto);
     const sendImage = useMessagesStore((state) => state.sendImage);
     const setActiveConversation = useMessagesStore((state) => state.setActiveConversation);
@@ -53,9 +49,6 @@ export default function MessagesScreen() {
     const [searching, setSearching] = useState(false);
     const [conversationSearch, setConversationSearch] = useState('');
     const [showStylistModal, setShowStylistModal] = useState(false);
-    const [showPaymentModal, setShowPaymentModal] = useState(false);
-    const [showConnectOnboarding, setShowConnectOnboarding] = useState(false);
-    const [paymentProcessing, setPaymentProcessing] = useState(false);
     const [imageUploading, setImageUploading] = useState(false);
     const flatListRef = useRef<FlatList>(null);
 
@@ -121,11 +114,6 @@ export default function MessagesScreen() {
             }
             result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 });
         } else {
-            const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (status !== 'granted') {
-                Alert.alert('Permission needed', 'Please grant photo library access to send photos.');
-                return;
-            }
             result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
         }
 
@@ -146,106 +134,14 @@ export default function MessagesScreen() {
         }
     };
 
-    const handleSendPaymentRequest = async (amount: number, description: string) => {
-        if (!user || !activeConversation) return;
-        await sendPaymentRequest(activeConversation.id, user.id, amount, description);
-        setTimeout(() => {
-            flatListRef.current?.scrollToEnd();
-        }, 100);
-    };
-
     const handlePaymentAccept = async (messageId: string) => {
-        if (!user || !activeConversation || paymentProcessing) return;
-
-        // Find the message to get the amount and stylist info
-        const paymentMessage = messages.find(m => m.id === messageId);
-        if (!paymentMessage?.payment_request) return;
-
-        const amount = paymentMessage.payment_request.amount;
-        const stylistId = paymentMessage.sender_id;
-        const description = paymentMessage.payment_request.description || 'Styling session';
-
-        // Is the native Stripe SDK available? (dev builds only, not Expo Go)
-        let stripeAvailable = false;
-        try {
-            const stripeMod = require('@stripe/stripe-react-native');
-            if (stripeMod?.useStripe) stripeAvailable = true;
-        } catch {
-            // Not available in Expo Go
-        }
-
-        const runSimulated = (title: string, body: string) => {
-            Alert.alert(title, body, [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Continue (Test)',
-                    onPress: async () => {
-                        await respondToPayment(messageId, activeConversation.id, user.id, 'accept');
-                    },
-                },
-            ]);
-        };
-
-        if (!stripeAvailable) {
-            runSimulated('Development Mode', `Real payments require a development build. Process $${amount.toFixed(2)} as a test payment?`);
-            return;
-        }
-
-        setPaymentProcessing(true);
-        try {
-            const { initPaymentSheet, presentPaymentSheet } = require('@stripe/stripe-react-native');
-
-            // The server derives the stylist's connected account from the
-            // conversation and verifies we're a participant. If the stylist isn't
-            // set up for payouts yet, fall back to the simulated flow.
-            let paymentData;
-            try {
-                paymentData = await fetchPaymentIntent(amount, activeConversation.id, stylistId, description);
-            } catch (e: any) {
-                if (e?.message === 'stylist_not_connected') {
-                    runSimulated('Payment Processing', 'The stylist has not yet connected their payout account. Process as a simulated payment for now?');
-                    return;
-                }
-                throw e;
-            }
-
-            const { error: initError } = await initPaymentSheet({
-                paymentIntentClientSecret: paymentData.clientSecret,
-                customerId: paymentData.customerId,
-                customerEphemeralKeySecret: paymentData.ephemeralKey,
-                merchantDisplayName: 'Emode',
-                allowsDelayedPaymentMethods: false,
-            });
-
-            if (initError) {
-                Alert.alert('Error', initError.message);
-                return;
-            }
-
-            const { error: presentError } = await presentPaymentSheet();
-
-            if (presentError) {
-                if (presentError.code !== 'Canceled') {
-                    Alert.alert('Payment Failed', presentError.message);
-                }
-                return;
-            }
-
-            // Payment succeeded. The Stripe webhook is the authoritative source
-            // and will mark the session/message completed; refresh optimistically.
-            await respondToPayment(messageId, activeConversation.id, user.id, 'accept');
-            Alert.alert('Payment Successful! 💰', `$${amount.toFixed(2)} has been sent to the stylist.`);
-        } catch (error: any) {
-            console.error('Payment error:', error);
-            Alert.alert('Payment Error', error.message || 'Failed to process payment.');
-        } finally {
-            setPaymentProcessing(false);
-        }
+        void messageId;
+        Alert.alert('Unavailable', 'Paid styling requests are not available in this release. No payment was processed.');
     };
 
     const handlePaymentDecline = async (messageId: string) => {
-        if (!user || !activeConversation) return;
-        await respondToPayment(messageId, activeConversation.id, user.id, 'decline');
+        void messageId;
+        Alert.alert('Unavailable', 'This legacy payment request is inactive. No payment was processed.');
     };
 
     // Navigate stylist to create screen with client context
@@ -297,12 +193,6 @@ export default function MessagesScreen() {
 
     const pickAndShareFace = async () => {
         if (!user || !activeConversation) return;
-
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-            Alert.alert('Permission needed', 'Please grant photo library access');
-            return;
-        }
 
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
@@ -394,6 +284,28 @@ export default function MessagesScreen() {
     }), []);
 
     // Render a single message — PaymentCard, OutfitDeliveryCard, FaceShare, or regular bubble
+    const showMessageActions = (item: Message & { sender: User }) => {
+        if (!user || item.sender_id === user.id) return;
+        Alert.alert('Message Options', 'Report this message or block its sender?', [
+            { text: 'Cancel', style: 'cancel' },
+            {
+                text: 'Report Message', onPress: async () => {
+                    const result = await reportContent({ contentType: 'message', contentId: item.id, reportedUserId: item.sender_id, reason: 'Objectionable direct message' });
+                    Alert.alert(result.error ? 'Could Not Report' : 'Report Received', result.error || 'Thank you. Our moderation team will review this message.');
+                },
+            },
+            {
+                text: 'Block Sender', style: 'destructive', onPress: async () => {
+                    const result = await blockUser(item.sender_id);
+                    if (result.error) return Alert.alert('Could Not Block User', result.error);
+                    setActiveConversation(null);
+                    await fetchConversations(user.id);
+                    Alert.alert('User Blocked', 'They can no longer start or continue conversations with you.');
+                },
+            },
+        ]);
+    };
+
     const renderMessage = ({ item }: { item: Message & { sender: User } }) => {
         const isOwn = item.sender_id === user?.id;
 
@@ -419,11 +331,7 @@ export default function MessagesScreen() {
                     delivery={item.styling_delivery}
                     isOwnMessage={isOwn}
                     timestamp={item.created_at}
-                    onSaveToProfile={() => {
-                        // TODO: implement save to profile (re-post)
-                        Alert.alert('Coming Soon', 'Save to profile will be available soon!');
-                    }}
-                />
+                    />
             );
         }
 
@@ -536,7 +444,11 @@ export default function MessagesScreen() {
                     keyExtractor={(item) => item.id}
                     style={styles.messagesList}
                     contentContainerStyle={styles.messagesContent}
-                    renderItem={renderMessage}
+                    renderItem={({ item }) => (
+                        <Pressable onLongPress={() => showMessageActions(item as Message & { sender: User })} delayLongPress={350}>
+                            {renderMessage({ item: item as Message & { sender: User } })}
+                        </Pressable>
+                    )}
                     onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
                     ListEmptyComponent={
                         <View style={styles.emptyMessages}>
@@ -561,31 +473,6 @@ export default function MessagesScreen() {
                         )}
                     </Pressable>
 
-                    {/* Payment Request Button — Only for verified stylists */}
-                    {isStylist && (
-                        <Pressable
-                            style={[styles.paymentButton]}
-                            onPress={async () => {
-                                // Check if stylist has connected Stripe before allowing payment requests
-                                if (user) {
-                                    const status = await checkConnectStatus(user.id);
-                                    if (!status.onboardingComplete) {
-                                        setShowConnectOnboarding(true);
-                                        return;
-                                    }
-                                }
-                                setShowPaymentModal(true);
-                            }}
-                        >
-                            <LinearGradient
-                                colors={['#10b981', '#059669']}
-                                style={styles.paymentButtonGradient}
-                            >
-                                <MaterialCommunityIcons name="currency-usd" size={20} color="#fff" />
-                            </LinearGradient>
-                        </Pressable>
-                    )}
-
                     <TextInput
                         style={[styles.messageInput, {
                             backgroundColor: colors.backgroundSecondary,
@@ -607,14 +494,6 @@ export default function MessagesScreen() {
                         <Feather name="send" size={20} color={newMessage.trim() ? colors.primaryForeground : colors.textTertiary} />
                     </Pressable>
                 </View>
-
-                {/* Payment Request Modal */}
-                <PaymentRequestModal
-                    visible={showPaymentModal}
-                    onClose={() => setShowPaymentModal(false)}
-                    onSend={handleSendPaymentRequest}
-                    recipientName={activeConversation.otherUser?.username || 'User'}
-                />
             </KeyboardAvoidingView>
         );
     }
@@ -793,17 +672,6 @@ export default function MessagesScreen() {
             <StylistModal
                 visible={showStylistModal}
                 onClose={() => setShowStylistModal(false)}
-            />
-
-            {/* Stripe Connect Onboarding Modal */}
-            <StripeConnectOnboarding
-                visible={showConnectOnboarding}
-                onClose={() => setShowConnectOnboarding(false)}
-                onComplete={() => {
-                    setShowConnectOnboarding(false);
-                    // After Connect onboarding, open the payment modal
-                    setShowPaymentModal(true);
-                }}
             />
         </>
     );

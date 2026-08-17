@@ -74,6 +74,7 @@ interface ProfileViewProps {
     isFollowing?: boolean;
     onFollow?: () => void;
     onMessage?: () => void;
+    onModerate?: () => void;
     onEditProfile?: () => void;
     onAiFaceUpload?: () => void;
     onDeleteDraft?: (id: string) => void;
@@ -97,6 +98,7 @@ export default function ProfileView({
     isFollowing,
     onFollow,
     onMessage,
+    onModerate,
     onEditProfile,
     onAiFaceUpload,
     onDeleteDraft,
@@ -300,6 +302,11 @@ export default function ProfileView({
                             </>
                         ) : (
                             <>
+                                {onModerate && (
+                                    <Pressable style={[styles.messageIconButton, { backgroundColor: colors.backgroundSecondary }]} onPress={onModerate}>
+                                        <Feather name="more-horizontal" size={18} color={colors.text} />
+                                    </Pressable>
+                                )}
                                 <Pressable style={[styles.messageIconButton, { backgroundColor: colors.backgroundSecondary }]} onPress={onMessage}>
                                     <Feather name="message-circle" size={18} color={colors.text} />
                                 </Pressable>
@@ -751,10 +758,7 @@ const styles = StyleSheet.create({
         paddingVertical: 10,
         paddingHorizontal: 24,
         borderRadius: 20,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
+        boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.1)',
         elevation: 2,
     },
     followButtonText: {

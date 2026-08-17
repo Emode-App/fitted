@@ -7,9 +7,13 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import { getUser } from '../_shared/auth.ts';
+import { checkRateLimit, rateLimitResponse } from '../_shared/rateLimit.ts';
 
 const RAPIDAPI_HOST = 'kicks-db.p.rapidapi.com';
 const RAPIDAPI_KEY = Deno.env.get('RAPIDAPI_KEY') || '';
+
+// RapidAPI/KicksDB is metered per call — cap to protect the quota and bill.
+const RATE_LIMIT = { max: 60, windowSeconds: 60 }; // 60 searches / minute / user
 
 serve(async (req: Request) => {
     const cors = corsHeaders(req);
@@ -21,6 +25,9 @@ serve(async (req: Request) => {
     try {
         const { user, error } = await getUser(req);
         if (!user) return json({ error: error || 'Unauthorized' }, 401);
+
+        const rl = await checkRateLimit(user.id, 'product-search', RATE_LIMIT.max, RATE_LIMIT.windowSeconds);
+        if (!rl.allowed) return rateLimitResponse(rl, cors);
 
         if (!RAPIDAPI_KEY) return json({ error: 'Product search not configured' }, 500);
 

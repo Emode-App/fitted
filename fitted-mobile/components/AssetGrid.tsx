@@ -25,6 +25,9 @@ const GAP = 12;
 // Calculate item size: container width minus padding and gaps divided by columns
 const CONTAINER_WIDTH = SCREEN_WIDTH - 32; // margin from parent
 const ITEM_SIZE = (CONTAINER_WIDTH - (CONTAINER_PADDING * 2) - (GAP * (NUM_COLUMNS - 1))) / NUM_COLUMNS;
+const MAX_ROWS = 4;
+// Header (~30) + 4 rows of items + 3 inter-row gaps
+const GRID_MAX_HEIGHT = 30 + (MAX_ROWS * ITEM_SIZE) + ((MAX_ROWS - 1) * GAP) + CONTAINER_PADDING;
 
 export default function AssetGrid({ onAssetSelect }: { onAssetSelect: (asset: Asset) => void }) {
     const { colors, isDark } = useTheme();
@@ -51,16 +54,19 @@ export default function AssetGrid({ onAssetSelect }: { onAssetSelect: (asset: As
     const handleAddToFolder = async () => {
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
+            allowsMultipleSelection: true,
             quality: 0.8,
         });
 
         if (!result.canceled && result.assets && result.assets.length > 0) {
-            const newAsset: Asset = {
-                id: Math.random().toString(36).substring(7),
-                url: result.assets[0].uri,
-                dateAdded: Date.now(),
-            };
-            addAsset(selectedFolderId, newAsset);
+            result.assets.forEach((asset) => {
+                const newAsset: Asset = {
+                    id: Math.random().toString(36).substring(7),
+                    url: asset.uri,
+                    dateAdded: Date.now(),
+                };
+                addAsset(selectedFolderId, newAsset);
+            });
         }
     };
 
@@ -118,9 +124,11 @@ export default function AssetGrid({ onAssetSelect }: { onAssetSelect: (asset: As
                     keyExtractor={(item) => item.id}
                     numColumns={NUM_COLUMNS}
                     contentContainerStyle={styles.gridContainer}
-                    showsVerticalScrollIndicator={false}
-                    scrollEnabled={false}
+                    showsVerticalScrollIndicator={true}
+                    scrollEnabled={true}
                     columnWrapperStyle={styles.columnWrapper}
+                    style={{ maxHeight: GRID_MAX_HEIGHT }}
+                    nestedScrollEnabled={true}
                 />
             )}
         </View>
@@ -134,7 +142,6 @@ const styles = StyleSheet.create({
         padding: CONTAINER_PADDING,
         marginHorizontal: 16,
         marginTop: 8,
-        minHeight: 200,
     },
     headerRow: {
         flexDirection: 'row',
@@ -176,10 +183,7 @@ const styles = StyleSheet.create({
         padding: 8,
         borderWidth: 1,
         borderColor: '#f3f4f6',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
+        boxShadow: '0px 1px 2px rgba(0, 0, 0, 0.05)',
         elevation: 1,
     },
     assetImage: {
