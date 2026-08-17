@@ -24,6 +24,9 @@ export interface User {
         fits: number;
     };
     is_verified_stylist?: boolean;
+    /** Advertised price for one live styling session, in cents. Null = not taking bookings. */
+    styling_rate_cents?: number | null;
+    rate_currency?: string;
     has_pro_tryons?: boolean;
     rate?: string;
     show_activity_status?: boolean;
@@ -193,7 +196,14 @@ export interface Notification {
 }
 
 // Styling Session Types
-export type StylingSessionStatus = 'pending' | 'completed' | 'declined' | 'refunded';
+export type StylingSessionStatus =
+    | 'pending_payment' // created, awaiting card authorization
+    | 'scheduled'       // funds authorized, live window not yet opened
+    | 'active'          // window open, both participants present
+    | 'delivered'       // stylist delivered inside the window
+    | 'completed'       // funds captured and split
+    | 'cancelled'       // released before capture
+    | 'expired';        // window closed with no delivery; authorization released
 
 export interface StylingSession {
     id: string;
@@ -202,10 +212,22 @@ export interface StylingSession {
     client_id: string;
     client?: User;
     conversation_id: string;
-    message_id: string; // the message containing the payment_request
+    /** Legacy link to the payment-request message that created it. Unused for new bookings. */
+    message_id?: string | null;
     amount: number;
-    description: string;
+    currency: string;
+    description?: string;
     status: StylingSessionStatus;
+    duration_minutes: number;
+    starts_at?: string | null;
+    ends_at?: string | null;
+    delivered_at?: string | null;
+    cancelled_at?: string | null;
+    cancel_reason?: string | null;
+    platform_fee?: number | null;
+    stylist_amount?: number | null;
+    delivery_message_id?: string | null;
+    stripe_payment_intent_id?: string | null;
     created_at: string;
     completed_at?: string;
 }

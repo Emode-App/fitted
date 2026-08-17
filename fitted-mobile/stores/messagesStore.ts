@@ -59,7 +59,8 @@ interface MessagesState {
     sendMessage: (conversationId: string, senderId: string, text: string) => Promise<void>;
     sendPaymentRequest: (conversationId: string, senderId: string, amount: number, description: string) => Promise<void>;
     respondToPayment: (messageId: string, conversationId: string, responderId: string, action: 'accept' | 'decline') => Promise<void>;
-    sendStylingDelivery: (conversationId: string, senderId: string, delivery: StylingDelivery) => Promise<void>;
+    /** Resolves to the new message id, or null if the insert failed. */
+    sendStylingDelivery: (conversationId: string, senderId: string, delivery: StylingDelivery) => Promise<string | null>;
     sendFacePhoto: (conversationId: string, senderId: string, faceUrl: string) => Promise<void>;
     sendImage: (conversationId: string, senderId: string, localUri: string) => Promise<boolean>;
     createConversation: (userId: string, otherUserId: string) => Promise<string | null>;
@@ -144,14 +145,27 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
                 .order('created_at', { ascending: true });
 
             if (!error && data) {
-                // Resolve private media (DM images + shared face photos) to
-                // short-lived signed URLs. Legacy public URLs pass through unchanged.
+                // Resolve private media (DM images, shared face photos, and the
+                // face-derived styling deliveries) to short-lived signed URLs.
+                // Legacy public URLs pass through unchanged.
                 const resolved = await Promise.all(
-                    (data as MessageWithUser[]).map(async (m) => ({
-                        ...m,
-                        image_url: m.image_url ? (await getSignedUrl(m.image_url)) || undefined : m.image_url,
-                        shared_face_url: m.shared_face_url ? (await getSignedUrl(m.shared_face_url)) || undefined : m.shared_face_url,
-                    }))
+                    (data as MessageWithUser[]).map(async (m) => {
+                        const delivery = m.styling_delivery
+                            ? {
+                                ...m.styling_delivery,
+                                generated_image_url: (await getSignedUrl(m.styling_delivery.generated_image_url)) || m.styling_delivery.generated_image_url,
+                                board_image_url: m.styling_delivery.board_image_url
+                                    ? (await getSignedUrl(m.styling_delivery.board_image_url)) || undefined
+                                    : m.styling_delivery.board_image_url,
+                            }
+                            : m.styling_delivery;
+                        return {
+                            ...m,
+                            image_url: m.image_url ? (await getSignedUrl(m.image_url)) || undefined : m.image_url,
+                            shared_face_url: m.shared_face_url ? (await getSignedUrl(m.shared_face_url)) || undefined : m.shared_face_url,
+                            styling_delivery: delivery,
+                        };
+                    })
                 );
                 set({ messages: resolved as MessageWithUser[] });
             }
@@ -187,21 +201,24 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
         console.warn('Paid styling requests are disabled in this release.');
     },
 
+    // Returns the new message id so the caller can hand it to the styling-session
+    // function, which captures payment against that specific delivery.
     sendStylingDelivery: async (conversationId: string, senderId: string, delivery: StylingDelivery) => {
         try {
             const itemCount = delivery.items.length;
-            const { error } = await supabase.from('messages').insert({
+            const { data, error } = await supabase.from('messages').insert({
                 conversation_id: conversationId,
                 sender_id: senderId,
                 text: `🎨 Outfit delivery — ${itemCount} item${itemCount !== 1 ? 's' : ''} styled`,
                 styling_delivery: delivery,
-            });
+            }).select('id').single();
 
-            if (!error) {
-                get().fetchMessages(conversationId);
-            }
+            if (error) throw error;
+            get().fetchMessages(conversationId);
+            return data?.id ?? null;
         } catch (error) {
             console.error('Error sending styling delivery:', error);
+            return null;
         }
     },
 

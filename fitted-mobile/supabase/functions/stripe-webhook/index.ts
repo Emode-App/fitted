@@ -75,6 +75,22 @@ serve(async (req: Request) => {
                 break;
             }
 
+            // Styling sessions authorize without capturing, so they never reach
+            // payment_intent.succeeded until the stylist has delivered. This is
+            // the event that says the client's card is good for the amount.
+            case 'payment_intent.amount_capturable_updated': {
+                const intent: any = event.data.object;
+                const sessionId = intent.metadata?.styling_session_id;
+                if (intent.metadata?.kind === 'styling_session' && sessionId) {
+                    await required(admin.from('styling_sessions')
+                        .update({ status: 'scheduled' })
+                        .eq('id', sessionId)
+                        .eq('stripe_payment_intent_id', intent.id)
+                        .eq('status', 'pending_payment'));
+                }
+                break;
+            }
+
             case 'payment_intent.payment_failed':
             case 'payment_intent.canceled': {
                 const intent: any = event.data.object;
@@ -84,6 +100,16 @@ serve(async (req: Request) => {
                         p_order_id: orderId,
                         p_reason: event.type === 'payment_intent.canceled' ? 'payment_canceled' : 'payment_failed',
                     }));
+                }
+                const sessionId = intent.metadata?.styling_session_id;
+                if (intent.metadata?.kind === 'styling_session' && sessionId) {
+                    await required(admin.from('styling_sessions').update({
+                        status: 'cancelled',
+                        cancelled_at: new Date().toISOString(),
+                        cancel_reason: event.type === 'payment_intent.canceled' ? 'payment_canceled' : 'payment_failed',
+                    }).eq('id', sessionId)
+                      .eq('stripe_payment_intent_id', intent.id)
+                      .in('status', ['pending_payment', 'scheduled']));
                 }
                 break;
             }

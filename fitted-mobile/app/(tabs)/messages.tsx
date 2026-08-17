@@ -20,6 +20,15 @@ import OutfitDeliveryCard from '@/components/OutfitDeliveryCard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { blockUser, reportContent } from '@/services/moderation';
+import StylingBookingModal from '@/components/StylingBookingModal';
+import {
+    cancelSession,
+    formatRemaining,
+    getOpenSession,
+    remainingMs,
+    startSession,
+} from '@/services/stylingSessions';
+import type { StylingSession } from '@/types';
 
 // Height of the persistent header rendered above the tab content (see (tabs)/_layout.tsx).
 // KeyboardAvoidingView measures its own position relative to its parent (not the screen),
@@ -50,7 +59,58 @@ export default function MessagesScreen() {
     const [conversationSearch, setConversationSearch] = useState('');
     const [showStylistModal, setShowStylistModal] = useState(false);
     const [imageUploading, setImageUploading] = useState(false);
+    const [showBookingModal, setShowBookingModal] = useState(false);
+    const [session, setSession] = useState<StylingSession | null>(null);
+    const [countdown, setCountdown] = useState(0);
     const flatListRef = useRef<FlatList>(null);
+
+    // The open session for this conversation, kept live so both participants see
+    // the same window. Realtime carries the status transitions the server makes.
+    useEffect(() => {
+        if (!activeConversation?.id) {
+            setSession(null);
+            return;
+        }
+        let cancelled = false;
+        getOpenSession(activeConversation.id).then((found) => {
+            if (!cancelled) setSession(found);
+        });
+
+        const channel = supabase
+            .channel(`styling_session:${activeConversation.id}`)
+            .on('postgres_changes', {
+                event: '*',
+                schema: 'public',
+                table: 'styling_sessions',
+                filter: `conversation_id=eq.${activeConversation.id}`,
+            }, (payload) => {
+                const next = payload.new as StylingSession | null;
+                if (!next) return;
+                // A finished session should stop rendering session UI.
+                setSession(['completed', 'cancelled', 'expired'].includes(next.status) ? null : next);
+            })
+            .subscribe();
+
+        return () => {
+            cancelled = true;
+            supabase.removeChannel(channel);
+        };
+    }, [activeConversation?.id]);
+
+    // Tick the visible countdown while a window is open.
+    useEffect(() => {
+        if (session?.status !== 'active') {
+            setCountdown(0);
+            return;
+        }
+        const tick = () => setCountdown(remainingMs(session));
+        tick();
+        const timer = setInterval(tick, 1000);
+        return () => clearInterval(timer);
+    }, [session?.status, session?.ends_at]);
+
+    const isStylistForSession = !!session && session.stylist_id === user?.id;
+    const sessionIsLive = session?.status === 'active' && countdown > 0;
 
     // Filter conversations by search
     const filteredConversations = conversationSearch.trim()
@@ -144,15 +204,49 @@ export default function MessagesScreen() {
         Alert.alert('Unavailable', 'This legacy payment request is inactive. No payment was processed.');
     };
 
-    // Navigate stylist to create screen with client context
+    // Open the live window. Either participant can start it.
+    const handleStartSession = async () => {
+        if (!session) return;
+        try {
+            const started = await startSession(session.id);
+            setSession(started);
+        } catch (error: any) {
+            Alert.alert('Could Not Start', error?.message || 'Please try again.');
+        }
+    };
+
+    const handleCancelSession = () => {
+        if (!session) return;
+        Alert.alert(
+            'Cancel Session?',
+            'The hold on the card is released and nobody is charged.',
+            [
+                { text: 'Keep Session', style: 'cancel' },
+                {
+                    text: 'Cancel Session', style: 'destructive', onPress: async () => {
+                        try {
+                            await cancelSession(session.id);
+                            setSession(null);
+                        } catch (error: any) {
+                            Alert.alert('Could Not Cancel', error?.message || 'Please try again.');
+                        }
+                    },
+                },
+            ],
+        );
+    };
+
+    // Navigate stylist to create screen with client context. Only reachable
+    // inside a live window, which is what makes this a real-time service.
     const handleCreateOutfit = () => {
-        if (!activeConversation) return;
+        if (!activeConversation || !session) return;
         const clientId = activeConversation.otherUser?.id;
         const clientName = activeConversation.otherUser?.username || 'Client';
 
-        // Look for the most recent shared face photo in the conversation
+        // Prefer a face the client shared into this conversation. The profile
+        // photo is a last resort and may not be readable by the stylist.
         const faceMessage = [...messages].reverse().find(m => m.shared_face_url);
-        const clientFaceUrl = faceMessage?.shared_face_url || activeConversation.otherUser?.ai_face_url || '';
+        const clientFaceUrl = faceMessage?.shared_face_url || '';
 
         router.push({
             pathname: '/(tabs)/create',
@@ -161,6 +255,7 @@ export default function MessagesScreen() {
                 forClientId: clientId,
                 forClientName: clientName,
                 forClientFaceUrl: clientFaceUrl,
+                forSessionId: session.id,
             }
         });
     };
@@ -458,6 +553,96 @@ export default function MessagesScreen() {
                     }
                 />
 
+                {/* Session bar. This is the live window that makes paid styling a
+                    real-time person-to-person service rather than async digital
+                    content — the Create Outfit and Share Face actions only exist
+                    while it is open. */}
+                {session && (
+                    <View style={[styles.sessionBar, { backgroundColor: colors.backgroundSecondary, borderTopColor: colors.border }]}>
+                        <View style={{ flex: 1, backgroundColor: 'transparent' }}>
+                            <Text style={[styles.sessionTitle, { color: colors.text }]}>
+                                {session.status === 'pending_payment' && 'Confirming payment…'}
+                                {session.status === 'scheduled' && 'Session booked — ready to start'}
+                                {session.status === 'active' && `Session live · ${formatRemaining(countdown)} left`}
+                                {session.status === 'delivered' && 'Look delivered'}
+                            </Text>
+                            <Text style={[styles.sessionSubtitle, { color: colors.textSecondary }]}>
+                                {isStylistForSession
+                                    ? `with ${activeConversation.otherUser?.username || 'your client'}`
+                                    : `with ${activeConversation.otherUser?.username || 'your stylist'}`}
+                                {session.status === 'scheduled' ? ` · ${session.duration_minutes} min` : ''}
+                            </Text>
+                        </View>
+
+                        {session.status === 'scheduled' && (
+                            <>
+                                <Pressable onPress={handleCancelSession} style={styles.sessionSecondary}>
+                                    <Text style={[styles.sessionSecondaryText, { color: colors.textSecondary }]}>Cancel</Text>
+                                </Pressable>
+                                <Pressable onPress={handleStartSession}>
+                                    <LinearGradient
+                                        colors={['#6366f1', '#4f46e5']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 0 }}
+                                        style={styles.sessionAction}
+                                    >
+                                        <Text style={styles.sessionActionText}>Start</Text>
+                                    </LinearGradient>
+                                </Pressable>
+                            </>
+                        )}
+
+                        {sessionIsLive && (
+                            isStylistForSession ? (
+                                <Pressable onPress={handleCreateOutfit}>
+                                    <LinearGradient
+                                        colors={['#6366f1', '#4f46e5']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 0 }}
+                                        style={styles.sessionAction}
+                                    >
+                                        <MaterialCommunityIcons name="palette" size={15} color="#fff" />
+                                        <Text style={styles.sessionActionText}>Create Outfit</Text>
+                                    </LinearGradient>
+                                </Pressable>
+                            ) : (
+                                <Pressable onPress={handleShareFace}>
+                                    <LinearGradient
+                                        colors={['#8b5cf6', '#7c3aed']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 0 }}
+                                        style={styles.sessionAction}
+                                    >
+                                        <Feather name="camera" size={14} color="#fff" />
+                                        <Text style={styles.sessionActionText}>Share Face</Text>
+                                    </LinearGradient>
+                                </Pressable>
+                            )
+                        )}
+                    </View>
+                )}
+
+                {/* Booking entry point: shown to a client talking to a verified
+                    stylist when no session is already open. */}
+                {!session && !isStylist && activeConversation.otherUser?.is_verified_stylist && (
+                    <Pressable
+                        onPress={() => setShowBookingModal(true)}
+                        style={[styles.bookBar, { borderTopColor: colors.border }]}
+                    >
+                        <LinearGradient
+                            colors={['#6366f1', '#4f46e5']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={styles.bookButton}
+                        >
+                            <MaterialCommunityIcons name="hanger" size={16} color="#fff" />
+                            <Text style={styles.bookButtonText}>
+                                Book a styling session
+                            </Text>
+                        </LinearGradient>
+                    </Pressable>
+                )}
+
                 {/* Input */}
                 <View style={[styles.inputContainer, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
                     {/* Photo Attach Button — available to any participant */}
@@ -494,6 +679,19 @@ export default function MessagesScreen() {
                         <Feather name="send" size={20} color={newMessage.trim() ? colors.primaryForeground : colors.textTertiary} />
                     </Pressable>
                 </View>
+
+                {activeConversation.otherUser && (
+                    <StylingBookingModal
+                        visible={showBookingModal}
+                        stylist={activeConversation.otherUser}
+                        conversationId={activeConversation.id}
+                        onClose={() => setShowBookingModal(false)}
+                        onBooked={(booked) => {
+                            setSession(booked);
+                            setShowBookingModal(false);
+                        }}
+                    />
+                )}
             </KeyboardAvoidingView>
         );
     }
@@ -723,6 +921,20 @@ const styles = StyleSheet.create({
     emptyMessages: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 60 },
     emptyMessagesText: { fontSize: 16, fontFamily: 'Inter_600SemiBold' },
     emptyMessagesSubtext: { fontSize: 14, marginTop: 4, fontFamily: 'Inter_400Regular' },
+
+    // Live styling session bar
+    sessionBar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1 },
+    sessionTitle: { fontSize: 13, fontWeight: '700', fontFamily: 'Inter_700Bold' },
+    sessionSubtitle: { fontSize: 11, marginTop: 1 },
+    sessionAction: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, height: 34, borderRadius: 17 },
+    sessionActionText: { color: '#fff', fontSize: 13, fontWeight: '600', fontFamily: 'Inter_700Bold' },
+    sessionSecondary: { paddingHorizontal: 10, paddingVertical: 8 },
+    sessionSecondaryText: { fontSize: 13 },
+
+    // Booking entry point
+    bookBar: { paddingHorizontal: 12, paddingTop: 10, borderTopWidth: 1 },
+    bookButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 40, borderRadius: 20 },
+    bookButtonText: { color: '#fff', fontSize: 14, fontWeight: '600', fontFamily: 'Inter_700Bold' },
 
     inputContainer: { flexDirection: 'row', alignItems: 'center', padding: 12, borderTopWidth: 1 },
     messageInput: { flex: 1, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, maxHeight: 100, borderWidth: 1, fontFamily: 'Inter_400Regular', paddingTop: 10 },

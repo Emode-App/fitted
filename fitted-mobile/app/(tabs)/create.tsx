@@ -299,6 +299,9 @@ function StepIndicator({ currentStep, colors }: { currentStep: number; colors: a
 // ... imports ...
 import { decode } from 'base64-arraybuffer';
 import { usePostsStore } from '@/stores/postsStore';
+import { PRIVATE_BUCKET } from '@/services/privateMedia';
+import { deliverSession } from '@/services/stylingSessions';
+import { captureException } from '@/services/monitoring';
 
 // ... existing code ...
 
@@ -328,6 +331,7 @@ export default function CreateScreen() {
     const forClientId = params.forClientId as string;
     const forClientName = params.forClientName as string;
     const forClientFaceUrl = params.forClientFaceUrl as string;
+    const forSessionId = params.forSessionId as string;
     const isStylingFor = !!forConversation && !!forClientId;
     const sendStylingDelivery = useMessagesStore((state) => state.sendStylingDelivery);
 
@@ -709,8 +713,14 @@ export default function CreateScreen() {
                 ? sceneDescription
                 : (selectedBackground.name !== 'Plain Black' ? selectedBackground.name : 'a clean, neutral studio background');
 
-            // Call AI generation
-            const generatedImage = await generateOutfit(faceBase64, clothingBase64s, bgPrompt);
+            // Call AI generation. When styling for a client, the face belongs to
+            // them — the server checks their consent and the live session, not ours.
+            const generatedImage = await generateOutfit(
+                faceBase64,
+                clothingBase64s,
+                bgPrompt,
+                isStylingFor ? forClientId : undefined,
+            );
 
             // Store result and move to preview
             // generatedImage is already a data URI
@@ -985,17 +995,27 @@ export default function CreateScreen() {
         ));
     };
 
-    const uploadImage = async (bucket: string, filename: string, base64Data: string): Promise<string | null> => {
+    // `posts` is a public bucket, which is correct for content the user chooses to
+    // publish. Anything derived from a client's face is not that -- it goes to
+    // PRIVATE_BUCKET and the stored value is the object path, signed on read.
+    const uploadImage = async (
+        bucket: string,
+        filename: string,
+        base64Data: string,
+        visibility: 'public' | 'private' = 'public',
+    ): Promise<string | null> => {
         if (!base64Data) {
             console.warn('uploadImage called with empty base64Data');
             return null;
         }
 
+        const targetBucket = visibility === 'private' ? PRIVATE_BUCKET : bucket;
+
         try {
             const arrayBuffer = decode(base64Data);
 
-            const { data, error } = await supabase.storage
-                .from(bucket)
+            const { error } = await supabase.storage
+                .from(targetBucket)
                 .upload(filename, arrayBuffer, {
                     contentType: 'image/jpeg',
                     upsert: false,
@@ -1003,7 +1023,9 @@ export default function CreateScreen() {
 
             if (error) throw error;
 
-            const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(filename);
+            if (visibility === 'private') return filename;
+
+            const { data: urlData } = supabase.storage.from(targetBucket).getPublicUrl(filename);
             return urlData.publicUrl;
         } catch (error) {
             console.error('Upload error:', error);
@@ -1028,23 +1050,24 @@ export default function CreateScreen() {
             let publicGeneratedUrl: string | null = null;
             let publicBoardUrl: string | null = null;
 
-            // Upload generated image
+            // A delivery is built from the client's face and is addressed to one
+            // person. It stays in the private bucket and is signed on read, the
+            // same way DM images and face shares are.
             if (generatedImageUri) {
-                const filename = `${user.id}/deliveries/generated_${Date.now()}.jpg`;
+                const filename = `conversations/${forConversation}/deliveries/generated_${Date.now()}.jpg`;
                 let base64 = '';
                 if (generatedImageUri.startsWith('data:')) {
                     base64 = generatedImageUri.split(',')[1];
                 } else {
                     base64 = await FileSystem.readAsStringAsync(generatedImageUri, { encoding: FileSystem.EncodingType.Base64 });
                 }
-                publicGeneratedUrl = await uploadImage('posts', filename, base64);
+                publicGeneratedUrl = await uploadImage('posts', filename, base64, 'private');
             }
 
-            // Upload board image
             if (capturedBoardUri) {
-                const filename = `${user.id}/deliveries/board_${Date.now()}.jpg`;
+                const filename = `conversations/${forConversation}/deliveries/board_${Date.now()}.jpg`;
                 const base64 = await FileSystem.readAsStringAsync(capturedBoardUri, { encoding: FileSystem.EncodingType.Base64 });
-                publicBoardUrl = await uploadImage('posts', filename, base64);
+                publicBoardUrl = await uploadImage('posts', filename, base64, 'private');
             }
 
             if (!publicGeneratedUrl && !publicBoardUrl) {
@@ -1063,20 +1086,44 @@ export default function CreateScreen() {
             }));
 
             // Send delivery message
-            await sendStylingDelivery(forConversation, user.id, {
+            const deliveryMessageId = await sendStylingDelivery(forConversation, user.id, {
                 generated_image_url: publicGeneratedUrl || publicBoardUrl!,
                 board_image_url: publicBoardUrl || undefined,
                 items: deliveryItems,
                 caption: caption.trim() || undefined,
             });
+            if (!deliveryMessageId) {
+                Alert.alert('Error', 'The look could not be delivered. Please try again.');
+                return;
+            }
+
+            // Delivering inside the live window is what captures the payment. If
+            // capture fails the delivery still stands — the client has the look and
+            // the session sits at 'delivered' for retry, so we say so rather than
+            // implying the money moved.
+            let paid = true;
+            if (forSessionId) {
+                try {
+                    await deliverSession(forSessionId, deliveryMessageId);
+                } catch (error: any) {
+                    paid = false;
+                    captureException(error, { feature: 'styling-deliver', sessionId: forSessionId });
+                }
+            }
 
             // Success — reset and navigate back to messages
             resetWorkflow();
-            router.setParams({ forConversation: '', forClientId: '', forClientName: '', forClientFaceUrl: '' });
-            Alert.alert('Delivered! \u{1F389}', `Your styled outfit has been sent to ${forClientName}.`, [
-                { text: 'View Chat', onPress: () => router.push('/(tabs)/messages') },
-                { text: 'OK' },
-            ]);
+            router.setParams({ forConversation: '', forClientId: '', forClientName: '', forClientFaceUrl: '', forSessionId: '' });
+            Alert.alert(
+                paid ? 'Delivered! \u{1F389}' : 'Delivered',
+                paid
+                    ? `Your styled outfit has been sent to ${forClientName} and your payout is on its way.`
+                    : `${forClientName} has your look, but the payment hasn't settled yet. We'll keep retrying — check the session before booking another.`,
+                [
+                    { text: 'View Chat', onPress: () => router.push('/(tabs)/messages') },
+                    { text: 'OK' },
+                ],
+            );
         } catch (error: any) {
             console.error('Send to client failed:', error);
             Alert.alert('Error', error.message || 'Failed to send outfit');

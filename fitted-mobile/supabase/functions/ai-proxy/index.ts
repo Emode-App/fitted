@@ -76,14 +76,51 @@ serve(async (req: Request) => {
             if (faceProvided && !cleanFace) return json({ error: 'The face image is invalid or too large' }, 400);
 
             if (faceProvided) {
+                // Consent belongs to whoever's face this is, not to whoever is
+                // driving the generation. When a stylist styles a client, it is
+                // the client who must have consented -- checking the caller here
+                // would let a stylist process a face on the strength of their own
+                // consent to their own face.
+                const faceOwnerId = typeof payload?.faceOwnerId === 'string' && payload.faceOwnerId
+                    ? payload.faceOwnerId
+                    : user.id;
+                if (!/^[0-9a-f-]{36}$/i.test(faceOwnerId)) {
+                    return json({ error: 'Invalid face owner' }, 400);
+                }
+
+                if (faceOwnerId !== user.id) {
+                    // Someone else's face is only usable inside a live styling
+                    // session that this caller is the stylist for. That is both the
+                    // consent boundary and the abuse boundary.
+                    const { data: session } = await admin
+                        .from('styling_sessions')
+                        .select('id')
+                        .eq('stylist_id', user.id)
+                        .eq('client_id', faceOwnerId)
+                        .in('status', ['active', 'delivered'])
+                        .maybeSingle();
+                    if (!session) {
+                        await recordGeneration(user.id, 'blocked', true);
+                        return json({
+                            error: 'You can only style a client during an active session.',
+                            code: 'no_active_session',
+                        }, 403);
+                    }
+                }
+
                 const { data: settings } = await admin
                     .from('user_settings')
                     .select('ai_face_consent_at')
-                    .eq('user_id', user.id)
+                    .eq('user_id', faceOwnerId)
                     .single();
                 if (!settings?.ai_face_consent_at) {
                     await recordGeneration(user.id, 'blocked', true);
-                    return json({ error: 'AI face consent is required', code: 'consent_required' }, 403);
+                    return json({
+                        error: faceOwnerId === user.id
+                            ? 'AI face consent is required'
+                            : 'This client has not consented to AI face processing.',
+                        code: 'consent_required',
+                    }, 403);
                 }
             }
 

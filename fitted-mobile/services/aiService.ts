@@ -13,13 +13,21 @@ import { ensureAiFaceConsent } from './privacyService';
 export async function generateOutfit(
     facePhotoBase64: string | null,
     clothingImagesBase64: string[],
-    backgroundPrompt?: string
+    backgroundPrompt?: string,
+    /**
+     * Whose face this is. Omit when styling yourself. When a stylist styles a
+     * client this must be the client's id — the server checks *their* consent,
+     * not the caller's, and requires a live session between the two.
+     */
+    faceOwnerId?: string,
 ): Promise<string> {
     if (clothingImagesBase64.length === 0) {
         throw new Error('At least one clothing item is required');
     }
 
-    if (facePhotoBase64) {
+    if (facePhotoBase64 && !faceOwnerId) {
+        // Only self-serve generation can be consent-checked on the client. When
+        // the face belongs to someone else the server is the only authority.
         const { data: { user } } = await supabase.auth.getUser();
         if (!user || !(await ensureAiFaceConsent(user.id))) {
             throw new Error('AI face consent is required before generating with a face photo.');
@@ -33,6 +41,7 @@ export async function generateOutfit(
                 facePhotoBase64,
                 clothingImagesBase64,
                 backgroundPrompt,
+                faceOwnerId,
             },
         });
 

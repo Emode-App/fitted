@@ -10,6 +10,7 @@ import { Text, View } from '@/components/Themed';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
 import { useTheme } from '@/hooks/useTheme';
+import { PLATFORM_CONFIG } from '@/constants/payments';
 
 const HEADER_HEIGHT = 140;
 
@@ -36,6 +37,9 @@ export default function EditProfileScreen() {
 
     // Favorites
     const [favoriteBrand, setFavoriteBrand] = useState(user?.favorite_brand || '');
+    const [sessionPrice, setSessionPrice] = useState(
+        user?.styling_rate_cents != null ? (user.styling_rate_cents / 100).toFixed(2) : ''
+    );
     const [songTitle, setSongTitle] = useState(user?.favorite_song?.title || '');
     const [songArtist, setSongArtist] = useState(user?.favorite_song?.artist || '');
     const [songUrl, setSongUrl] = useState(user?.favorite_song?.url || '');
@@ -367,6 +371,24 @@ export default function EditProfileScreen() {
                 twitter: twitter.trim() || undefined,
             };
 
+            // Session price is stored in cents. Empty means "not taking bookings",
+            // which is distinct from zero and must survive as NULL.
+            let ratePayload: Record<string, number | null> = {};
+            if (user.is_verified_stylist) {
+                const trimmed = sessionPrice.trim();
+                if (!trimmed) {
+                    ratePayload = { styling_rate_cents: null };
+                } else {
+                    const dollars = Number(trimmed.replace(/[^0-9.]/g, ''));
+                    if (!Number.isFinite(dollars) || dollars < 5 || dollars > 500) {
+                        Alert.alert('Invalid Session Price', 'Enter an amount between $5 and $500, or leave it empty to stop taking bookings.');
+                        setSaving(false);
+                        return;
+                    }
+                    ratePayload = { styling_rate_cents: Math.round(dollars * 100) };
+                }
+            }
+
             const { error } = await supabase
                 .from('users')
                 .update({
@@ -380,6 +402,7 @@ export default function EditProfileScreen() {
                     favorite_brand: favoriteBrand.trim() || null,
                     favorite_song: favoriteSong,
                     socials: socials,
+                    ...ratePayload,
                 })
                 .eq('id', user.id);
 
@@ -606,6 +629,34 @@ export default function EditProfileScreen() {
                         </View>
                     </View>
                 </View>
+
+                {/* Styling rate — verified stylists only. This is the amount a
+                    client's card is authorized for when they book a live session. */}
+                {user?.is_verified_stylist && (
+                    <View style={styles.section}>
+                        <Text style={[styles.sectionTitle, { color: colors.text }]}>Styling</Text>
+
+                        <View style={styles.field}>
+                            <Text style={[styles.label, { color: colors.textSecondary }]}>Session Price</Text>
+                            <View style={[styles.iconInputWrapper, { backgroundColor: colors.backgroundSecondary, borderColor: colors.border }]}>
+                                <Feather name="dollar-sign" size={18} color={colors.textSecondary} />
+                                <TextInput
+                                    style={[styles.iconInput, { color: colors.text }]}
+                                    value={sessionPrice}
+                                    onChangeText={setSessionPrice}
+                                    placeholder="75"
+                                    placeholderTextColor={colors.textTertiary}
+                                    keyboardType="decimal-pad"
+                                />
+                            </View>
+                            <Text style={[styles.helperText, { color: colors.textTertiary }]}>
+                                $5–$500 per live session. Emode keeps {PLATFORM_CONFIG.feePercent}%;
+                                the rest goes to your connected payout account. Leave empty to stop
+                                taking bookings.
+                            </Text>
+                        </View>
+                    </View>
+                )}
 
                 {/* Favorites Section */}
                 <View style={styles.section}>
@@ -905,6 +956,11 @@ const styles = StyleSheet.create({
         fontSize: 13,
         marginBottom: 8,
         fontFamily: 'Inter_500Medium',
+    },
+    helperText: {
+        fontSize: 11,
+        lineHeight: 15,
+        marginTop: 6,
     },
     input: {
         borderRadius: 12,
