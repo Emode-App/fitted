@@ -6,7 +6,7 @@ import {
     View,
     Text,
     StyleSheet,
-    FlatList,
+    ScrollView,
     TouchableOpacity,
     Dimensions,
     Alert,
@@ -70,8 +70,9 @@ export default function AssetGrid({ onAssetSelect }: { onAssetSelect: (asset: As
         }
     };
 
-    const renderAsset = ({ item }: { item: Asset }) => (
+    const renderAsset = (item: Asset) => (
         <TouchableOpacity
+            key={item.id}
             style={[
                 styles.assetItem,
                 { backgroundColor: isDark ? '#000' : '#fff' },
@@ -114,22 +115,27 @@ export default function AssetGrid({ onAssetSelect }: { onAssetSelect: (asset: As
                 </Pressable>
             </View>
 
-            {/* Assets Grid or Empty State */}
+            {/* Assets Grid or Empty State.
+                A FlatList here would be a VirtualizedList nested inside the create
+                screen's vertical ScrollView: React Native warns about it because
+                windowing breaks, and `nestedScrollEnabled` is Android-only so iOS
+                got nothing from it anyway. The box is capped at four rows, so a
+                wrapped ScrollView renders the same thing without the broken
+                virtualization. If folders ever grow large enough for this to cost
+                anything, the fix is paging the folder, not re-nesting a FlatList. */}
             {assets.length === 0 ? (
                 renderEmpty()
             ) : (
-                <FlatList
-                    data={assets}
-                    renderItem={renderAsset}
-                    keyExtractor={(item) => item.id}
-                    numColumns={NUM_COLUMNS}
-                    contentContainerStyle={styles.gridContainer}
-                    showsVerticalScrollIndicator={true}
-                    scrollEnabled={true}
-                    columnWrapperStyle={styles.columnWrapper}
+                <ScrollView
                     style={{ maxHeight: GRID_MAX_HEIGHT }}
-                    nestedScrollEnabled={true}
-                />
+                    contentContainerStyle={styles.gridContainer}
+                    showsVerticalScrollIndicator
+                    nestedScrollEnabled
+                >
+                    <View style={styles.gridRows}>
+                        {assets.map(renderAsset)}
+                    </View>
+                </ScrollView>
             )}
         </View>
     );
@@ -170,7 +176,11 @@ const styles = StyleSheet.create({
     gridContainer: {
         gap: GAP,
     },
-    columnWrapper: {
+    // Wraps into NUM_COLUMNS columns because assetItem is a fixed ITEM_SIZE that
+    // was derived from the container width and gaps.
+    gridRows: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
         gap: GAP,
     },
     assetItem: {
