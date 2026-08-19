@@ -77,7 +77,7 @@ export default function MessagesScreen() {
         });
 
         const channel = supabase
-            .channel(`styling_session:${activeConversation.id}`)
+            .channel(`conversation:${activeConversation.id}`)
             .on('postgres_changes', {
                 event: '*',
                 schema: 'public',
@@ -89,13 +89,25 @@ export default function MessagesScreen() {
                 // A finished session should stop rendering session UI.
                 setSession(['completed', 'cancelled', 'expired'].includes(next.status) ? null : next);
             })
+            // Without this the thread is frozen from the moment you open it: the
+            // only other fetch happens when activeConversation changes. Refetching
+            // rather than appending the payload row keeps the sender join and the
+            // signed URLs for private media, which the raw row does not carry.
+            .on('postgres_changes', {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'messages',
+                filter: `conversation_id=eq.${activeConversation.id}`,
+            }, () => {
+                fetchMessages(activeConversation.id);
+            })
             .subscribe();
 
         return () => {
             cancelled = true;
             supabase.removeChannel(channel);
         };
-    }, [activeConversation?.id]);
+    }, [activeConversation?.id, fetchMessages]);
 
     // Tick the visible countdown while a window is open.
     useEffect(() => {

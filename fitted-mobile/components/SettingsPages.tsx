@@ -597,7 +597,7 @@ export const LoginActivityPage = ({ onBack }: { onBack: () => void }) => {
 export const NotificationsPage = ({ onBack }: { onBack: () => void }) => {
     const { colors, isDark } = useTheme();
     const user = useAuthStore((state) => state.user);
-    const [preferences, setPreferences] = useState({ likes: true, comments: true, follows: true, orders: true });
+    const [preferences, setPreferences] = useState({ likes: true, comments: true, follows: true, orders: true, messages: true, styling: true });
     const [loading, setLoading] = useState(true);
     const [enablingPush, setEnablingPush] = useState(false);
 
@@ -634,8 +634,8 @@ export const NotificationsPage = ({ onBack }: { onBack: () => void }) => {
                 {loading ? <ActivityIndicator color={colors.text} /> : <>
                 <View style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6', marginBottom: 24 }]}>
                     <ToggleRow label="Pause All" value={pauseAll} onValueChange={(value) => save(value
-                        ? { likes: false, comments: false, follows: false, orders: false }
-                        : { likes: true, comments: true, follows: true, orders: true })} />
+                        ? { likes: false, comments: false, follows: false, orders: false, messages: false, styling: false }
+                        : { likes: true, comments: true, follows: true, orders: true, messages: true, styling: true })} />
                 </View>
 
                 <SectionTitle title="Interactions" />
@@ -643,6 +643,12 @@ export const NotificationsPage = ({ onBack }: { onBack: () => void }) => {
                     <ToggleRow label="Likes" value={preferences.likes} onValueChange={(value) => setPreference('likes', value)} />
                     <ToggleRow label="Comments" value={preferences.comments} onValueChange={(value) => setPreference('comments', value)} />
                     <ToggleRow label="New Followers" value={preferences.follows} onValueChange={(value) => setPreference('follows', value)} />
+                </View>
+
+                <SectionTitle title="Messages & Styling" />
+                <View style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6', marginBottom: 24 }]}>
+                    <ToggleRow label="Direct Messages" value={preferences.messages} onValueChange={(value) => setPreference('messages', value)} />
+                    <ToggleRow label="Styling Sessions" value={preferences.styling} onValueChange={(value) => setPreference('styling', value)} />
                 </View>
 
                 <SectionTitle title="Marketplace" />
