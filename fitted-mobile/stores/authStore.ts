@@ -7,6 +7,7 @@ import { User } from '../types';
 import * as Device from 'expo-device';
 import { logOutPurchases } from '../services/revenueCatService';
 import { deleteSecureItem, getSecureItem, setSecureItem } from '../services/secureStorage';
+import { claimLocalCache, clearLocalUserData } from '../services/localUserData';
 
 const SESSION_KEY = 'current_login_session_id';
 
@@ -68,6 +69,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             const { data: { session } } = await supabase.auth.getSession();
 
             if (session?.user) {
+                // Backstop for a sign-out that never ran: force-quit mid-logout,
+                // a server-side session expiry, or a token revoked from another
+                // device. Purges the cache before any of it can be rendered.
+                await claimLocalCache(session.user.id);
+
                 const { data: profile } = await supabase
                     .from('users')
                     .select('*')
@@ -87,6 +93,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             // Listen for auth changes
             supabase.auth.onAuthStateChange(async (event, session) => {
                 if (session?.user) {
+                    // Catches the in-process account switch, where sign-out ran but
+                    // this listener is what actually sees the new identity arrive.
+                    await claimLocalCache(session.user.id);
+
                     const { data: profile } = await supabase
                         .from('users')
                         .select('*')
@@ -173,6 +183,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         // Remove this device's push token while the session is still valid (RLS).
         await unregisterPush();
         await logOutPurchases();
+        // Wardrobe assets, recent searches and tutorial state are cached on the
+        // device. Without this the next account to sign in on this phone inherits
+        // them, including the previous user's uploaded clothing photos.
+        await clearLocalUserData();
         await supabase.auth.signOut();
         set({ user: null, session: null, isAuthenticated: false });
     },
@@ -193,6 +207,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             throw new Error(reason);
         }
         await logOutPurchases();
+        await clearLocalUserData();
         await supabase.auth.signOut();
         set({ user: null, session: null, isAuthenticated: false });
     },
