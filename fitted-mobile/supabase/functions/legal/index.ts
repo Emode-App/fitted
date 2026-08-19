@@ -11,7 +11,7 @@ const supabase = createClient(
 );
 
 const effectiveDate = 'August 17, 2026';
-const supportEmail = 'support@emode.app';
+const supportEmail = 'support@emode.style';
 
 const escapeHtml = (value: string) => value
     .replaceAll('&', '&amp;')
