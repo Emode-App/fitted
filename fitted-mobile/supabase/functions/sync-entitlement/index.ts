@@ -32,23 +32,46 @@ serve(async (req: Request) => {
         const { user, error } = await getUser(req);
         if (!user) return json({ error: error || 'Unauthorized' }, 401);
 
-        if (!revenueCatSecret) {
+        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+        // Entitlements granted outside RevenueCat -- staff, App Review, comps.
+        // RevenueCat cannot know about these, so without folding them in here this
+        // function revokes them on its next run, which is exactly what kept
+        // happening to manually granted stylist accounts.
+        const { data: profile } = await supabase
+            .from('users')
+            .select('comped_entitlements')
+            .eq('id', user.id)
+            .single();
+
+        const comped: string[] = profile?.comped_entitlements ?? [];
+
+        // Read comps before talking to RevenueCat, and treat a RevenueCat outage as
+        // "no purchased entitlements" rather than a hard failure. Bailing out early
+        // would strand a comped account -- including the App Review demo login --
+        // behind somebody else's downtime.
+        let active: Record<string, any> = {};
+        if (revenueCatSecret) {
+            try {
+                // Look up the subscriber by their Supabase user id (the app calls
+                // Purchases.logIn(user.id), so the RevenueCat app_user_id matches).
+                const rcResp = await fetch(`https://api.revenuecat.com/v1/subscribers/${user.id}`, {
+                    headers: { Authorization: `Bearer ${revenueCatSecret}` },
+                });
+                if (rcResp.ok) {
+                    active = (await rcResp.json())?.subscriber?.entitlements || {};
+                } else {
+                    console.error('RevenueCat lookup failed:', rcResp.status);
+                    if (comped.length === 0) return json({ error: 'Could not verify subscription' }, 502);
+                }
+            } catch (rcError) {
+                console.error('RevenueCat unreachable:', rcError);
+                if (comped.length === 0) return json({ error: 'Could not verify subscription' }, 502);
+            }
+        } else if (comped.length === 0) {
             return json({ error: 'Entitlement verification not configured' }, 500);
         }
 
-        // Look up the subscriber by their Supabase user id (the app calls
-        // Purchases.logIn(user.id), so the RevenueCat app_user_id matches).
-        const rcResp = await fetch(`https://api.revenuecat.com/v1/subscribers/${user.id}`, {
-            headers: { Authorization: `Bearer ${revenueCatSecret}` },
-        });
-
-        if (!rcResp.ok) {
-            console.error('RevenueCat lookup failed:', rcResp.status);
-            return json({ error: 'Could not verify subscription' }, 502);
-        }
-
-        const rcBody = await rcResp.json();
-        const active = rcBody?.subscriber?.entitlements || {};
         const now = Date.now();
 
         const isActive = (id: string): boolean => {
@@ -58,13 +81,14 @@ serve(async (req: Request) => {
             return exp > now;
         };
 
-        const verified = isActive(ENTITLEMENTS.verifiedStylist);
-        const business = isActive(ENTITLEMENTS.businessAccount);
-        const pro = isActive(ENTITLEMENTS.proTryOns);
+        const granted = (id: string): boolean => isActive(id) || comped.includes(id);
+
+        const verified = granted(ENTITLEMENTS.verifiedStylist);
+        const business = granted(ENTITLEMENTS.businessAccount);
+        const pro = granted(ENTITLEMENTS.proTryOns);
 
         const subscription_status = (verified || business || pro) ? 'active' : 'none';
 
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
         const { error: updateError } = await supabase
             .from('users')
             .update({

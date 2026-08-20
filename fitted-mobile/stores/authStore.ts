@@ -8,6 +8,7 @@ import * as Device from 'expo-device';
 import { logOutPurchases } from '../services/revenueCatService';
 import { deleteSecureItem, getSecureItem, setSecureItem } from '../services/secureStorage';
 import { claimLocalCache, clearLocalUserData } from '../services/localUserData';
+import { restoreWardrobeFromStorage } from '../services/wardrobeRestore';
 
 const SESSION_KEY = 'current_login_session_id';
 
@@ -73,6 +74,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                 // a server-side session expiry, or a token revoked from another
                 // device. Purges the cache before any of it can be rendered.
                 await claimLocalCache(session.user.id);
+                void restoreWardrobeFromStorage(session.user.id);
 
                 const { data: profile } = await supabase
                     .from('users')
@@ -96,6 +98,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                     // Catches the in-process account switch, where sign-out ran but
                     // this listener is what actually sees the new identity arrive.
                     await claimLocalCache(session.user.id);
+                    void restoreWardrobeFromStorage(session.user.id);
 
                     const { data: profile } = await supabase
                         .from('users')
