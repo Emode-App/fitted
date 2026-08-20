@@ -268,35 +268,42 @@ export default function PostDetailScreen() {
         // "No items found" while waiting for their turn.
         setLoadingBrands(prev => [...new Set([...prev, ...brands])]);
 
-        // Fetch all brands in parallel so they load together instead of one-by-one.
+        // Read what people have actually tagged, rather than asking a sneaker API
+        // for "<brand> clothing" -- the wrong catalogue for apparel, and the reason
+        // every one of these sections sat on "No items found" whenever it was down.
         await Promise.all(brands.map(async (brand) => {
             try {
-                const results = await searchProducts(`${brand} clothing`);
+                const { data, error } = await supabase
+                    .from('brand_feed')
+                    .select('post_id, brand_name, item_name, image_url, purchase_link, price')
+                    .ilike('brand_name', brand)
+                    .neq('post_id', id)          // "More from" means other posts
+                    .order('created_at', { ascending: false })
+                    .limit(24);
 
-                if (results && results.length > 0) {
-                    const mappedItems: ClothingItem[] = results.slice(0, 8).map((item: any, index: number) => {
-                        // Image fallback logic
-                        let imageUrl = item.imageUrl;
-                        if (!imageUrl || imageUrl.length < 10) {
-                            // Include the SKU when available - it uniquely identifies the
-                            // product, so the search returns the exact item rather than a
-                            // visually-similar one.
-                            const searchTerm = [item.brand, item.name, item.sku, 'product white background']
-                                .filter(Boolean)
-                                .join(' ');
-                            imageUrl = `https://tse2.mm.bing.net/th?q=${encodeURIComponent(searchTerm)}&w=500&h=500&c=7&rs=1&p=0`;
-                        }
+                if (error) throw error;
 
-                        return {
-                            id: `dyn_${brand}_${index}`,
-                            brand: item.brand || brand,
-                            name: item.name,
-                            price: item.price || 0,
-                            image_url: imageUrl,
-                            purchase_link: item.purchaseLink || '',
-                        };
+                // One piece can be tagged in several posts; show it once.
+                const seen = new Set<string>();
+                const mappedItems: ClothingItem[] = [];
+
+                for (const row of data ?? []) {
+                    if (mappedItems.length >= 8) break;
+                    const key = `${row.item_name ?? ''}|${row.image_url ?? ''}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+
+                    mappedItems.push({
+                        id: `dyn_${brand}_${mappedItems.length}`,
+                        brand: row.brand_name || brand,
+                        name: row.item_name || 'Item',
+                        price: Number(row.price) || 0,
+                        image_url: row.image_url || '',
+                        purchase_link: row.purchase_link || '',
                     });
+                }
 
+                if (mappedItems.length > 0) {
                     setBrandCollections(prev => ({ ...prev, [brand]: mappedItems }));
                 }
             } catch (err) {

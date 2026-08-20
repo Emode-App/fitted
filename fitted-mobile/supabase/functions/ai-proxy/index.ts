@@ -201,6 +201,91 @@ serve(async (req: Request) => {
             return json({ image: `data:image/png;base64,${image}`, remaining: Math.max(0, dailyLimit - (count || 0) - 1) });
         }
 
+        if (action === 'identify-item') {
+            // Suggests what a photographed piece is so the tagger can fill the item
+            // form with one tap instead of typing it out.
+            //
+            // Deliberately returns only a brand and a name. A model will happily
+            // produce a price and a product URL too, but the price is a recalled
+            // number that is usually years stale and the URL is usually invented
+            // and 404s. Those are resolved against the real catalogue afterwards,
+            // or left blank for the user. Nothing here is auto-applied: the caller
+            // shows it as a question and writes nothing unless the user says yes.
+            const image = cleanBase64(payload?.imageBase64);
+            if (!image) return json({ error: 'A valid item photo is required' }, 400);
+
+            const rate = await checkRateLimit(user.id, 'ai:identify-item', 120, 3600);
+            if (!rate.allowed) return rateLimitResponse(rate, cors);
+
+            const visionModel = Deno.env.get('GEMINI_VISION_MODEL') || 'gemini-2.5-flash';
+
+            const prompt = [
+                'You identify garments and footwear from a photo for a fashion app.',
+                'Reply with JSON only, no markdown fence, matching exactly:',
+                '{"brand": string|null, "name": string|null, "category": string|null, "confidence": "high"|"medium"|"low"}',
+                '',
+                'Rules:',
+                '- brand is the maker (e.g. "Rick Owens"). name is the specific model or product name (e.g. "Geobasket").',
+                '- If you cannot recognise the specific product, set name to null but still give the brand if the branding is legible.',
+                '- If you cannot recognise the brand either, set both to null and confidence to "low". Do NOT guess a plausible brand.',
+                '- An unbranded, generic or thrifted piece must return nulls rather than an invented label.',
+                '- confidence reflects how certain you are that a person holding this item would agree.',
+            ].join('\n');
+
+            const resp = await fetch(`${GEMINI_BASE}/${visionModel}:generateContent?key=${GEMINI_API_KEY}`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{
+                        role: 'user',
+                        parts: [
+                            { text: prompt },
+                            { inlineData: { mimeType: 'image/jpeg', data: image } },
+                        ],
+                    }],
+                    generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+                }),
+            });
+
+            if (!resp.ok) {
+                console.error('identify-item upstream', resp.status, (await resp.text()).slice(0, 300));
+                return json({ error: 'Could not identify this item right now' }, 502);
+            }
+
+            const data = await resp.json();
+            const text = data?.candidates?.[0]?.content?.parts?.find((p: any) => typeof p?.text === 'string')?.text;
+            if (!text) return json({ error: 'Could not identify this item right now' }, 502);
+
+            let parsed: any;
+            try {
+                parsed = JSON.parse(text.replace(/^```(?:json)?|```$/g, '').trim());
+            } catch {
+                console.error('identify-item unparseable', text.slice(0, 200));
+                return json({ error: 'Could not identify this item right now' }, 502);
+            }
+
+            const clean = (value: unknown) => {
+                if (typeof value !== 'string') return null;
+                const trimmed = value.trim();
+                if (!trimmed || /^(null|unknown|n\/a|none)$/i.test(trimmed)) return null;
+                return trimmed.slice(0, 120);
+            };
+
+            const brand = clean(parsed?.brand);
+            const name = clean(parsed?.name);
+            const confidence = ['high', 'medium', 'low'].includes(parsed?.confidence) ? parsed.confidence : 'low';
+
+            // Nothing recognisable is a real answer, not an error. Saying so lets the
+            // caller stay quiet rather than putting a wrong guess in front of someone.
+            return json({
+                brand,
+                name,
+                category: clean(parsed?.category),
+                confidence,
+                recognised: !!brand,
+            });
+        }
+
         return json({ error: 'Unknown action' }, 400);
     } catch (error: any) {
         console.error('ai-proxy error', error?.message);

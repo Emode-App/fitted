@@ -23,7 +23,7 @@ import TutorialModal, { useFirstVisitTutorial, TutorialStep } from '@/components
 import ProductSearchModal from '@/components/ProductSearchModal';
 import FolderCarousel from '@/components/FolderCarousel';
 import AssetGrid from '@/components/AssetGrid';
-import { Product, generateOutfit, searchProducts } from '@/services/aiService';
+import { Product, generateOutfit, searchProducts, identifyItem, ItemSuggestion } from '@/services/aiService';
 import { Asset, useWardrobeStore } from '@/stores/wardrobeStore';
 import { useTheme } from '@/hooks/useTheme';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -1324,6 +1324,89 @@ export default function CreateScreen() {
         }));
     };
 
+    // --- Identify an item from its photo -----------------------------------
+    //
+    // Offers a guess so tagging is one tap instead of typing. Everything stays a
+    // suggestion until the user accepts it: nothing is written to itemLinks on
+    // the strength of the model alone.
+
+    const [suggestions, setSuggestions] = useState<Record<string, ItemSuggestion>>({});
+    const [identifying, setIdentifying] = useState<string[]>([]);
+    const [unrecognised, setUnrecognised] = useState<string[]>([]);
+
+    /** Read an item's photo as base64, whether it is still local or already uploaded. */
+    const itemImageBase64 = async (uri: string): Promise<string | null> => {
+        try {
+            if (uri.startsWith('file://') || uri.startsWith('/')) {
+                return await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+            }
+            const target = `${FileSystem.cacheDirectory}identify_${Date.now()}.jpg`;
+            const { uri: local } = await FileSystem.downloadAsync(uri, target);
+            const base64 = await FileSystem.readAsStringAsync(local, { encoding: FileSystem.EncodingType.Base64 });
+            FileSystem.deleteAsync(local, { idempotent: true }).catch(() => {});
+            return base64;
+        } catch (error) {
+            console.warn('[identify] could not read item image:', error);
+            return null;
+        }
+    };
+
+    const handleIdentify = async (item: CanvasItem) => {
+        if (identifying.includes(item.id)) return;
+
+        setIdentifying(prev => [...prev, item.id]);
+        setUnrecognised(prev => prev.filter(id => id !== item.id));
+
+        try {
+            const base64 = await itemImageBase64(item.url);
+            if (!base64) return;
+
+            const suggestion = await identifyItem(base64);
+            if (suggestion?.recognised) {
+                setSuggestions(prev => ({ ...prev, [item.id]: suggestion }));
+            } else {
+                // Not recognising something is a real answer. Say so rather than
+                // offering a guess nobody should act on.
+                setUnrecognised(prev => [...prev, item.id]);
+            }
+        } finally {
+            setIdentifying(prev => prev.filter(id => id !== item.id));
+        }
+    };
+
+    /** Accepting fills only the fields the suggestion actually carries. */
+    const acceptSuggestion = (itemId: string) => {
+        const suggestion = suggestions[itemId];
+        if (!suggestion) return;
+
+        setItemLinks(prev => {
+            const current = prev[itemId] || { brand: '', name: '', price: '', url: '' };
+            return {
+                ...prev,
+                [itemId]: {
+                    brand: suggestion.brand || current.brand,
+                    name: suggestion.name || current.name,
+                    price: suggestion.price ? String(suggestion.price) : current.price,
+                    url: suggestion.purchaseLink || current.url,
+                },
+            };
+        });
+
+        setSuggestions(prev => {
+            const next = { ...prev };
+            delete next[itemId];
+            return next;
+        });
+    };
+
+    const dismissSuggestion = (itemId: string) => {
+        setSuggestions(prev => {
+            const next = { ...prev };
+            delete next[itemId];
+            return next;
+        });
+    };
+
     // Save generated image(s) to device camera roll
     const handleSaveToDevice = async (saveType: 'ai' | 'board' | 'both') => {
         setIsSaving(true);
@@ -1948,6 +2031,53 @@ export default function CreateScreen() {
                                                     <Feather name="plus" size={16} color="#fff" />
                                                 </Pressable>
                                             </View>
+
+                                            {/* Identify from the photo. Fills the fields above only
+                                                once the user confirms the guess is right. */}
+                                            {suggestions[item.id] ? (
+                                                <View style={[styles.suggestionCard, { borderColor: colors.border }]}>
+                                                    <Text style={[styles.suggestionAsk, { color: colors.text }]}>
+                                                        {suggestions[item.id].name
+                                                            ? `Is this the ${suggestions[item.id].brand} ${suggestions[item.id].name}?`
+                                                            : `Is this ${suggestions[item.id].brand}?`}
+                                                    </Text>
+                                                    {suggestions[item.id].confidence !== 'high' && (
+                                                        <Text style={[styles.suggestionHedge, { color: colors.textTertiary }]}>
+                                                            Not certain — check before accepting.
+                                                        </Text>
+                                                    )}
+                                                    <View style={styles.suggestionActions}>
+                                                        <Pressable
+                                                            style={[styles.suggestionYes, { backgroundColor: colors.text }]}
+                                                            onPress={() => acceptSuggestion(item.id)}
+                                                        >
+                                                            <Text style={[styles.suggestionYesText, { color: colors.background }]}>Yes, fill it in</Text>
+                                                        </Pressable>
+                                                        <Pressable style={styles.suggestionNo} onPress={() => dismissSuggestion(item.id)}>
+                                                            <Text style={[styles.suggestionNoText, { color: colors.textSecondary }]}>No</Text>
+                                                        </Pressable>
+                                                    </View>
+                                                </View>
+                                            ) : unrecognised.includes(item.id) ? (
+                                                <Text style={[styles.suggestionHedge, { color: colors.textTertiary }]}>
+                                                    Couldn't tell what this is — worth typing in.
+                                                </Text>
+                                            ) : (
+                                                <Pressable
+                                                    style={styles.identifyButton}
+                                                    onPress={() => handleIdentify(item)}
+                                                    disabled={identifying.includes(item.id)}
+                                                >
+                                                    {identifying.includes(item.id) ? (
+                                                        <ActivityIndicator size="small" color={colors.textSecondary} />
+                                                    ) : (
+                                                        <Feather name="search" size={13} color={colors.textSecondary} />
+                                                    )}
+                                                    <Text style={[styles.identifyButtonText, { color: colors.textSecondary }]}>
+                                                        {identifying.includes(item.id) ? 'Looking…' : 'What is this?'}
+                                                    </Text>
+                                                </Pressable>
+                                            )}
                                         </View>
                                     </View>
                                 ))}
@@ -2433,6 +2563,57 @@ const styles = StyleSheet.create({
     },
     toggleKnobActive: {
         alignSelf: 'flex-end',
+    },
+    identifyButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        alignSelf: 'flex-start',
+        paddingVertical: 6,
+        paddingHorizontal: 2,
+    },
+    identifyButtonText: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    suggestionCard: {
+        marginTop: 8,
+        padding: 10,
+        borderRadius: 10,
+        borderWidth: 1,
+    },
+    suggestionAsk: {
+        fontSize: 13,
+        fontWeight: '600',
+        lineHeight: 18,
+    },
+    suggestionHedge: {
+        fontSize: 11,
+        marginTop: 4,
+        lineHeight: 15,
+    },
+    suggestionActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        marginTop: 10,
+    },
+    suggestionYes: {
+        paddingVertical: 7,
+        paddingHorizontal: 14,
+        borderRadius: 8,
+    },
+    suggestionYesText: {
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    suggestionNo: {
+        paddingVertical: 7,
+        paddingHorizontal: 8,
+    },
+    suggestionNoText: {
+        fontSize: 12,
+        fontWeight: '600',
     },
     // Polaroid frame toggle button styles
     polaroidToggleButton: {

@@ -12,6 +12,8 @@ export interface Product {
     styleId: string;
     retailPrice?: number;
     lastSale?: number;
+    /** Set when the result came from a tagged post, where somebody entered a real link. */
+    purchaseLink?: string;
 }
 export interface SearchResult {
     products: Product[];
@@ -30,14 +32,69 @@ export async function searchProducts(query: string, limit: number = 20): Promise
             body: { query, limit },
         });
 
-        if (error || !data?.raw) {
-            if (error) console.error('Product search error:', error.message);
-            return { products: [], total: 0 };
+        if (!error && data?.raw) {
+            const upstream = transformResponse(data.raw);
+            if (upstream.products.length > 0) return upstream;
+        } else if (error) {
+            // The upstream is a sneaker database behind a metered API. When its
+            // subscription lapses or it rejects the key, every search silently
+            // returned nothing at all. Fall through to what this app already knows.
+            console.warn('[productSearch] upstream unavailable, using tagged catalogue:', error.message);
         }
 
-        return transformResponse(data.raw);
+        return searchTaggedCatalogue(query, limit);
     } catch (error) {
-        console.error('Product search error:', error);
+        console.warn('[productSearch] upstream threw, using tagged catalogue:', error);
+        return searchTaggedCatalogue(query, limit);
+    }
+}
+
+/**
+ * Search the pieces people have tagged on their own posts.
+ *
+ * Not a replacement for a real catalogue -- it only knows what has been worn and
+ * attributed here -- but the results are real, they carry the price and link the
+ * tagger entered, and they do not disappear when somebody else's API goes down.
+ */
+async function searchTaggedCatalogue(query: string, limit: number): Promise<SearchResult> {
+    try {
+        const term = `%${query.trim()}%`;
+
+        const { data, error } = await supabase
+            .from('brand_feed')
+            .select('post_id, brand_name, item_name, image_url, purchase_link, price')
+            .or(`brand_name.ilike.${term},item_name.ilike.${term}`)
+            .order('created_at', { ascending: false })
+            .limit(limit * 3);
+
+        if (error || !data) return { products: [], total: 0 };
+
+        // The same piece is tagged on every post it appears in; show it once.
+        const seen = new Set<string>();
+        const products: Product[] = [];
+
+        for (const row of data) {
+            if (products.length >= limit) break;
+            const key = `${row.brand_name ?? ''}|${row.item_name ?? ''}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            products.push({
+                id: `tagged_${row.post_id}_${products.length}`,
+                name: row.item_name || 'Item',
+                brand: row.brand_name || '',
+                imageUrl: row.image_url || '',
+                thumbnail: row.image_url || '',
+                styleId: '',
+                retailPrice: Number(row.price) || undefined,
+                lastSale: undefined,
+                purchaseLink: row.purchase_link || undefined,
+            });
+        }
+
+        return { products, total: products.length };
+    } catch (error) {
+        console.warn('[productSearch] tagged catalogue lookup failed:', error);
         return { products: [], total: 0 };
     }
 }

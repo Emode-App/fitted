@@ -107,10 +107,80 @@ export async function searchProducts(query: string): Promise<Product[]> {
             price: item.lastSale || item.retailPrice || 0,
             sku: item.styleId || undefined,
             imageUrl: item.imageUrl || item.thumbnail || undefined,
-            purchaseLink: `https://stockx.com/search?s=${encodeURIComponent(`${item.brand} ${item.name}`)}`,
+            // A tagged result carries the link its tagger entered; only fall back to
+            // a StockX search for upstream results, which have no link of their own.
+            purchaseLink: item.purchaseLink
+                || `https://stockx.com/search?s=${encodeURIComponent(`${item.brand} ${item.name}`)}`,
         }));
     } catch (error) {
         console.error('Search error:', error);
         return [];
+    }
+}
+
+export interface ItemSuggestion {
+    brand: string | null;
+    name: string | null;
+    category: string | null;
+    confidence: 'high' | 'medium' | 'low';
+    recognised: boolean;
+    /** Resolved against the real catalogue, never invented by the model. */
+    price?: number;
+    purchaseLink?: string;
+}
+
+/**
+ * Suggest what a photographed piece is, so the tagger can fill the item form
+ * with one tap instead of typing it.
+ *
+ * The model supplies only a brand and a name. Price and link are then looked up
+ * against the catalogue, because a model asked for those returns a stale price
+ * and an invented URL. Anything it does not recognise comes back unrecognised
+ * rather than as a confident guess — an unbranded thrift piece should produce
+ * nothing, not somebody else's label.
+ *
+ * This is a suggestion. The caller must show it and write nothing unless the
+ * user confirms.
+ */
+export async function identifyItem(imageBase64: string): Promise<ItemSuggestion | null> {
+    try {
+        const { data, error } = await supabase.functions.invoke('ai-proxy', {
+            body: { action: 'identify-item', imageBase64 },
+        });
+
+        if (error || !data) {
+            console.warn('[identifyItem] failed:', error?.message);
+            return null;
+        }
+
+        const suggestion: ItemSuggestion = {
+            brand: data.brand ?? null,
+            name: data.name ?? null,
+            category: data.category ?? null,
+            confidence: data.confidence ?? 'low',
+            recognised: !!data.recognised,
+        };
+
+        if (!suggestion.recognised) return suggestion;
+
+        // Try to attach a real price and link. Failing to find one is fine — the
+        // fields simply stay empty for the user rather than being filled with a
+        // number and a URL nobody can stand behind.
+        try {
+            const query = [suggestion.brand, suggestion.name].filter(Boolean).join(' ');
+            const matches = await searchProducts(query);
+            const best = matches[0];
+            if (best) {
+                if (best.price > 0) suggestion.price = best.price;
+                if (best.purchaseLink) suggestion.purchaseLink = best.purchaseLink;
+            }
+        } catch {
+            // Leave price and link unset.
+        }
+
+        return suggestion;
+    } catch (error) {
+        console.warn('[identifyItem] failed:', error);
+        return null;
     }
 }
