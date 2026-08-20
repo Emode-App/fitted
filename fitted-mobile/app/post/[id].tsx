@@ -278,6 +278,9 @@ export default function PostDetailScreen() {
                     .select('brand_name, name, image_url, product_url, price, is_tagged')
                     // Worn-and-tagged first, then the wider catalogue.
                     .ilike('brand_name', brand)
+                    // "More from" must not hand back the piece being looked at.
+                    // Catalogue rows carry a null post_id, so they always qualify.
+                    .or(`post_id.is.null,post_id.neq.${id}`)
                     .order('is_tagged', { ascending: false })
                     .order('sort_at', { ascending: false })
                     .limit(24);

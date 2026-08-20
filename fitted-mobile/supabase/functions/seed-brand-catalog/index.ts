@@ -78,6 +78,37 @@ function parseListings(markdown: string): Listing[] {
     return [...found.values()];
 }
 
+/**
+ * Fetch the hero image for one product page.
+ *
+ * Index pages are inconsistent about images: some brands render real CDN URLs in
+ * the grid, others lazy-load and emit a base64 placeholder, so roughly half the
+ * listings arrive with nothing usable. A row with no image is parked rather than
+ * shown — an empty tile looks broken — so this recovers it from the product page.
+ *
+ * Only called for listings the index page could not supply, since it is one
+ * request per product.
+ */
+async function resolveImage(productUrl: string): Promise<string | null> {
+    try {
+        const resp = await fetch('https://api.firecrawl.dev/v2/scrape', {
+            method: 'POST',
+            headers: {
+                authorization: `Bearer ${FIRECRAWL_API_KEY}`,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({ url: productUrl, formats: ['markdown'], onlyMainContent: true }),
+        });
+
+        if (!resp.ok) return null;
+
+        const markdown = String((await resp.json())?.data?.markdown ?? '');
+        return markdown.match(/https:\/\/img\.ssensemedia\.com\/[^\s)"']+/)?.[0] ?? null;
+    } catch {
+        return null;
+    }
+}
+
 async function crawlBrand(brandName: string): Promise<Listing[]> {
     const resp = await fetch('https://api.firecrawl.dev/v2/search', {
         method: 'POST',
@@ -151,6 +182,13 @@ serve(async (req: Request) => {
                 continue;
             }
 
+            // Recover images the index page could not give us, capped so one
+            // brand cannot burn the whole credit budget on a single run.
+            const needsImage = listings.filter((listing) => !listing.imageUrl).slice(0, 20);
+            for (const listing of needsImage) {
+                listing.imageUrl = await resolveImage(listing.productUrl);
+            }
+
             const { error } = await admin.from('brand_catalog').upsert(
                 listings.map((listing) => ({
                     brand_slug: brand.slug,
@@ -160,7 +198,10 @@ serve(async (req: Request) => {
                     image_url: listing.imageUrl,
                     product_url: listing.productUrl,
                     source: SOURCE_DOMAIN.replace('.com', ''),
-                    is_active: true,
+                    // Parked, not discarded: the product is still known, and a later
+                    // run that resolves its image switches it on without having to
+                    // rediscover it.
+                    is_active: !!listing.imageUrl,
                     fetched_at: new Date().toISOString(),
                 })),
                 { onConflict: 'product_url' },
@@ -170,7 +211,7 @@ serve(async (req: Request) => {
                 console.error('upsert', brand.slug, error.message);
                 report[brand.slug] = 0;
             } else {
-                report[brand.slug] = listings.length;
+                report[brand.slug] = listings.filter((listing) => listing.imageUrl).length;
             }
         }
 

@@ -37,19 +37,29 @@ create policy "Catalogue is readable by everyone"
 -- One list per brand for the app to read: pieces people actually tagged first,
 -- then the wider catalogue. is_tagged lets the UI treat them differently — a
 -- piece somebody here wore is worth more than a listing.
-create or replace view public.brand_items as
+-- post_id is carried so "More from <brand>" can exclude the post being viewed;
+-- catalogue rows are null, which always qualifies. Rows without an image are
+-- withheld — an empty tile looks broken, and the row stays in brand_catalog so a
+-- later crawl that resolves the image brings it back.
+drop view if exists public.brand_items;
+
+create view public.brand_items as
 select
     brand_slug, brand_name,
     item_name     as name,
     price, image_url,
     purchase_link as product_url,
+    post_id,
     true          as is_tagged,
     created_at    as sort_at
 from public.brand_feed
+where image_url is not null
 union all
 select
     brand_slug, brand_name, name, price, image_url, product_url,
+    null::uuid    as post_id,
     false         as is_tagged,
     fetched_at    as sort_at
 from public.brand_catalog
-where is_active;
+where is_active
+  and image_url is not null;
