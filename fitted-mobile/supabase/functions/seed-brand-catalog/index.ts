@@ -18,7 +18,13 @@ import { corsHeaders } from '../_shared/cors.ts';
 const FIRECRAWL_API_KEY = Deno.env.get('FIRECRAWL_API_KEY') || '';
 const SEED_SECRET = Deno.env.get('CATALOG_SEED_SECRET') || '';
 const SOURCE_DOMAIN = 'ssense.com';
-const MAX_BRANDS_PER_RUN = 10;
+// Edge functions are killed at 150s idle. A scrape is roughly 2-6s, so the whole
+// budget is about twenty requests — one brand per invocation, and a scheduler
+// loops it. Trying to do ten brands at once just times out and writes nothing.
+const MAX_BRANDS_PER_RUN = 1;
+const MAX_PAGES_PER_DEPARTMENT = 2;
+const MAX_LISTINGS_PER_BRAND = 240;
+const MAX_IMAGE_LOOKUPS = 8;
 
 const admin = createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -109,31 +115,64 @@ async function resolveImage(productUrl: string): Promise<string | null> {
     }
 }
 
-async function crawlBrand(brandName: string): Promise<Listing[]> {
-    const resp = await fetch('https://api.firecrawl.dev/v2/search', {
-        method: 'POST',
-        headers: {
-            authorization: `Bearer ${FIRECRAWL_API_KEY}`,
-            'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-            query: `${brandName} designer collection`,
-            limit: 3,
-            includeDomains: [SOURCE_DOMAIN],
-        }),
-    });
+/** Scrape one URL to markdown. */
+async function scrape(url: string): Promise<string | null> {
+    try {
+        const resp = await fetch('https://api.firecrawl.dev/v2/scrape', {
+            method: 'POST',
+            headers: {
+                authorization: `Bearer ${FIRECRAWL_API_KEY}`,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true }),
+        });
 
-    if (!resp.ok) {
-        console.error('firecrawl', brandName, resp.status, (await resp.text()).slice(0, 200));
-        return [];
+        if (!resp.ok) {
+            console.error('scrape', url, resp.status);
+            return null;
+        }
+        return String((await resp.json())?.data?.markdown ?? '');
+    } catch (error) {
+        console.error('scrape threw', url, error);
+        return null;
+    }
+}
+
+/**
+ * Every listing a retailer has for one brand.
+ *
+ * Scrapes the designer index directly and walks its pagination, rather than
+ * asking search for the page and parsing whatever made it into the result
+ * snippet. Search was the first approach and it is not a catalogue API: the same
+ * query shape returned 41 products for one brand, 6 for another and nothing at
+ * all for a third, because the snippet is chosen for relevance, not completeness.
+ *
+ * Both the men's and women's index are walked — plenty of brands list a piece
+ * under only one — and the URL de-dupe collapses anything carried by both.
+ */
+async function crawlBrand(brandSlug: string): Promise<Listing[]> {
+    const found = new Map<string, Listing>();
+
+    for (const department of ['men', 'women']) {
+        for (let page = 1; page <= MAX_PAGES_PER_DEPARTMENT; page++) {
+            const url = `https://www.${SOURCE_DOMAIN}/en-us/${department}/designers/${brandSlug}${page > 1 ? `?page=${page}` : ''}`;
+            const markdown = await scrape(url);
+            if (!markdown) break;
+
+            const listings = parseListings(markdown);
+            // An empty page means the brand has no more; stop rather than walking
+            // to the cap for a label that only carries a dozen pieces.
+            if (listings.length === 0) break;
+
+            for (const listing of listings) {
+                if (!found.has(listing.productUrl)) found.set(listing.productUrl, listing);
+            }
+
+            if (found.size >= MAX_LISTINGS_PER_BRAND) return [...found.values()];
+        }
     }
 
-    const body = await resp.json();
-    const pages: any[] = body?.data?.web ?? [];
-
-    // The index page carries the most listings; take whatever every result yields
-    // and let the URL de-dupe sort out the overlap.
-    return pages.flatMap((page) => parseListings(String(page?.description ?? '')));
+    return [...found.values()];
 }
 
 serve(async (req: Request) => {
@@ -159,14 +198,17 @@ serve(async (req: Request) => {
         if (Array.isArray(payload?.brands) && payload.brands.length) {
             const { data } = await admin
                 .from('brands')
-                .select('slug, name')
+                .select('slug, name, catalog_slug')
                 .in('slug', payload.brands.slice(0, MAX_BRANDS_PER_RUN));
             brands = data ?? [];
         } else {
+            // Stalest first, so a repeating schedule works through the whole
+            // directory instead of re-crawling the same brand forever.
             const { data } = await admin
                 .from('brands')
-                .select('slug, name')
-                .order('post_count', { ascending: false })
+                .select('slug, name, catalog_slug')
+                .not('catalog_slug', 'is', null)
+                .order('catalog_synced_at', { ascending: true, nullsFirst: true })
                 .limit(MAX_BRANDS_PER_RUN);
             brands = data ?? [];
         }
@@ -176,7 +218,15 @@ serve(async (req: Request) => {
         const report: Record<string, number> = {};
 
         for (const brand of brands) {
-            const listings = await crawlBrand(brand.name);
+            const listings = await crawlBrand(brand.catalog_slug || brand.slug);
+
+            // Stamp before deciding what to do with the results. A brand that
+            // yields nothing must still advance the queue, or a single dead page
+            // parks the scheduler on it permanently.
+            await admin.from('brands')
+                .update({ catalog_synced_at: new Date().toISOString() })
+                .eq('slug', brand.slug);
+
             if (!listings.length) {
                 report[brand.slug] = 0;
                 continue;
@@ -184,7 +234,7 @@ serve(async (req: Request) => {
 
             // Recover images the index page could not give us, capped so one
             // brand cannot burn the whole credit budget on a single run.
-            const needsImage = listings.filter((listing) => !listing.imageUrl).slice(0, 20);
+            const needsImage = listings.filter((listing) => !listing.imageUrl).slice(0, MAX_IMAGE_LOOKUPS);
             for (const listing of needsImage) {
                 listing.imageUrl = await resolveImage(listing.productUrl);
             }

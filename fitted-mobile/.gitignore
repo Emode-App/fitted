@@ -43,3 +43,4 @@ yarn-error.*
 
 # Supabase CLI local cache
 supabase/.temp/
+.catalog-seed-secret.local

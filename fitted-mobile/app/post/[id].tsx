@@ -283,7 +283,7 @@ export default function PostDetailScreen() {
                     .or(`post_id.is.null,post_id.neq.${id}`)
                     .order('is_tagged', { ascending: false })
                     .order('sort_at', { ascending: false })
-                    .limit(24);
+                    .limit(60);
 
                 if (error) throw error;
 
@@ -292,7 +292,8 @@ export default function PostDetailScreen() {
                 const mappedItems: ClothingItem[] = [];
 
                 for (const row of data ?? []) {
-                    if (mappedItems.length >= 8) break;
+                    // A carousel scrolls; 8 was sized for an API that returned almost nothing.
+                    if (mappedItems.length >= 20) break;
                     const key = (row.name ?? '').toLowerCase();
                     if (!key || seen.has(key)) continue;
                     seen.add(key);
