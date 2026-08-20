@@ -25,6 +25,16 @@ const MAX_BRANDS_PER_RUN = 1;
 const MAX_PAGES_PER_DEPARTMENT = 2;
 const MAX_LISTINGS_PER_BRAND = 240;
 const MAX_IMAGE_LOOKUPS = 8;
+const RATE_LIMIT_RETRIES = 3;
+
+/**
+ * When this invocation must stop reaching out and write what it has.
+ *
+ * The gateway drops the request at 150s. Anything the run has not finished by
+ * then is picked up next time, which is safe now that a failed fetch no longer
+ * moves the page cursor.
+ */
+let deadline = 0;
 
 const admin = createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -115,35 +125,29 @@ function parseListings(markdown: string, brandSlug: string): Listing[] {
  * request per product.
  */
 async function resolveImage(productUrl: string): Promise<string | null> {
-    try {
-        const resp = await fetch('https://api.firecrawl.dev/v2/scrape', {
-            method: 'POST',
-            headers: {
-                authorization: `Bearer ${FIRECRAWL_API_KEY}`,
-                'content-type': 'application/json',
-            },
-            body: JSON.stringify({ url: productUrl, formats: ['markdown'], onlyMainContent: true }),
-        });
-
-        if (!resp.ok) return null;
-
-        const markdown = String((await resp.json())?.data?.markdown ?? '');
-
-        // Any product image, not one site's CDN. Looking only for SSENSE's host
-        // is why every Lyst and StockX listing came back imageless and parked —
-        // 99 New Balance products found, 16 showing.
-        for (const match of markdown.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)) {
-            const url = match[1];
-            if (!/\.(?:jpg|jpeg|png|webp)(?:[?#]|$)/i.test(url)) continue;
-            // Sprites, badges, payment marks and tracking pixels are not products.
-            if (/(logo|icon|sprite|badge|placeholder|pixel|klarna|afterpay|flag)/i.test(url)) continue;
-            return url;
-        }
-
-        return null;
-    } catch {
+    // Goes through scrape() so it waits out a 429 like the index crawl does.
+    // Its own bare fetch treated a rate-limited product page as one with no
+    // photo on it, which parked the row and made the tile look broken.
+    const { markdown, failed } = await scrape(productUrl);
+    if (!markdown) {
+        console.error('resolveImage', productUrl, failed ? 'scrape refused' : 'empty page');
         return null;
     }
+
+    // Any product image, not one site's CDN. Looking only for SSENSE's host
+    // is why every Lyst and StockX listing came back imageless and parked —
+    // 99 New Balance products found, 16 showing.
+    for (const match of markdown.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)) {
+        const url = match[1];
+        if (!/\.(?:jpg|jpeg|png|webp)(?:[?#]|$)/i.test(url)) continue;
+        // Sprites, badges, payment marks and tracking pixels are not products.
+        if (/(logo|icon|sprite|badge|placeholder|pixel|klarna|afterpay|flag)/i.test(url)) continue;
+        return url;
+    }
+
+    const candidates = [...markdown.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)].length;
+    console.error('resolveImage', productUrl, `no usable image among ${candidates} candidate(s)`);
+    return null;
 }
 
 /**
@@ -168,26 +172,54 @@ function squareImage(url: string | null): string | null {
     );
 }
 
-/** Scrape one URL to markdown. */
-async function scrape(url: string): Promise<string | null> {
-    try {
-        const resp = await fetch('https://api.firecrawl.dev/v2/scrape', {
-            method: 'POST',
-            headers: {
-                authorization: `Bearer ${FIRECRAWL_API_KEY}`,
-                'content-type': 'application/json',
-            },
-            body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true }),
-        });
+/**
+ * Scrape one URL to markdown, waiting out the rate limiter.
+ *
+ * Firecrawl answers 429 freely once a run gets going, and this used to report
+ * that as null — the same answer it gives for a page with nothing on it. The
+ * crawl could not tell "nothing here" from "not allowed to look", so it counted
+ * a refusal as an exhausted page, advanced the cursor past pages it had never
+ * read, and lost every product on them. `failed` is what lets a caller hold its
+ * place instead of stepping over the gap.
+ */
+async function scrape(url: string): Promise<{ markdown: string | null; failed: boolean }> {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            const resp = await fetch('https://api.firecrawl.dev/v2/scrape', {
+                method: 'POST',
+                headers: {
+                    authorization: `Bearer ${FIRECRAWL_API_KEY}`,
+                    'content-type': 'application/json',
+                },
+                body: JSON.stringify({ url, formats: ['markdown'], onlyMainContent: true }),
+            });
 
-        if (!resp.ok) {
-            console.error('scrape', url, resp.status);
-            return null;
+            if (resp.status === 429) {
+                const retryAfter = Number(resp.headers.get('retry-after'));
+                const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+                    ? Math.min(retryAfter * 1000, 15_000)
+                    : Math.min(2000 * 2 ** attempt, 15_000);
+
+                // The gateway kills the invocation at 150s, so a run that cannot
+                // get through in its slice gives the pages back rather than
+                // burning the whole budget waiting and dying mid-write.
+                if (attempt >= RATE_LIMIT_RETRIES || Date.now() + waitMs > deadline) {
+                    console.error('scrape', url, 'rate limited, yielding');
+                    return { markdown: null, failed: true };
+                }
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
+                continue;
+            }
+
+            if (!resp.ok) {
+                console.error('scrape', url, resp.status);
+                return { markdown: null, failed: true };
+            }
+            return { markdown: String((await resp.json())?.data?.markdown ?? ''), failed: false };
+        } catch (error) {
+            console.error('scrape threw', url, error);
+            return { markdown: null, failed: true };
         }
-        return String((await resp.json())?.data?.markdown ?? '');
-    } catch (error) {
-        console.error('scrape threw', url, error);
-        return null;
     }
 }
 
@@ -203,8 +235,14 @@ interface Source {
     name: string;
     /** Index pages for one brand. Several per page number where a site splits by department. */
     indexUrls(sourceSlug: string, page: number): string[];
-    /** A product link on that site, capturing the URL and the words to name it by. */
-    parse(markdown: string, sourceSlug: string): Listing[];
+    /**
+     * A product link on that site.
+     *
+     * `prefix` is what a product slug must lead with to belong to the brand,
+     * which is not always the brand slug: StockX lists the brand at
+     * /brands/jordan and its products at /air-jordan-4-...
+     */
+    parse(markdown: string, sourceSlug: string, prefix: string): Listing[];
 }
 
 /** Title-case a URL slug, which is the product name the site already normalised. */
@@ -222,6 +260,45 @@ function priceFrom(label: string): number | null {
         .filter((n) => Number.isFinite(n) && n > 0);
     // A sale shows was-price then now-price; the later one is what it costs today.
     return prices.length ? prices[prices.length - 1] : null;
+}
+
+/**
+ * Give rows parked without an image another chance at one.
+ *
+ * The crawl only ever sees the listings it just fetched, and the page cursor has
+ * already moved past the pages those came from -- so a product whose image the
+ * index did not carry, and whose turn at the per-run lookup budget never came,
+ * stayed parked for good. That is why most of the catalogue was invisible: the
+ * rows existed, is_active was false, and nothing ever went back for them.
+ *
+ * fetched_at is bumped whether or not the lookup worked, so this rotates through
+ * the backlog instead of retrying the same unresolvable handful every run.
+ */
+async function recoverParked(job: any, budget: number): Promise<number> {
+    if (budget <= 0) return 0;
+
+    const { data: parked } = await admin
+        .from('brand_catalog')
+        .select('product_url')
+        .eq('brand_slug', job.brand_slug)
+        .eq('source', job.source)
+        .is('image_url', null)
+        .order('fetched_at', { ascending: true })
+        .limit(budget);
+
+    let recovered = 0;
+    for (const row of parked ?? []) {
+        if (Date.now() > deadline) break;
+        const imageUrl = squareImage(await resolveImage(row.product_url));
+        const patch: Record<string, unknown> = { fetched_at: new Date().toISOString() };
+        if (imageUrl) {
+            patch.image_url = imageUrl;
+            patch.is_active = true;
+            recovered++;
+        }
+        await admin.from('brand_catalog').update(patch).eq('product_url', row.product_url);
+    }
+    return recovered;
 }
 
 const SOURCES: Record<string, Source> = {
@@ -242,7 +319,7 @@ const SOURCES: Record<string, Source> = {
         indexUrls: (slug, page) => [
             `https://www.lyst.com/designer/${slug}/${page > 1 ? `?page=${page}` : ''}`,
         ],
-        parse: (markdown, slug) => {
+        parse: (markdown, slug, prefix) => {
             const found = new Map<string, Listing>();
             const link = /\[([\s\S]{0,600}?)\]\((https:\/\/www\.lyst\.com\/(?:shoes|clothing|accessories|bags|jewelry|watches)\/([a-z0-9-]+)\/?)\)/gi;
 
@@ -253,9 +330,13 @@ const SOURCES: Record<string, Source> = {
 
                 // Product slugs lead with the brand, so this is how a listing is
                 // attributed on a site whose URLs have no brand segment.
-                if (!nameSlug.startsWith(slug)) continue;
+                if (!nameSlug.startsWith(prefix)) continue;
 
-                const name = titleFromSlug(nameSlug.slice(slug.length).replace(/^-+/, '')) || titleFromSlug(nameSlug);
+                // Slugs end in the site's own listing id — "574-shoes-364" — which
+                // reads as part of the product name if it is left on.
+                const name = titleFromSlug(
+                    nameSlug.slice(prefix.length).replace(/^-+/, '').replace(/-\d+$/, ''),
+                ) || titleFromSlug(nameSlug);
                 if (!name || name.length < 3) continue;
 
                 const imageUrl = label.match(/https:\/\/[^\s)"']+\.(?:jpg|jpeg|png|webp)/i)?.[0] ?? null;
@@ -272,23 +353,39 @@ const SOURCES: Record<string, Source> = {
         indexUrls: (slug, page) => [
             `https://stockx.com/brands/${slug}?category=sneakers${page > 1 ? `&page=${page}` : ''}`,
         ],
-        parse: (markdown, slug) => {
+        parse: (markdown, slug, prefix) => {
             const found = new Map<string, Listing>();
-            const link = /\[([\s\S]{0,400}?)\]\((https:\/\/stockx\.com\/([a-z0-9-]+))\)/gi;
+            const link = /\[([\s\S]{0,500}?)\]\((https:\/\/stockx\.com\/([a-z0-9-]+))(\?[^)\s]*)?\)/gi;
 
             for (const match of markdown.matchAll(link)) {
-                const [, label, productUrl, nameSlug] = match;
+                const [, label, productUrl, nameSlug, query] = match;
                 if (found.has(productUrl)) continue;
 
-                // Flat URLs with no brand segment, but every product slug leads
-                // with the brand. Anything else on the page is navigation.
-                if (!nameSlug.startsWith(slug)) continue;
-                if (/^(brands|news|about|sell|buy|help)/.test(nameSlug)) continue;
+                // Flat URLs with no brand segment; the product slug is the only
+                // signal, and it does not have to match the brand page's slug.
+                if (!nameSlug.startsWith(prefix)) continue;
+                // A ?size= link is one size of a product already listed, and a
+                // sponsored tile is an ad for something the brand may not own.
+                if (query && /(^|[?&])(size|sponsored)=/.test(query)) continue;
 
-                const name = titleFromSlug(nameSlug.slice(slug.length).replace(/^-+/, '')) || titleFromSlug(nameSlug);
-                if (!name || name.length < 3) continue;
+                // The label carries a clean name between the image and the price,
+                // and it keeps the parentheticals — "(2026)", "(GS)" — that the
+                // slug drops. Better than reconstructing it from the URL here.
+                const name = label
+                    .replace(/!\[[\s\S]*?\)/g, ' ')
+                    .replace(/\$\s?[\d,]+(?:\.\d{2})?/g, ' ')
+                    .replace(/(Lowest Ask|Xpress Ship|Sponsored|US [MW] [\d.]+)/gi, ' ')
+                    .split(/[\\\n]+/)
+                    .map((part) => part.trim())
+                    .filter((part) => part.length > 2)
+                    .sort((a, b) => b.length - a.length)[0];
 
-                const imageUrl = label.match(/https:\/\/images[^\s)"']+/i)?.[0] ?? null;
+                if (!name || name.length < 3 || /[\[\]()]/.test(name.replace(/\([^)]*\)/g, ''))) continue;
+
+                // Its placeholder is a real URL that resolves to a grey box.
+                const rawImage = label.match(/https:\/\/images\.stockx\.com\/[^\s)"']+/i)?.[0] ?? null;
+                const imageUrl = rawImage && !/Product-Placeholder/i.test(rawImage) ? rawImage : null;
+
                 found.set(productUrl, { name: name.slice(0, 200), price: priceFrom(label), productUrl, imageUrl });
             }
             return [...found.values()];
@@ -304,20 +401,24 @@ const SOURCES: Record<string, Source> = {
 async function crawlSource(
     source: Source,
     sourceSlug: string,
+    prefix: string,
     startPage: number,
 ): Promise<{ listings: Listing[]; nextCursor: number }> {
     const found = new Map<string, Listing>();
     let exhausted = false;
+    let refused = false;
 
     outer:
     for (let offset = 0; offset < MAX_PAGES_PER_DEPARTMENT; offset++) {
         const page = startPage + offset;
 
         for (const url of source.indexUrls(sourceSlug, page)) {
-            const markdown = await scrape(url);
+            const { markdown, failed } = await scrape(url);
+            // Refused, not empty. Keep the page for the next run.
+            if (failed) { refused = true; continue; }
             if (!markdown) { exhausted = true; continue; }
 
-            const listings = source.parse(markdown, sourceSlug);
+            const listings = source.parse(markdown, sourceSlug, prefix);
             if (listings.length === 0) { exhausted = true; continue; }
 
             for (const listing of listings) {
@@ -330,6 +431,15 @@ async function crawlSource(
         }
 
         if (exhausted && found.size === 0) break outer;
+        if (refused && Date.now() > deadline) break outer;
+    }
+
+    // A run that was turned away holds its place. Advancing here is what made
+    // rate limiting quietly destructive rather than merely slow: the pages were
+    // never read, and stepping over them dropped everything on them until the
+    // cursor wrapped the whole catalogue.
+    if (refused) {
+        return { listings: [...found.values()], nextCursor: startPage };
     }
 
     return {
@@ -352,18 +462,27 @@ serve(async (req: Request) => {
     }
     if (!FIRECRAWL_API_KEY) return json({ error: 'FIRECRAWL_API_KEY is not set' }, 503);
 
+    // Leave room under the gateway's 150s to finish writing what was gathered.
+    deadline = Date.now() + 115_000;
+
     try {
         const payload = await req.json().catch(() => ({}));
         const only: string[] = Array.isArray(payload?.brands) ? payload.brands : [];
         const onlySource: string | null = typeof payload?.source === 'string' ? payload.source : null;
 
         // A unit of work is one brand on one source, because that is what fits in
-        // the timeout. Stalest first, so a repeating schedule works through every
-        // brand on every source instead of favouring whichever is listed first.
+        // the timeout.
+        //
+        // Brands somebody has actually tagged go first, then stalest within that.
+        // Ordering by staleness alone spread the budget evenly over ~1,100
+        // directory labels, almost none of which anyone has posted, so the brands
+        // whose "More from" section a user was looking at sat uncrawled for weeks
+        // while obscure ones were refreshed on schedule.
         let query = admin
-            .from('brand_sources')
-            .select('brand_slug, source, source_slug, page_cursor, brands!inner(name)')
+            .from('brand_seed_queue')
+            .select('brand_slug, source, source_slug, product_slug_prefix, page_cursor, brand_name')
             .eq('is_enabled', true)
+            .order('priority', { ascending: true })
             .order('synced_at', { ascending: true, nullsFirst: true })
             .limit(MAX_BRANDS_PER_RUN);
 
@@ -386,8 +505,13 @@ serve(async (req: Request) => {
                 continue;
             }
 
-            const brandName = (job as any).brands?.name ?? job.brand_slug;
-            const { listings, nextCursor } = await crawlSource(source, job.source_slug, job.page_cursor || 1);
+            const brandName = (job as any).brand_name ?? job.brand_slug;
+            const { listings, nextCursor } = await crawlSource(
+                source,
+                job.source_slug,
+                job.product_slug_prefix || job.source_slug,
+                job.page_cursor || 1,
+            );
 
             // Stamp before deciding what to do with the results, or a source that
             // yields nothing parks the scheduler on it permanently.
@@ -396,16 +520,42 @@ serve(async (req: Request) => {
                 .eq('brand_slug', job.brand_slug)
                 .eq('source', job.source);
 
+            // Recover images the index could not give us, capped so one brand
+            // cannot burn the whole credit budget on a single run.
+            let budget = MAX_IMAGE_LOOKUPS;
+            const missingImages = listings.filter((listing) => !listing.imageUrl).length;
+            for (const listing of listings) {
+                if (budget <= 0 || Date.now() > deadline) break;
+                if (listing.imageUrl) continue;
+                budget--;
+                listing.imageUrl = squareImage(await resolveImage(listing.productUrl));
+            }
+            console.log(
+                `[${key}] ${listings.length} listing(s), ${missingImages} without an image, ` +
+                `${MAX_IMAGE_LOOKUPS - budget} lookup(s) spent, ${budget} left for parked rows`,
+            );
+
             if (!listings.length) {
-                report[key] = 0;
+                report[key] = await recoverParked(job, budget);
                 continue;
             }
 
-            // Recover images the index could not give us, capped so one brand
-            // cannot burn the whole credit budget on a single run.
-            const needsImage = listings.filter((listing) => !listing.imageUrl).slice(0, MAX_IMAGE_LOOKUPS);
-            for (const listing of needsImage) {
-                listing.imageUrl = squareImage(await resolveImage(listing.productUrl));
+            // Inherit images already stored for these products before writing.
+            //
+            // The upsert sets every column, so re-crawling a page whose index
+            // markup did not carry an image this time wrote NULL over an image an
+            // earlier run had resolved, and flipped is_active back off with it.
+            // The catalogue went backwards each time it refreshed: New Balance
+            // dropped from 24 visible to 22 on one pass.
+            const { data: stored } = await admin
+                .from('brand_catalog')
+                .select('product_url, image_url')
+                .in('product_url', listings.map((listing) => listing.productUrl))
+                .not('image_url', 'is', null);
+
+            const knownImages = new Map((stored ?? []).map((row: any) => [row.product_url, row.image_url]));
+            for (const listing of listings) {
+                if (!listing.imageUrl) listing.imageUrl = knownImages.get(listing.productUrl) ?? null;
             }
 
             const { error } = await admin.from('brand_catalog').upsert(
@@ -430,7 +580,8 @@ serve(async (req: Request) => {
                 console.error('upsert', key, error.message);
                 report[key] = 0;
             } else {
-                report[key] = listings.filter((listing) => listing.imageUrl).length;
+                report[key] = listings.filter((listing) => listing.imageUrl).length
+                    + await recoverParked(job, budget);
             }
         }
 

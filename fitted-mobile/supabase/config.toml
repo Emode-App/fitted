@@ -26,3 +26,14 @@ verify_jwt = true
 
 [functions.product-search]
 verify_jwt = true
+
+# The seed jobs are guarded by the x-seed-secret shared secret in the handler
+# rather than a user JWT: pg_cron invokes them through pg_net, which carries no
+# session. Pinned here because relying on a --no-verify-jwt flag at deploy time
+# means the next redeploy that forgets the flag silently turns the crawl off.
+
+[functions.seed-brand-catalog]
+verify_jwt = false
+
+[functions.seed-brand-directory]
+verify_jwt = false
