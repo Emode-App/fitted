@@ -9,6 +9,7 @@ import { logOutPurchases } from '../services/revenueCatService';
 import { deleteSecureItem, getSecureItem, setSecureItem } from '../services/secureStorage';
 import { claimLocalCache, clearLocalUserData } from '../services/localUserData';
 import { restoreWardrobeFromStorage } from '../services/wardrobeRestore';
+import { syncWardrobe, startWardrobeSync, stopWardrobeSync } from '../services/wardrobeSync';
 
 const SESSION_KEY = 'current_login_session_id';
 
@@ -54,6 +55,20 @@ async function recordLoginSession(userId: string): Promise<string | null> {
     }
 }
 
+/**
+ * Bring the wardrobe up to date for `userId`.
+ *
+ * Order matters. The storage rebuild only fires for accounts whose wardrobe is
+ * empty, so it has to run before the sync -- otherwise a device that had lost its
+ * local cache would push that emptiness at the server. syncWardrobe is additive
+ * and idempotent, so running it afterwards is safe either way.
+ */
+async function hydrateWardrobe(userId: string): Promise<void> {
+    startWardrobeSync(userId);
+    await restoreWardrobeFromStorage(userId);
+    await syncWardrobe(userId);
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
     user: null,
     session: null,
@@ -74,7 +89,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                 // a server-side session expiry, or a token revoked from another
                 // device. Purges the cache before any of it can be rendered.
                 await claimLocalCache(session.user.id);
-                void restoreWardrobeFromStorage(session.user.id);
+                void hydrateWardrobe(session.user.id);
 
                 const { data: profile } = await supabase
                     .from('users')
@@ -98,7 +113,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                     // Catches the in-process account switch, where sign-out ran but
                     // this listener is what actually sees the new identity arrive.
                     await claimLocalCache(session.user.id);
-                    void restoreWardrobeFromStorage(session.user.id);
+                    void hydrateWardrobe(session.user.id);
 
                     const { data: profile } = await supabase
                         .from('users')
@@ -189,6 +204,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         // Wardrobe assets, recent searches and tutorial state are cached on the
         // device. Without this the next account to sign in on this phone inherits
         // them, including the previous user's uploaded clothing photos.
+        stopWardrobeSync();
         await clearLocalUserData();
         await supabase.auth.signOut();
         set({ user: null, session: null, isAuthenticated: false });
@@ -210,6 +226,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             throw new Error(reason);
         }
         await logOutPurchases();
+        stopWardrobeSync();
         await clearLocalUserData();
         await supabase.auth.signOut();
         set({ user: null, session: null, isAuthenticated: false });

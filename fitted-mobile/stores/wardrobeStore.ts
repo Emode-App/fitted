@@ -28,6 +28,26 @@ export interface Folder {
     isDefault?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Sync sink
+//
+// The wardrobe is mirrored to wardrobe_folders / wardrobe_assets. The store does
+// not import the sync service -- it emits through this sink instead, so the store
+// stays free of Supabase and there is no import cycle. Unregistered (signed out)
+// the calls are no-ops and the store behaves exactly as it did when it was purely
+// local.
+// ---------------------------------------------------------------------------
+export interface WardrobeSink {
+    onAdd?: (folderSlug: string, folderName: string, asset: Asset) => void;
+    onRemove?: (url: string) => void;
+    onCreateFolder?: (folder: Folder) => void;
+    onDeleteFolder?: (folderSlug: string) => void;
+}
+
+let sink: WardrobeSink = {};
+
+export const setWardrobeSink = (next: WardrobeSink) => { sink = next; };
+
 // Default folders that every user starts with
 const DEFAULT_FOLDERS: Folder[] = [
     { id: 'last_used', name: 'Last Used', isDefault: true, assets: [] },
@@ -123,9 +143,17 @@ export const useWardrobeStore = create<WardrobeState>()(
                         removedUrls: (state.removedUrls ?? []).filter(u => u !== newAsset.url),
                     };
                 });
+
+                const target = get().folders.find(f => f.id === folderId);
+                sink.onAdd?.(folderId, target?.name ?? folderId, newAsset);
+                if (folderId !== 'last_used') {
+                    sink.onAdd?.('last_used', 'Last Used', newAsset);
+                }
             },
 
             removeAsset: (folderId, assetId) => {
+                let removedUrlForSink: string | undefined;
+
                 set((state) => {
                     const removedUrl = state.folders
                         .find(f => f.id === folderId)?.assets
@@ -148,6 +176,8 @@ export const useWardrobeStore = create<WardrobeState>()(
                         ? folders.some(f => f.assets.some(a => a.url === removedUrl))
                         : true;
 
+                    if (removedUrl && !stillPresent) removedUrlForSink = removedUrl;
+
                     const removedUrls = state.removedUrls ?? [];
                     return {
                         folders,
@@ -156,6 +186,8 @@ export const useWardrobeStore = create<WardrobeState>()(
                             : [...removedUrls, removedUrl],
                     };
                 });
+
+                if (removedUrlForSink) sink.onRemove?.(removedUrlForSink);
             },
 
             createFolder: (name) => {
@@ -172,6 +204,7 @@ export const useWardrobeStore = create<WardrobeState>()(
                     selectedFolderId: newId,
                 }));
 
+                sink.onCreateFolder?.(newFolder);
                 return newId;
             },
 
@@ -187,6 +220,8 @@ export const useWardrobeStore = create<WardrobeState>()(
                         ? 'last_used'
                         : state.selectedFolderId,
                 }));
+
+                sink.onDeleteFolder?.(folderId);
             },
 
             getFolder: (folderId) => {
