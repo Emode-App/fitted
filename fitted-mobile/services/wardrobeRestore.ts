@@ -16,7 +16,10 @@ import { useWardrobeStore } from '@/stores/wardrobeStore';
 // ============================================
 
 const BUCKET = 'posts';
-const restoredKey = (userId: string) => `wardrobe_restored:${userId}`;
+// Versioned: the v1 run was clobbered by a redundant claimLocalCache resetting the
+// store immediately after it, and it had already written its marker, so it would
+// never have retried. Bumping the version lets affected devices heal themselves.
+const restoredKey = (userId: string) => `wardrobe_restored:v2:${userId}`;
 
 // Wardrobe uploads have been written under two layouts. Both are still in the
 // bucket, so both have to be read or the older half of a wardrobe stays missing.
@@ -74,7 +77,8 @@ export async function restoreWardrobeFromStorage(userId: string): Promise<number
             return 0;
         }
 
-        const found = [...(await listCurrent(userId)), ...(await listLegacy(userId))];
+        const [current, legacy] = await Promise.all([listCurrent(userId), listLegacy(userId)]);
+        const found = [...current, ...legacy];
 
         // Newest first: Last Used is ordered most-recent-first, and upload time is
         // the closest thing to "when did this last matter to you" that survived.

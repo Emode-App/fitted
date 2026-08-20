@@ -23,12 +23,12 @@ const wardrobeKeyFor = (userId: string) => `wardrobe-storage:${userId}`;
 /** Slot used while signed out. Never written to by a signed-in session. */
 const DETACHED_WARDROBE_KEY = 'wardrobe-storage:none';
 
-/** Loose AsyncStorage keys written directly by screens. */
+// Loose AsyncStorage keys written directly by screens, none of which are keyed by
+// account. `has_onboarded` deliberately is NOT here: clearing it made every account
+// switch replay onboarding, and it is now both server-backed (users.onboarded_at)
+// and per-account, so it needs no blunt clearing.
 const USER_SCOPED_KEYS = [
     'emode_recent_product_searches',
-    // Onboarding writes profile fields (bio, location, favourite brand, socials),
-    // so a different account genuinely has not completed it.
-    'has_onboarded',
     'has_seen_canvas_tutorial',
     'has_seen_ai_tryon_tutorial',
     'has_seen_marketplace_tutorial',
@@ -44,11 +44,22 @@ const OWNER_KEY = 'local_cache_owner_id';
  * a no-op — without the reset a brand new account would inherit whatever the
  * previous one left in memory.
  */
+// Which slot the store is currently bound to.
+//
+// claimLocalCache runs twice for a single sign-in -- once from initialize() and
+// again when onAuthStateChange reports the same session -- and the reset below is
+// destructive. Without this guard the second call wiped whatever had been loaded
+// or restored since the first, which is what silently emptied a restored wardrobe.
+let attachedKey: string | null = null;
+
 async function attachWardrobe(key: string): Promise<void> {
+    if (attachedKey === key) return;
+
     try {
         useWardrobeStore.persist.setOptions({ name: key });
         useWardrobeStore.getState().resetWardrobe();
         await useWardrobeStore.persist.rehydrate();
+        attachedKey = key;
     } catch (error) {
         console.warn('[localUserData] could not attach wardrobe slot:', error);
     }

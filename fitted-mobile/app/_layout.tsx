@@ -10,7 +10,7 @@ import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-reanimated';
 import { Inter_700Bold, Inter_900Black } from '@expo-google-fonts/inter';
-import { ONBOARDING_KEY } from './onboarding';
+import { onboardingKeyFor } from './onboarding';
 
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
@@ -120,7 +120,13 @@ function RootLayout() {
         return;
       }
 
-      const hasOnboarded = (await AsyncStorage.getItem(ONBOARDING_KEY)) === 'true';
+      // Onboarding is a fact about the account, so the server value wins. The
+      // device flag is only a cache for the gap before the profile has loaded --
+      // relying on it alone is what made every account switch, reinstall and new
+      // phone replay onboarding for people who had long since finished it.
+      const hasOnboarded =
+        !!user?.onboarded_at ||
+        (await AsyncStorage.getItem(onboardingKeyFor(user?.id))) === 'true';
 
       if (!hasOnboarded && !inOnboarding) {
         router.replace('/onboarding');
@@ -130,7 +136,7 @@ function RootLayout() {
     };
 
     checkRedirect();
-  }, [isAuthenticated, segments, isLoading, timedOut]);
+  }, [isAuthenticated, segments, isLoading, timedOut, user?.onboarded_at, user?.id]);
 
   useEffect(() => {
     if (error) throw error;

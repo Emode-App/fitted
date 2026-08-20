@@ -35,6 +35,16 @@ import { LEGAL } from '@/constants/legal';
 const { width: SW } = Dimensions.get('window');
 export const ONBOARDING_KEY = 'has_onboarded';
 
+/**
+ * Per-account cache of the onboarding gate.
+ *
+ * The authoritative value is users.onboarded_at; this only covers the moment
+ * before the profile has loaded. It is keyed by account because one shared flag
+ * cannot say which of two signed-in accounts it referred to.
+ */
+export const onboardingKeyFor = (userId?: string | null) =>
+    userId ? `${ONBOARDING_KEY}:${userId}` : ONBOARDING_KEY;
+
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
 
 // ─────────────────────────────────────── SLIDE DATA ───
@@ -309,7 +319,16 @@ export default function OnboardingScreen() {
 
     const completeOnboarding = async () => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        await AsyncStorage.setItem(ONBOARDING_KEY, 'true');
+        // Record it on the account first so it survives this device, then cache it
+        // locally for the next launch before the profile has come back.
+        try {
+            await updateProfile({ onboarded_at: new Date().toISOString() });
+        } catch {
+            // A failed write must not trap someone on the last onboarding screen;
+            // the local flag below still gets them through, and the next completed
+            // profile update will carry the timestamp.
+        }
+        await AsyncStorage.setItem(onboardingKeyFor(useAuthStore.getState().user?.id), 'true');
         router.replace('/(tabs)');
     };
 

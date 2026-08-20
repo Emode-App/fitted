@@ -24,6 +24,8 @@ export interface User {
         fits: number;
     };
     is_verified_stylist?: boolean;
+    /** When this account finished onboarding. Authoritative — the device flag is only a cache. */
+    onboarded_at?: string | null;
     /** Advertised price for one live styling session, in cents. Null = not taking bookings. */
     styling_rate_cents?: number | null;
     rate_currency?: string;
