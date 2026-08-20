@@ -42,42 +42,60 @@ interface Listing {
 /**
  * Pull listings out of a retailer index page rendered as markdown.
  *
- * The shape is a markdown link whose label carries an optional image, the product
- * name and a price, and whose href is the product page:
+ * An entry looks like this, with the brand and the product name emitted as
+ * adjacent spans that markdown runs together inside one bold run:
  *
- *   [![alt](image)\ Brand\ Name\ $1690](https://.../product/brand/slug/12345)
+ *   [![alt](img)\ **Rick OwensBlack Tower Vega Jeans** \ $1435](https://.../product/rick-owens/black-tower-vega-jeans/19341741)
  *
- * Anchored on the product URL rather than the label, because the label's
- * whitespace and escaping vary between listing and sale pages while the href
- * shape does not. A sale item shows two prices; the last one is what it costs
- * today, so that is the one kept.
+ * Three things have to be got right, and the first version got none of them:
+ *   - the bold markers are part of the label, not part of the name;
+ *   - the brand is glued to the front of the name with no separator;
+ *   - the page's own sort and filter controls are links too, and one of them
+ *     ("Discount: High to low") sailed through as a product.
  */
-function parseListings(markdown: string): Listing[] {
+function parseListings(markdown: string, brandName: string): Listing[] {
     const found = new Map<string, Listing>();
-    const link = /\[([\s\S]{0,600}?)\]\((https:\/\/www\.ssense\.com\/[^)\s]*\/product\/[^)\s]+)\)/g;
+
+    // A product URL ends /product/<brand>/<slug>/<numeric id>. Sort links, filter
+    // links and pagination do not, which is what keeps them out.
+    const link = /\[([\s\S]{0,600}?)\]\((https:\/\/www\.ssense\.com\/[a-z-]+\/(?:men|women)\/product\/[a-z0-9-]+\/[a-z0-9-]+\/\d+)\)/gi;
+
+    // Only a real CDN transform is an image. The bare host appears on pages as a
+    // placeholder and renders as an empty tile.
+    const IMAGE = /https:\/\/img\.ssensemedia\.com\/image\/upload\/[^\s)"']+\.jpg/i;
+
+    const brandPrefix = brandName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     for (const match of markdown.matchAll(link)) {
         const [, label, productUrl] = match;
         if (found.has(productUrl)) continue;
 
-        const imageUrl = label.match(/\((https:\/\/img\.ssensemedia\.com\/[^)\s]+)\)/)?.[1] ?? null;
+        const imageUrl = squareImage(label.match(IMAGE)?.[0] ?? null);
 
+        // A sale item shows was-price then now-price; the later one is what it
+        // costs today.
         const prices = [...label.matchAll(/\$\s?([\d,]+(?:\.\d{2})?)/g)]
             .map((p) => Number(p[1].replace(/,/g, '')))
             .filter((n) => Number.isFinite(n) && n > 0);
         const price = prices.length ? prices[prices.length - 1] : null;
 
-        // Strip the image, the repeated brand line and the price off the label;
-        // the longest line left is the product name.
         const name = label
-            .replace(/!\[[\s\S]*?\)/g, ' ')
-            .replace(/\$\s?[\d,]+(?:\.\d{2})?/g, ' ')
+            .replace(/!\[[\s\S]*?\)/g, ' ')            // image
+            .replace(/\$\s?[\d,]+(?:\.\d{2})?/g, ' ')  // prices
+            .replace(/\*\*/g, ' ')                     // bold markers
             .split(/[\\\n]+/)
             .map((part) => part.trim())
             .filter((part) => part.length > 2)
-            .sort((a, b) => b.length - a.length)[0];
+            .sort((a, b) => b.length - a.length)[0]
+            // The brand is glued to the front of the name with no separator.
+            ?.replace(new RegExp(`^${brandPrefix}\\s*`, 'i'), '')
+            .replace(/\s{2,}/g, ' ')
+            .trim();
 
-        if (!name) continue;
+        // Anything still carrying markup is a control or a layout fragment, not a
+        // product, and must not be written.
+        if (!name || name.length < 3 || /[\[\]()*]|https?:/i.test(name)) continue;
+
         found.set(productUrl, { name: name.slice(0, 200), price, productUrl, imageUrl });
     }
 
@@ -115,6 +133,25 @@ async function resolveImage(productUrl: string): Promise<string | null> {
     }
 }
 
+/**
+ * Rewrite a retailer image URL into a square the app can crop safely.
+ *
+ * These are Cloudinary transforms, and the listing grid asks for
+ * `b_white,c_lpad,g_south,ar_2:3` — a tall 2:3 frame with the product padded
+ * toward the bottom. A square tile filling with `cover` then crops the middle of
+ * that frame, which is the empty padding above the product, so a perfectly good
+ * photo renders as a blank card.
+ *
+ * Asking for a centred 1:1 instead means the product is what survives the crop.
+ */
+function squareImage(url: string | null): string | null {
+    if (!url) return null;
+    return url.replace(
+        /\/image\/upload\/[^/]+\/[^/]+\//,
+        '/image/upload/b_white,c_pad,ar_1:1/f_auto,c_limit,w_800,q_85/',
+    );
+}
+
 /** Scrape one URL to markdown. */
 async function scrape(url: string): Promise<string | null> {
     try {
@@ -150,29 +187,40 @@ async function scrape(url: string): Promise<string | null> {
  * Both the men's and women's index are walked — plenty of brands list a piece
  * under only one — and the URL de-dupe collapses anything carried by both.
  */
-async function crawlBrand(brandSlug: string): Promise<Listing[]> {
+async function crawlBrand(
+    brandSlug: string,
+    brandName: string,
+    startPage: number,
+): Promise<{ listings: Listing[]; nextCursor: number }> {
     const found = new Map<string, Listing>();
+    let exhausted = false;
 
     for (const department of ['men', 'women']) {
-        for (let page = 1; page <= MAX_PAGES_PER_DEPARTMENT; page++) {
+        for (let offset = 0; offset < MAX_PAGES_PER_DEPARTMENT; offset++) {
+            const page = startPage + offset;
             const url = `https://www.${SOURCE_DOMAIN}/en-us/${department}/designers/${brandSlug}${page > 1 ? `?page=${page}` : ''}`;
             const markdown = await scrape(url);
-            if (!markdown) break;
+            if (!markdown) { exhausted = true; break; }
 
-            const listings = parseListings(markdown);
-            // An empty page means the brand has no more; stop rather than walking
-            // to the cap for a label that only carries a dozen pieces.
-            if (listings.length === 0) break;
+            const listings = parseListings(markdown, brandName);
+            // Running off the end of the index is how we learn a brand's depth;
+            // wrap the cursor back to the front so the next pass refreshes prices.
+            if (listings.length === 0) { exhausted = true; break; }
 
             for (const listing of listings) {
                 if (!found.has(listing.productUrl)) found.set(listing.productUrl, listing);
             }
 
-            if (found.size >= MAX_LISTINGS_PER_BRAND) return [...found.values()];
+            if (found.size >= MAX_LISTINGS_PER_BRAND) {
+                return { listings: [...found.values()], nextCursor: page + 1 };
+            }
         }
     }
 
-    return [...found.values()];
+    return {
+        listings: [...found.values()],
+        nextCursor: exhausted ? 1 : startPage + MAX_PAGES_PER_DEPARTMENT,
+    };
 }
 
 serve(async (req: Request) => {
@@ -198,7 +246,7 @@ serve(async (req: Request) => {
         if (Array.isArray(payload?.brands) && payload.brands.length) {
             const { data } = await admin
                 .from('brands')
-                .select('slug, name, catalog_slug')
+                .select('slug, name, catalog_slug, catalog_page_cursor')
                 .in('slug', payload.brands.slice(0, MAX_BRANDS_PER_RUN));
             brands = data ?? [];
         } else {
@@ -206,7 +254,7 @@ serve(async (req: Request) => {
             // directory instead of re-crawling the same brand forever.
             const { data } = await admin
                 .from('brands')
-                .select('slug, name, catalog_slug')
+                .select('slug, name, catalog_slug, catalog_page_cursor')
                 .not('catalog_slug', 'is', null)
                 .order('catalog_synced_at', { ascending: true, nullsFirst: true })
                 .limit(MAX_BRANDS_PER_RUN);
@@ -218,13 +266,20 @@ serve(async (req: Request) => {
         const report: Record<string, number> = {};
 
         for (const brand of brands) {
-            const listings = await crawlBrand(brand.catalog_slug || brand.slug);
+            const { listings, nextCursor } = await crawlBrand(
+                brand.catalog_slug || brand.slug,
+                brand.name,
+                brand.catalog_page_cursor || 1,
+            );
 
             // Stamp before deciding what to do with the results. A brand that
             // yields nothing must still advance the queue, or a single dead page
             // parks the scheduler on it permanently.
             await admin.from('brands')
-                .update({ catalog_synced_at: new Date().toISOString() })
+                .update({
+                    catalog_synced_at: new Date().toISOString(),
+                    catalog_page_cursor: nextCursor,
+                })
                 .eq('slug', brand.slug);
 
             if (!listings.length) {
@@ -236,7 +291,7 @@ serve(async (req: Request) => {
             // brand cannot burn the whole credit budget on a single run.
             const needsImage = listings.filter((listing) => !listing.imageUrl).slice(0, MAX_IMAGE_LOOKUPS);
             for (const listing of needsImage) {
-                listing.imageUrl = await resolveImage(listing.productUrl);
+                listing.imageUrl = squareImage(await resolveImage(listing.productUrl));
             }
 
             const { error } = await admin.from('brand_catalog').upsert(

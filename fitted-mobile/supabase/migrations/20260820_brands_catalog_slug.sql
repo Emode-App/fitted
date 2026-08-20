@@ -28,3 +28,11 @@ as $$
 $$;
 
 revoke all on function public.brand_slugs_for(text[]) from public, anon;
+
+-- A run can only afford a couple of pages before the edge timeout, and without a
+-- cursor it always crawls pages 1 and 2 — so Loewe's catalogue came back as 178
+-- pieces of eyewear, because that is what the front of its index happens to hold.
+-- The cursor makes successive runs walk deeper and wrap around, so a brand fills
+-- out over a few passes instead of being permanently represented by its first page.
+alter table public.brands
+    add column if not exists catalog_page_cursor integer not null default 1;
