@@ -17,7 +17,7 @@ import LoadingSpinner from '@/components/LoadingSpinner';
 import { Text, View } from '@/components/Themed';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
-import { BACKGROUND_OPTIONS, DEFAULT_BACKGROUND, BackgroundOption, POLAROID_FRAME } from '@/constants/backgrounds';
+import { BACKGROUND_OPTIONS, DEFAULT_BACKGROUND, BackgroundOption, POLAROID_FRAME, polaroidWindowRect } from '@/constants/backgrounds';
 import CropModal from '@/components/CropModal';
 import TutorialModal, { useFirstVisitTutorial, TutorialStep } from '@/components/TutorialModal';
 import ProductSearchModal from '@/components/ProductSearchModal';
@@ -160,8 +160,7 @@ function DraggableImage({
     // Size adjustments for polaroid frame
     const ITEM_SIZE = 150;
     const POLAROID_SIZE = 180; // Slightly larger to accommodate frame
-    const IMAGE_INSET = 25; // Inset for image inside polaroid frame
-    const IMAGE_DIMENSION = POLAROID_SIZE - (IMAGE_INSET * 2);
+    const PHOTO = polaroidWindowRect(POLAROID_SIZE);
 
     return (
         <GestureDetector gesture={composedGesture}>
@@ -175,16 +174,19 @@ function DraggableImage({
                         {/* Image renders first (behind) */}
                         <View style={{
                             position: 'absolute',
-                            top: IMAGE_INSET,
-                            left: IMAGE_INSET,
-                            width: IMAGE_DIMENSION,
-                            height: IMAGE_DIMENSION,
+                            top: PHOTO.top,
+                            left: PHOTO.left,
+                            width: PHOTO.width,
+                            height: PHOTO.height,
                             overflow: 'hidden'
                         }}>
+                            {/* cover, not contain: the frame's border masks the
+                                overflow, so filling the opening is what makes it
+                                read as a photo rather than a shrunken cutout. */}
                             <Image
                                 source={{ uri: item.url }}
                                 style={{ width: '100%', height: '100%' }}
-                                contentFit="contain"
+                                contentFit="cover"
                             />
                         </View>
                         {/* Frame renders second (on top with transparent center) */}
@@ -231,6 +233,9 @@ function DraggableImage({
 
 // Preview item — always 180×180 so position never shifts when toggling frames.
 // Plays a damped swing animation whenever the frame state changes.
+const PREVIEW_SIZE = 180;
+const PREVIEW_PHOTO = polaroidWindowRect(PREVIEW_SIZE);
+
 function PreviewItem({ canvasItem, keepFrames }: { canvasItem: CanvasItem; keepFrames: boolean }) {
     const swing = useSharedValue(0);
     const mounted = useRef(false);
@@ -251,16 +256,18 @@ function PreviewItem({ canvasItem, keepFrames }: { canvasItem: CanvasItem; keepF
     }));
 
     return (
-        <Animated.View style={[{ width: 180, height: 180 }, swingStyle]}>
+        <Animated.View style={[{ width: PREVIEW_SIZE, height: PREVIEW_SIZE }, swingStyle]}>
             {keepFrames && canvasItem.usePolaroid ? (
-                <View style={{ width: 180, height: 180 }}>
-                    <View style={{ position: 'absolute', top: 25, left: 25, width: 130, height: 130, overflow: 'hidden' }}>
-                        <Image source={{ uri: canvasItem.url }} style={{ width: '100%', height: '100%' }} contentFit="contain" />
+                <View style={{ width: PREVIEW_SIZE, height: PREVIEW_SIZE }}>
+                    <View style={{ position: 'absolute', ...PREVIEW_PHOTO, overflow: 'hidden' }}>
+                        <Image source={{ uri: canvasItem.url }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
                     </View>
                     <Image source={POLAROID_FRAME} style={{ position: 'absolute', width: '100%', height: '100%' }} contentFit="contain" />
                 </View>
             ) : (
-                <Image source={{ uri: canvasItem.url }} style={{ width: 180, height: 180 }} contentFit="contain" />
+                // Unframed: no border to hide a crop behind, and the canvas shows
+                // this one uncropped too, so contain keeps preview honest.
+                <Image source={{ uri: canvasItem.url }} style={{ width: PREVIEW_SIZE, height: PREVIEW_SIZE }} contentFit="contain" />
             )}
         </Animated.View>
     );

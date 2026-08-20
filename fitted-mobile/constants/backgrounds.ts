@@ -41,3 +41,29 @@ export const DEFAULT_BACKGROUND = BACKGROUND_OPTIONS[0]; // White
 
 // Polaroid frame asset
 export const POLAROID_FRAME = require('@/assets/frames/polaroid.png');
+
+// The transparent opening in polaroid.png, as fractions of the (square) frame.
+// Measured off the asset's alpha channel: a 700x624 window at (161, 167) inside
+// 1024x1024. It is wider than it is tall and it sits high, because the fat border
+// on a polaroid is the bottom one.
+//
+// Both the canvas and the preview used to hardcode a centred 130x130 square at
+// inset 25, which is neither the right shape nor the right place -- it hung 16px
+// below the opening, so the bottom of every photo was lost behind the border. Keep
+// this as the single source of truth so the two never drift apart again.
+export const POLAROID_WINDOW = {
+    left: 161 / 1024,
+    top: 167 / 1024,
+    width: 700 / 1024,
+    height: 624 / 1024,
+} as const;
+
+/** Absolute window rect for a polaroid frame rendered at `size` x `size`. */
+export function polaroidWindowRect(size: number) {
+    return {
+        left: POLAROID_WINDOW.left * size,
+        top: POLAROID_WINDOW.top * size,
+        width: POLAROID_WINDOW.width * size,
+        height: POLAROID_WINDOW.height * size,
+    };
+}
