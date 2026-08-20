@@ -128,7 +128,19 @@ async function resolveImage(productUrl: string): Promise<string | null> {
         if (!resp.ok) return null;
 
         const markdown = String((await resp.json())?.data?.markdown ?? '');
-        return markdown.match(/https:\/\/img\.ssensemedia\.com\/[^\s)"']+/)?.[0] ?? null;
+
+        // Any product image, not one site's CDN. Looking only for SSENSE's host
+        // is why every Lyst and StockX listing came back imageless and parked —
+        // 99 New Balance products found, 16 showing.
+        for (const match of markdown.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)) {
+            const url = match[1];
+            if (!/\.(?:jpg|jpeg|png|webp)(?:[?#]|$)/i.test(url)) continue;
+            // Sprites, badges, payment marks and tracking pixels are not products.
+            if (/(logo|icon|sprite|badge|placeholder|pixel|klarna|afterpay|flag)/i.test(url)) continue;
+            return url;
+        }
+
+        return null;
     } catch {
         return null;
     }
@@ -147,6 +159,9 @@ async function resolveImage(productUrl: string): Promise<string | null> {
  */
 function squareImage(url: string | null): string | null {
     if (!url) return null;
+    // Only this one CDN takes transform directives in the path. Other hosts are
+    // returned untouched rather than having a path segment mangled into them.
+    if (!url.includes('img.ssensemedia.com/image/upload/')) return url;
     return url.replace(
         /\/image\/upload\/[^/]+\/[^/]+\//,
         '/image/upload/b_white,c_pad,ar_1:1/f_auto,c_limit,w_800,q_85/',
@@ -177,36 +192,133 @@ async function scrape(url: string): Promise<string | null> {
 }
 
 /**
- * Every listing a retailer has for one brand.
+ * A place to crawl a brand's listings from.
  *
- * Scrapes the designer index directly and walks its pagination, rather than
- * asking search for the page and parsing whatever made it into the result
- * snippet. Search was the first approach and it is not a catalogue API: the same
- * query shape returned 41 products for one brand, 6 for another and nothing at
- * all for a third, because the snippet is chosen for relevance, not completeness.
- *
- * Both the men's and women's index are walked — plenty of brands list a piece
- * under only one — and the URL de-dupe collapses anything carried by both.
+ * One source was never going to be enough. A designer retailer is right for Rick
+ * Owens and Loewe and useless for sneakers — New Balance genuinely stocks two
+ * pieces there, which is why the brand page looked broken when it was not. An
+ * aggregator covers both, and a sneaker marketplace covers what it misses.
  */
-async function crawlBrand(
-    brandSlug: string,
-    brandName: string,
+interface Source {
+    name: string;
+    /** Index pages for one brand. Several per page number where a site splits by department. */
+    indexUrls(sourceSlug: string, page: number): string[];
+    /** A product link on that site, capturing the URL and the words to name it by. */
+    parse(markdown: string, sourceSlug: string): Listing[];
+}
+
+/** Title-case a URL slug, which is the product name the site already normalised. */
+function titleFromSlug(slug: string): string {
+    return slug
+        .split('-')
+        .filter(Boolean)
+        .map((w) => (w.length <= 2 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)))
+        .join(' ');
+}
+
+function priceFrom(label: string): number | null {
+    const prices = [...label.matchAll(/\$\s?([\d,]+(?:\.\d{2})?)/g)]
+        .map((p) => Number(p[1].replace(/,/g, '')))
+        .filter((n) => Number.isFinite(n) && n > 0);
+    // A sale shows was-price then now-price; the later one is what it costs today.
+    return prices.length ? prices[prices.length - 1] : null;
+}
+
+const SOURCES: Record<string, Source> = {
+    // Designer retailer. Deep on labels it carries, and its product URLs name the
+    // brand in their own segment, which is what makes its listings trustworthy.
+    ssense: {
+        name: 'ssense',
+        indexUrls: (slug, page) => ['men', 'women'].map((dept) =>
+            `https://www.ssense.com/en-us/${dept}/designers/${slug}${page > 1 ? `?page=${page}` : ''}`),
+        parse: (markdown, slug) => parseListings(markdown, slug),
+    },
+
+    // Aggregator across many retailers. The widest coverage by far, and the only
+    // one of these that carries both a sneaker brand's full range and a designer
+    // label's, which is the whole reason for having it.
+    lyst: {
+        name: 'lyst',
+        indexUrls: (slug, page) => [
+            `https://www.lyst.com/designer/${slug}/${page > 1 ? `?page=${page}` : ''}`,
+        ],
+        parse: (markdown, slug) => {
+            const found = new Map<string, Listing>();
+            const link = /\[([\s\S]{0,600}?)\]\((https:\/\/www\.lyst\.com\/(?:shoes|clothing|accessories|bags|jewelry|watches)\/([a-z0-9-]+)\/?)\)/gi;
+
+            for (const match of markdown.matchAll(link)) {
+                const [, label, rawUrl, nameSlug] = match;
+                const productUrl = rawUrl.replace(/\/$/, '');
+                if (found.has(productUrl)) continue;
+
+                // Product slugs lead with the brand, so this is how a listing is
+                // attributed on a site whose URLs have no brand segment.
+                if (!nameSlug.startsWith(slug)) continue;
+
+                const name = titleFromSlug(nameSlug.slice(slug.length).replace(/^-+/, '')) || titleFromSlug(nameSlug);
+                if (!name || name.length < 3) continue;
+
+                const imageUrl = label.match(/https:\/\/[^\s)"']+\.(?:jpg|jpeg|png|webp)/i)?.[0] ?? null;
+                found.set(productUrl, { name: name.slice(0, 200), price: priceFrom(label), productUrl, imageUrl });
+            }
+            return [...found.values()];
+        },
+    },
+
+    // Sneaker marketplace. Narrow on purpose: it is here for the brands the
+    // designer retailer barely stocks.
+    stockx: {
+        name: 'stockx',
+        indexUrls: (slug, page) => [
+            `https://stockx.com/brands/${slug}?category=sneakers${page > 1 ? `&page=${page}` : ''}`,
+        ],
+        parse: (markdown, slug) => {
+            const found = new Map<string, Listing>();
+            const link = /\[([\s\S]{0,400}?)\]\((https:\/\/stockx\.com\/([a-z0-9-]+))\)/gi;
+
+            for (const match of markdown.matchAll(link)) {
+                const [, label, productUrl, nameSlug] = match;
+                if (found.has(productUrl)) continue;
+
+                // Flat URLs with no brand segment, but every product slug leads
+                // with the brand. Anything else on the page is navigation.
+                if (!nameSlug.startsWith(slug)) continue;
+                if (/^(brands|news|about|sell|buy|help)/.test(nameSlug)) continue;
+
+                const name = titleFromSlug(nameSlug.slice(slug.length).replace(/^-+/, '')) || titleFromSlug(nameSlug);
+                if (!name || name.length < 3) continue;
+
+                const imageUrl = label.match(/https:\/\/images[^\s)"']+/i)?.[0] ?? null;
+                found.set(productUrl, { name: name.slice(0, 200), price: priceFrom(label), productUrl, imageUrl });
+            }
+            return [...found.values()];
+        },
+    },
+};
+
+/**
+ * Walk one source's index for one brand, continuing from where the last run left
+ * off. Running off the end wraps the cursor so the next pass refreshes prices
+ * rather than stopping.
+ */
+async function crawlSource(
+    source: Source,
+    sourceSlug: string,
     startPage: number,
 ): Promise<{ listings: Listing[]; nextCursor: number }> {
     const found = new Map<string, Listing>();
     let exhausted = false;
 
-    for (const department of ['men', 'women']) {
-        for (let offset = 0; offset < MAX_PAGES_PER_DEPARTMENT; offset++) {
-            const page = startPage + offset;
-            const url = `https://www.${SOURCE_DOMAIN}/en-us/${department}/designers/${brandSlug}${page > 1 ? `?page=${page}` : ''}`;
-            const markdown = await scrape(url);
-            if (!markdown) { exhausted = true; break; }
+    outer:
+    for (let offset = 0; offset < MAX_PAGES_PER_DEPARTMENT; offset++) {
+        const page = startPage + offset;
 
-            const listings = parseListings(markdown, brandSlug);
-            // Running off the end of the index is how we learn a brand's depth;
-            // wrap the cursor back to the front so the next pass refreshes prices.
-            if (listings.length === 0) { exhausted = true; break; }
+        for (const url of source.indexUrls(sourceSlug, page)) {
+            const markdown = await scrape(url);
+            if (!markdown) { exhausted = true; continue; }
+
+            const listings = source.parse(markdown, sourceSlug);
+            if (listings.length === 0) { exhausted = true; continue; }
 
             for (const listing of listings) {
                 if (!found.has(listing.productUrl)) found.set(listing.productUrl, listing);
@@ -216,11 +328,13 @@ async function crawlBrand(
                 return { listings: [...found.values()], nextCursor: page + 1 };
             }
         }
+
+        if (exhausted && found.size === 0) break outer;
     }
 
     return {
         listings: [...found.values()],
-        nextCursor: exhausted ? 1 : startPage + MAX_PAGES_PER_DEPARTMENT,
+        nextCursor: exhausted && found.size === 0 ? 1 : startPage + MAX_PAGES_PER_DEPARTMENT,
     };
 }
 
@@ -240,56 +354,55 @@ serve(async (req: Request) => {
 
     try {
         const payload = await req.json().catch(() => ({}));
+        const only: string[] = Array.isArray(payload?.brands) ? payload.brands : [];
+        const onlySource: string | null = typeof payload?.source === 'string' ? payload.source : null;
 
-        // Named brands, or the least recently refreshed ones from the registry.
-        let brands: { slug: string; name: string }[];
+        // A unit of work is one brand on one source, because that is what fits in
+        // the timeout. Stalest first, so a repeating schedule works through every
+        // brand on every source instead of favouring whichever is listed first.
+        let query = admin
+            .from('brand_sources')
+            .select('brand_slug, source, source_slug, page_cursor, brands!inner(name)')
+            .eq('is_enabled', true)
+            .order('synced_at', { ascending: true, nullsFirst: true })
+            .limit(MAX_BRANDS_PER_RUN);
 
-        if (Array.isArray(payload?.brands) && payload.brands.length) {
-            const { data } = await admin
-                .from('brands')
-                .select('slug, name, catalog_slug, catalog_page_cursor')
-                .in('slug', payload.brands.slice(0, MAX_BRANDS_PER_RUN));
-            brands = data ?? [];
-        } else {
-            // Stalest first, so a repeating schedule works through the whole
-            // directory instead of re-crawling the same brand forever.
-            const { data } = await admin
-                .from('brands')
-                .select('slug, name, catalog_slug, catalog_page_cursor')
-                .not('catalog_slug', 'is', null)
-                .order('catalog_synced_at', { ascending: true, nullsFirst: true })
-                .limit(MAX_BRANDS_PER_RUN);
-            brands = data ?? [];
-        }
+        if (only.length) query = query.in('brand_slug', only);
+        if (onlySource) query = query.eq('source', onlySource);
 
-        if (!brands.length) return json({ error: 'No brands to seed' }, 400);
+        const { data: jobs, error: jobsError } = await query;
+        if (jobsError) throw jobsError;
+        if (!jobs?.length) return json({ error: 'Nothing to seed' }, 400);
 
         const report: Record<string, number> = {};
 
-        for (const brand of brands) {
-            const { listings, nextCursor } = await crawlBrand(
-                brand.catalog_slug || brand.slug,
-                brand.name,
-                brand.catalog_page_cursor || 1,
-            );
+        for (const job of jobs) {
+            const source = SOURCES[job.source];
+            const key = `${job.brand_slug}:${job.source}`;
 
-            // Stamp before deciding what to do with the results. A brand that
-            // yields nothing must still advance the queue, or a single dead page
-            // parks the scheduler on it permanently.
-            await admin.from('brands')
-                .update({
-                    catalog_synced_at: new Date().toISOString(),
-                    catalog_page_cursor: nextCursor,
-                })
-                .eq('slug', brand.slug);
-
-            if (!listings.length) {
-                report[brand.slug] = 0;
+            if (!source) {
+                console.error('unknown source', job.source);
+                report[key] = 0;
                 continue;
             }
 
-            // Recover images the index page could not give us, capped so one
-            // brand cannot burn the whole credit budget on a single run.
+            const brandName = (job as any).brands?.name ?? job.brand_slug;
+            const { listings, nextCursor } = await crawlSource(source, job.source_slug, job.page_cursor || 1);
+
+            // Stamp before deciding what to do with the results, or a source that
+            // yields nothing parks the scheduler on it permanently.
+            await admin.from('brand_sources')
+                .update({ synced_at: new Date().toISOString(), page_cursor: nextCursor })
+                .eq('brand_slug', job.brand_slug)
+                .eq('source', job.source);
+
+            if (!listings.length) {
+                report[key] = 0;
+                continue;
+            }
+
+            // Recover images the index could not give us, capped so one brand
+            // cannot burn the whole credit budget on a single run.
             const needsImage = listings.filter((listing) => !listing.imageUrl).slice(0, MAX_IMAGE_LOOKUPS);
             for (const listing of needsImage) {
                 listing.imageUrl = squareImage(await resolveImage(listing.productUrl));
@@ -297,13 +410,13 @@ serve(async (req: Request) => {
 
             const { error } = await admin.from('brand_catalog').upsert(
                 listings.map((listing) => ({
-                    brand_slug: brand.slug,
-                    brand_name: brand.name,
+                    brand_slug: job.brand_slug,
+                    brand_name: brandName,
                     name: listing.name,
                     price: listing.price,
                     image_url: listing.imageUrl,
                     product_url: listing.productUrl,
-                    source: SOURCE_DOMAIN.replace('.com', ''),
+                    source: job.source,
                     // Parked, not discarded: the product is still known, and a later
                     // run that resolves its image switches it on without having to
                     // rediscover it.
@@ -314,10 +427,10 @@ serve(async (req: Request) => {
             );
 
             if (error) {
-                console.error('upsert', brand.slug, error.message);
-                report[brand.slug] = 0;
+                console.error('upsert', key, error.message);
+                report[key] = 0;
             } else {
-                report[brand.slug] = listings.filter((listing) => listing.imageUrl).length;
+                report[key] = listings.filter((listing) => listing.imageUrl).length;
             }
         }
 
