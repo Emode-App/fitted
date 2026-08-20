@@ -41,6 +41,15 @@ const DEFAULT_FOLDERS: Folder[] = [
 interface WardrobeState {
     folders: Folder[];
     selectedFolderId: string;
+    /**
+     * URLs the user has taken out of the wardrobe entirely.
+     *
+     * Removal is local — the uploaded file stays in storage, deliberately, because
+     * published posts reference the same URLs and deleting the object would break
+     * them. Without a record of the removal, anything that rebuilds the wardrobe
+     * from storage cannot tell a deleted item from a missing one and resurrects it.
+     */
+    removedUrls: string[];
 
     // Actions
     setSelectedFolder: (folderId: string) => void;
@@ -49,6 +58,7 @@ interface WardrobeState {
     createFolder: (name: string) => string;
     deleteFolder: (folderId: string) => void;
     getFolder: (folderId: string) => Folder | undefined;
+    wasRemoved: (url: string) => boolean;
     resetWardrobe: () => void;
 }
 
@@ -69,6 +79,7 @@ export const useWardrobeStore = create<WardrobeState>()(
         (set, get) => ({
             folders: DEFAULT_FOLDERS,
             selectedFolderId: 'last_used',
+            removedUrls: [],
 
             setSelectedFolder: (folderId) => {
                 set({ selectedFolderId: folderId });
@@ -106,13 +117,21 @@ export const useWardrobeStore = create<WardrobeState>()(
                         });
                     }
 
-                    return { folders: updatedFolders };
+                    // Adding something back is an explicit undo of removing it.
+                    return {
+                        folders: updatedFolders,
+                        removedUrls: (state.removedUrls ?? []).filter(u => u !== newAsset.url),
+                    };
                 });
             },
 
             removeAsset: (folderId, assetId) => {
-                set((state) => ({
-                    folders: state.folders.map(folder => {
+                set((state) => {
+                    const removedUrl = state.folders
+                        .find(f => f.id === folderId)?.assets
+                        .find(a => a.id === assetId)?.url;
+
+                    const folders = state.folders.map(folder => {
                         if (folder.id === folderId) {
                             return {
                                 ...folder,
@@ -120,8 +139,23 @@ export const useWardrobeStore = create<WardrobeState>()(
                             };
                         }
                         return folder;
-                    }),
-                }));
+                    });
+
+                    // An asset added to a named folder is mirrored into Last Used, so
+                    // only tombstone once it is gone from everywhere — pulling it out
+                    // of Shirts while it still sits in Last Used is not a deletion.
+                    const stillPresent = removedUrl
+                        ? folders.some(f => f.assets.some(a => a.url === removedUrl))
+                        : true;
+
+                    const removedUrls = state.removedUrls ?? [];
+                    return {
+                        folders,
+                        removedUrls: (!removedUrl || stillPresent || removedUrls.includes(removedUrl))
+                            ? removedUrls
+                            : [...removedUrls, removedUrl],
+                    };
+                });
             },
 
             createFolder: (name) => {
@@ -159,10 +193,13 @@ export const useWardrobeStore = create<WardrobeState>()(
                 return get().folders.find(f => f.id === folderId);
             },
 
+            wasRemoved: (url) => (get().removedUrls ?? []).includes(url),
+
             resetWardrobe: () => {
                 set({
                     folders: DEFAULT_FOLDERS,
                     selectedFolderId: 'last_used',
+                    removedUrls: [],
                 });
             },
         }),

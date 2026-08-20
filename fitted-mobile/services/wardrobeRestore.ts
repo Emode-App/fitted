@@ -84,19 +84,34 @@ export async function restoreWardrobeFromStorage(userId: string): Promise<number
         // the closest thing to "when did this last matter to you" that survived.
         found.sort((a, b) => b.createdAt - a.createdAt);
 
-        const { addAsset } = useWardrobeStore.getState();
+        const { addAsset, wasRemoved } = useWardrobeStore.getState();
+
+        let restored = 0;
+        let skipped = 0;
+
         // addAsset prepends, so walk oldest-first to land on newest-first.
         for (const item of [...found].reverse()) {
             const { data } = supabase.storage.from(BUCKET).getPublicUrl(item.path);
-            if (data?.publicUrl) addAsset('last_used', { url: data.publicUrl });
+            if (!data?.publicUrl) continue;
+
+            // Deleting from the wardrobe leaves the file in storage on purpose —
+            // posts reference the same URLs. Restoring blind would therefore hand
+            // back everything the user had deliberately thrown away.
+            if (wasRemoved(data.publicUrl)) {
+                skipped += 1;
+                continue;
+            }
+
+            addAsset('last_used', { url: data.publicUrl });
+            restored += 1;
         }
 
         await AsyncStorage.setItem(restoredKey(userId), '1');
 
-        if (found.length) {
-            console.warn(`[wardrobeRestore] restored ${found.length} item(s) for ${userId}`);
+        if (restored || skipped) {
+            console.warn(`[wardrobeRestore] restored ${restored} item(s), skipped ${skipped} previously removed`);
         }
-        return found.length;
+        return restored;
     } catch (error) {
         console.warn('[wardrobeRestore] restore failed:', error);
         return 0;
