@@ -16,10 +16,15 @@ import { useWardrobeStore } from '@/stores/wardrobeStore';
 // ============================================
 
 const BUCKET = 'posts';
-// Versioned: the v1 run was clobbered by a redundant claimLocalCache resetting the
-// store immediately after it, and it had already written its marker, so it would
-// never have retried. Bumping the version lets affected devices heal themselves.
-const restoredKey = (userId: string) => `wardrobe_restored:v2:${userId}`;
+// Versioned so a device whose wardrobe was emptied by a bug can recover: the
+// marker records that a restore ran, and a bug that discarded the result would
+// otherwise leave that marker in place forever.
+//
+// v1 was clobbered by a redundant claimLocalCache resetting the store right after
+// it. v2 survived that but was overwritten by syncWardrobe writing a stale, empty
+// snapshot back over it — the sync now refuses to shrink the wardrobe, and this
+// bump lets affected devices rebuild from storage one more time.
+const restoredKey = (userId: string) => `wardrobe_restored:v3:${userId}`;
 
 // Wardrobe uploads have been written under two layouts. Both are still in the
 // bucket, so both have to be read or the older half of a wardrobe stays missing.

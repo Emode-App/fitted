@@ -120,13 +120,20 @@ function RootLayout() {
         return;
       }
 
-      // Onboarding is a fact about the account, so the server value wins. The
-      // device flag is only a cache for the gap before the profile has loaded --
+      // Signed in but the profile has not arrived yet — or its fetch failed, which
+      // leaves isAuthenticated true and user null. Either way we do not yet know
+      // whether this account has onboarded, and guessing sends someone who
+      // finished months ago back through it. Wait for the profile instead; this
+      // effect re-runs when it lands.
+      if (!user) return;
+
+      // Onboarding is a fact about the account, so the server value decides. The
+      // device flag is only a cache for the moment before the profile loads --
       // relying on it alone is what made every account switch, reinstall and new
       // phone replay onboarding for people who had long since finished it.
       const hasOnboarded =
-        !!user?.onboarded_at ||
-        (await AsyncStorage.getItem(onboardingKeyFor(user?.id))) === 'true';
+        !!user.onboarded_at ||
+        (await AsyncStorage.getItem(onboardingKeyFor(user.id))) === 'true';
 
       if (!hasOnboarded && !inOnboarding) {
         router.replace('/onboarding');
@@ -136,7 +143,7 @@ function RootLayout() {
     };
 
     checkRedirect();
-  }, [isAuthenticated, segments, isLoading, timedOut, user?.onboarded_at, user?.id]);
+  }, [isAuthenticated, segments, isLoading, timedOut, user, user?.onboarded_at, user?.id]);
 
   useEffect(() => {
     if (error) throw error;

@@ -106,7 +106,18 @@ async function markRemoved(urls: string[]): Promise<void> {
  * anything the server has that the device does not; and applies tombstones in both
  * directions so a deletion on one phone reaches the other.
  */
+let syncInFlight: Promise<void> | null = null;
+
 export async function syncWardrobe(userId: string): Promise<void> {
+    // claimLocalCache runs twice for one sign-in, so this does too. Two passes
+    // reading and writing the same store is exactly how a stale snapshot gets
+    // written back over a good one.
+    if (syncInFlight) return syncInFlight;
+    syncInFlight = runSync(userId).finally(() => { syncInFlight = null; });
+    return syncInFlight;
+}
+
+async function runSync(userId: string): Promise<void> {
     try {
         activeUserId = userId;
         folderIds = await loadFolders(userId);
@@ -173,6 +184,25 @@ export async function syncWardrobe(userId: string): Promise<void> {
                     .map(assetFromRow)
                     .sort((a, b) => b.dateAdded - a.dateAdded),
             });
+        }
+
+        // A sync must never leave the device with less than it started with.
+        //
+        // The merge reads the store, then writes what it computed. If that read
+        // lands before persist has finished rehydrating -- or while a second
+        // sign-in pass is running the same code -- the snapshot is empty, and
+        // writing it back empties the wardrobe and persists that emptiness. Only
+        // an explicit server tombstone is allowed to remove anything, so any
+        // other shrinkage means the snapshot was stale and must be discarded.
+        const before = state.folders.reduce((n, f) => n + f.assets.length, 0);
+        const after = merged.reduce((n, f) => n + f.assets.length, 0);
+        const removedByServer = serverTombstoned.size;
+
+        if (after < before - removedByServer) {
+            console.warn(
+                `[wardrobeSync] refusing to shrink wardrobe ${before} -> ${after}; stale read, leaving local copy alone`,
+            );
+            return;
         }
 
         useWardrobeStore.setState({

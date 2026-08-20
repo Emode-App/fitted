@@ -53,22 +53,28 @@ interface Listing {
  *   - the page's own sort and filter controls are links too, and one of them
  *     ("Discount: High to low") sailed through as a product.
  */
-function parseListings(markdown: string, brandName: string): Listing[] {
+function parseListings(markdown: string, brandSlug: string): Listing[] {
     const found = new Map<string, Listing>();
 
-    // A product URL ends /product/<brand>/<slug>/<numeric id>. Sort links, filter
-    // links and pagination do not, which is what keeps them out.
-    const link = /\[([\s\S]{0,600}?)\]\((https:\/\/www\.ssense\.com\/[a-z-]+\/(?:men|women)\/product\/[a-z0-9-]+\/[a-z0-9-]+\/\d+)\)/gi;
+    // A product URL is /product/<brand>/<name-slug>/<numeric id>. Both segments
+    // are captured: the brand one is the only trustworthy statement of whose
+    // product this is, and the name one is the product name already normalised.
+    const link = /\[([\s\S]{0,600}?)\]\((https:\/\/www\.ssense\.com\/[a-z-]+\/(?:men|women)\/product\/([a-z0-9-]+)\/([a-z0-9-]+)\/\d+)\)/gi;
 
     // Only a real CDN transform is an image. The bare host appears on pages as a
     // placeholder and renders as an empty tile.
     const IMAGE = /https:\/\/img\.ssensemedia\.com\/image\/upload\/[^\s)"']+\.jpg/i;
 
-    const brandPrefix = brandName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
     for (const match of markdown.matchAll(link)) {
-        const [, label, productUrl] = match;
+        const [, label, productUrl, urlBrand, urlName] = match;
         if (found.has(productUrl)) continue;
+
+        // A designer index also carries recommendations, recently-viewed and
+        // "you may also like" tiles for OTHER labels. Trusting the page put every
+        // one of those into the brand being crawled — Vivienne Westwood and Nour
+        // Hammour pieces filed under Loewe. The brand in the product's own URL is
+        // the only claim worth believing.
+        if (urlBrand !== brandSlug) continue;
 
         const imageUrl = squareImage(label.match(IMAGE)?.[0] ?? null);
 
@@ -79,22 +85,17 @@ function parseListings(markdown: string, brandName: string): Listing[] {
             .filter((n) => Number.isFinite(n) && n > 0);
         const price = prices.length ? prices[prices.length - 1] : null;
 
-        const name = label
-            .replace(/!\[[\s\S]*?\)/g, ' ')            // image
-            .replace(/\$\s?[\d,]+(?:\.\d{2})?/g, ' ')  // prices
-            .replace(/\*\*/g, ' ')                     // bold markers
-            .split(/[\\\n]+/)
-            .map((part) => part.trim())
-            .filter((part) => part.length > 2)
-            .sort((a, b) => b.length - a.length)[0]
-            // The brand is glued to the front of the name with no separator.
-            ?.replace(new RegExp(`^${brandPrefix}\\s*`, 'i'), '')
-            .replace(/\s{2,}/g, ' ')
-            .trim();
+        // Built from the URL's name slug rather than the rendered label. The
+        // label is a run of adjacent spans that markdown concatenates, which is
+        // where "**Rick OwensGray Tower Felt Cashmere**" came from; the slug is
+        // already just the product, with the brand in its own segment.
+        const name = urlName
+            .split('-')
+            .filter(Boolean)
+            .map((word) => (word.length <= 2 ? word.toUpperCase() : word[0].toUpperCase() + word.slice(1)))
+            .join(' ');
 
-        // Anything still carrying markup is a control or a layout fragment, not a
-        // product, and must not be written.
-        if (!name || name.length < 3 || /[\[\]()*]|https?:/i.test(name)) continue;
+        if (!name || name.length < 3) continue;
 
         found.set(productUrl, { name: name.slice(0, 200), price, productUrl, imageUrl });
     }
@@ -202,7 +203,7 @@ async function crawlBrand(
             const markdown = await scrape(url);
             if (!markdown) { exhausted = true; break; }
 
-            const listings = parseListings(markdown, brandName);
+            const listings = parseListings(markdown, brandSlug);
             // Running off the end of the index is how we learn a brand's depth;
             // wrap the cursor back to the front so the next pass refreshes prices.
             if (listings.length === 0) { exhausted = true; break; }
