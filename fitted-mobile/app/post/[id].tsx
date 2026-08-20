@@ -27,12 +27,16 @@ import { usePostsStore } from '@/stores/postsStore';
 
 const { width } = Dimensions.get('window');
 
-// Brands shown in the "More from" sections: unique, real (not 'unknown'),
-// and shoppable (has a purchase link). Used by both the fetch and the render
-// so the two never disagree (which would strand a brand on "No items found").
+// Brands shown in the "More from" sections: unique and actually named. Used by
+// both the fetch and the render so the two never disagree (which would strand a
+// brand on an empty section).
+//
+// A purchase link used to be required here as well, back when these sections were
+// filled from whatever the poster had linked. They are filled from the catalogue
+// now, so demanding a link only hid brands we have hundreds of pieces for.
 const getDisplayBrands = (post: Post): string[] => [...new Set(
     (post.items || [])
-        .filter(item => item.brand && item.brand.toLowerCase() !== 'unknown' && item.purchase_link)
+        .filter(item => item.brand && item.brand.toLowerCase() !== 'unknown')
         .map(item => item.brand as string)
 )];
 
@@ -490,6 +494,22 @@ export default function PostDetailScreen() {
                                 </Text>
 
                                 <View style={styles.linksRow}>
+                                    {/* The catalogue carries the retailer's own product URL, so go
+                                        straight there when we have one. Search stays regardless —
+                                        it is the only option for a piece somebody tagged by hand,
+                                        and the way to find a listing that has since sold out. */}
+                                    {!!selectedItem.purchase_link && (
+                                        <Pressable
+                                            style={({ pressed }) => [styles.linkWrapper, { opacity: pressed ? 0.7 : 1 }]}
+                                            onPress={() => handleOpenLink(selectedItem.purchase_link!)}
+                                        >
+                                            <View style={[styles.linkCircle, { backgroundColor: colors.text, borderColor: colors.text }]}>
+                                                <Feather name="shopping-bag" size={20} color={colors.background} />
+                                            </View>
+                                            <Text style={[styles.linkLabel, { color: colors.text }]}>View item</Text>
+                                        </Pressable>
+                                    )}
+
                                     <Pressable
                                         style={({ pressed }) => [styles.linkWrapper, { opacity: pressed ? 0.7 : 1 }]}
                                         onPress={() => handleSearchGoogle(selectedItem)}

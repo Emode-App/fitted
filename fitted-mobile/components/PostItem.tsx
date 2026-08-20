@@ -199,11 +199,16 @@ export default function PostItem({ post, onLike, onComment, onShare, onSave, onU
         }
     };
 
-    // Filter items to exclude "unknown" or items without links
+    // Items worth tagging: anything whose brand the poster actually named.
+    //
+    // This used to require a purchase_link too, which made the tag button look
+    // broken — you could tag three pieces, tap it, and get nothing, because
+    // pasting a URL is optional and almost nobody does it. A named brand is the
+    // useful part; the item sheet offers the retailer link when there is one and
+    // a search when there is not.
     const knownItems = (post.items || []).filter(item =>
         item.brand &&
-        item.brand.toLowerCase() !== 'unknown' &&
-        item.purchase_link
+        item.brand.toLowerCase() !== 'unknown'
     );
 
     // Build "wearing" text from known items only
