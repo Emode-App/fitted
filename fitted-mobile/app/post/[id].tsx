@@ -274,11 +274,12 @@ export default function PostDetailScreen() {
         await Promise.all(brands.map(async (brand) => {
             try {
                 const { data, error } = await supabase
-                    .from('brand_feed')
-                    .select('post_id, brand_name, item_name, image_url, purchase_link, price')
+                    .from('brand_items')
+                    .select('brand_name, name, image_url, product_url, price, is_tagged')
+                    // Worn-and-tagged first, then the wider catalogue.
                     .ilike('brand_name', brand)
-                    .neq('post_id', id)          // "More from" means other posts
-                    .order('created_at', { ascending: false })
+                    .order('is_tagged', { ascending: false })
+                    .order('sort_at', { ascending: false })
                     .limit(24);
 
                 if (error) throw error;
@@ -289,17 +290,17 @@ export default function PostDetailScreen() {
 
                 for (const row of data ?? []) {
                     if (mappedItems.length >= 8) break;
-                    const key = `${row.item_name ?? ''}|${row.image_url ?? ''}`;
-                    if (seen.has(key)) continue;
+                    const key = (row.name ?? '').toLowerCase();
+                    if (!key || seen.has(key)) continue;
                     seen.add(key);
 
                     mappedItems.push({
                         id: `dyn_${brand}_${mappedItems.length}`,
                         brand: row.brand_name || brand,
-                        name: row.item_name || 'Item',
+                        name: row.name || 'Item',
                         price: Number(row.price) || 0,
                         image_url: row.image_url || '',
-                        purchase_link: row.purchase_link || '',
+                        purchase_link: row.product_url || '',
                     });
                 }
 

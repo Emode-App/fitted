@@ -61,10 +61,11 @@ async function searchTaggedCatalogue(query: string, limit: number): Promise<Sear
         const term = `%${query.trim()}%`;
 
         const { data, error } = await supabase
-            .from('brand_feed')
-            .select('post_id, brand_name, item_name, image_url, purchase_link, price')
-            .or(`brand_name.ilike.${term},item_name.ilike.${term}`)
-            .order('created_at', { ascending: false })
+            .from('brand_items')
+            .select('brand_name, name, image_url, product_url, price, is_tagged')
+            .or(`brand_name.ilike.${term},name.ilike.${term}`)
+            .order('is_tagged', { ascending: false })
+            .order('sort_at', { ascending: false })
             .limit(limit * 3);
 
         if (error || !data) return { products: [], total: 0 };
@@ -75,20 +76,20 @@ async function searchTaggedCatalogue(query: string, limit: number): Promise<Sear
 
         for (const row of data) {
             if (products.length >= limit) break;
-            const key = `${row.brand_name ?? ''}|${row.item_name ?? ''}`;
+            const key = `${row.brand_name ?? ''}|${row.name ?? ''}`.toLowerCase();
             if (seen.has(key)) continue;
             seen.add(key);
 
             products.push({
-                id: `tagged_${row.post_id}_${products.length}`,
-                name: row.item_name || 'Item',
+                id: `catalogue_${products.length}`,
+                name: row.name || 'Item',
                 brand: row.brand_name || '',
                 imageUrl: row.image_url || '',
                 thumbnail: row.image_url || '',
                 styleId: '',
                 retailPrice: Number(row.price) || undefined,
                 lastSale: undefined,
-                purchaseLink: row.purchase_link || undefined,
+                purchaseLink: row.product_url || undefined,
             });
         }
 

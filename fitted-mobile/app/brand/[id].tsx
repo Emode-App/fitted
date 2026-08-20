@@ -37,10 +37,12 @@ export default function BrandDetailScreen() {
             setLoading(true);
 
             const { data, error } = await supabase
-                .from('brand_feed')
-                .select('post_id, brand_name, item_name, image_url, purchase_link, price')
+                .from('brand_items')
+                .select('brand_name, name, image_url, product_url, price, is_tagged')
+                // Pieces somebody here actually wore rank above catalogue listings.
                 .ilike('brand_name', brandName)
-                .order('created_at', { ascending: false })
+                .order('is_tagged', { ascending: false })
+                .order('sort_at', { ascending: false })
                 .limit(60);
 
             if (error) throw error;
@@ -50,17 +52,17 @@ export default function BrandDetailScreen() {
             const mapped: ClothingItem[] = [];
 
             for (const row of data ?? []) {
-                const key = `${row.item_name ?? ''}|${row.image_url ?? ''}`;
-                if (seen.has(key)) continue;
+                const key = (row.name ?? '').toLowerCase();
+                if (!key || seen.has(key)) continue;
                 seen.add(key);
 
                 mapped.push({
-                    id: `${row.post_id}_${mapped.length}`,
+                    id: `brand_${mapped.length}`,
                     brand: row.brand_name || brandName,
-                    name: row.item_name || 'Item',
+                    name: row.name || 'Item',
                     price: Number(row.price) || 0,
                     image_url: row.image_url || '',
-                    purchase_link: row.purchase_link || '',
+                    purchase_link: row.product_url || '',
                 });
             }
 
