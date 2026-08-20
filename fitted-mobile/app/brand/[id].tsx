@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '@/hooks/useTheme';
-import { searchProducts } from '@/services/aiService';
+import { supabase } from '@/services/supabase';
 import { ClothingItem } from '@/types';
 
 const { width } = Dimensions.get('window');
@@ -26,33 +26,48 @@ export default function BrandDetailScreen() {
         fetchBrandItems();
     }, [id]);
 
+    // What people actually wore and tagged, not a live catalogue lookup.
+    //
+    // This used to proxy a sneaker API for "<brand> clothing", which returned
+    // poor matches for apparel at the best of times and nothing at all whenever
+    // that upstream was down -- which is what emptied every brand page. The
+    // brands tagged on real posts are the inventory this app genuinely has.
     const fetchBrandItems = async () => {
         try {
             setLoading(true);
-            const results = await searchProducts(`${brandName} clothing`);
 
-            if (results && results.length > 0) {
-                const mappedItems: ClothingItem[] = results.map((item: any, index: number) => {
-                    // Image fallback logic same as PostDetail
-                    let imageUrl = item.imageUrl;
-                    if (!imageUrl || imageUrl.length < 10) {
-                        const searchTerm = `${item.brand} ${item.name} white background`;
-                        imageUrl = `https://tse2.mm.bing.net/th?q=${encodeURIComponent(searchTerm)}&w=500&h=500&c=7&rs=1&p=0`;
-                    }
+            const { data, error } = await supabase
+                .from('brand_feed')
+                .select('post_id, brand_name, item_name, image_url, purchase_link, price')
+                .ilike('brand_name', brandName)
+                .order('created_at', { ascending: false })
+                .limit(60);
 
-                    return {
-                        id: `brand_${index}`,
-                        brand: item.brand || brandName,
-                        name: item.name,
-                        price: item.price || 0,
-                        image_url: imageUrl,
-                        purchase_link: item.purchaseLink || '',
-                    };
+            if (error) throw error;
+
+            // The same piece can appear in several posts; show it once.
+            const seen = new Set<string>();
+            const mapped: ClothingItem[] = [];
+
+            for (const row of data ?? []) {
+                const key = `${row.item_name ?? ''}|${row.image_url ?? ''}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+
+                mapped.push({
+                    id: `${row.post_id}_${mapped.length}`,
+                    brand: row.brand_name || brandName,
+                    name: row.item_name || 'Item',
+                    price: Number(row.price) || 0,
+                    image_url: row.image_url || '',
+                    purchase_link: row.purchase_link || '',
                 });
-                setItems(mappedItems);
-            } else setItems([]);
+            }
+
+            setItems(mapped);
         } catch (e) {
-            console.error(e);
+            console.error('[brand] could not load tagged items:', e);
+            setItems([]);
         } finally {
             setLoading(false);
         }
@@ -117,7 +132,7 @@ export default function BrandDetailScreen() {
                         </View>
                     ) : (
                         <Text style={{ color: colors.textSecondary, textAlign: 'center', paddingVertical: 40 }}>
-                            No verified products found right now.
+                            Nobody has tagged a {brandName} piece yet.
                         </Text>
                     )}
                 </View>
