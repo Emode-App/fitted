@@ -67,6 +67,22 @@ export default function BrandDetailScreen() {
             }
 
             setItems(mapped);
+
+            // Nothing to show yet: ask for this brand to be crawled.
+            //
+            // The directory carries ~12,400 brands but deliberately gives none of
+            // them a crawl job up front -- that would be years of queue, nearly
+            // all of it for labels nobody opens. A brand earns its job the first
+            // time somebody actually wants it, which is here and on tagging.
+            // Fire-and-forget: the catalogue arrives on a later scheduled run, so
+            // there is nothing to wait for and a failure must not blank the page.
+            if (mapped.length === 0) {
+                supabase
+                    .rpc('ensure_brand_sources_by_name', { brand_name: brandName })
+                    .then(({ error: rpcError }) => {
+                        if (rpcError) console.warn('[brand] could not queue crawl:', rpcError.message);
+                    });
+            }
         } catch (e) {
             console.error('[brand] could not load tagged items:', e);
             setItems([]);

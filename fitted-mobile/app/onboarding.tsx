@@ -31,6 +31,19 @@ import { getSubscriptionPrice, purchaseSubscription, restorePurchases, type Subs
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
 import { LEGAL } from '@/constants/legal';
+import { Colors } from '@/constants/colors';
+
+/**
+ * Onboarding is painted in Emode's own colours, not the viewer's theme.
+ *
+ * This screen used to hardcode a dark palette -- black ground, near-black cards,
+ * white type -- while the signature cream sat in the theme file being used by
+ * nothing but the app icon. It is pinned to `emode` rather than read from
+ * useTheme deliberately: this is the first thing anybody sees, and it should look
+ * like the brand regardless of which theme they later pick or what their phone
+ * is set to.
+ */
+const E = Colors.emode;
 
 const { width: SW } = Dimensions.get('window');
 export const ONBOARDING_KEY = 'has_onboarded';
@@ -221,7 +234,7 @@ function Slide({ item, index, scrollX }: { item: any; index: number; scrollX: Sh
                 <Animated.View style={[styles.welcomeContent, contentStyle]}>
                     <MaskedView maskElement={<Text style={styles.appName}>emode</Text>}>
                         <LinearGradient
-                            colors={['#ffffff', '#e9d5ff', '#fbcfe8']}
+                            colors={['#18181b', '#8b5cf6', '#ec4899']}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 1, y: 1 }}
                         >
@@ -433,7 +446,7 @@ export default function OnboardingScreen() {
     if (step === 'profile') {
         return (
             <View style={styles.container}>
-                <StatusBar style="light" />
+                <StatusBar style="dark" />
                 <SafeAreaView style={{ flex: 1 }}>
                     <ScrollView
                         style={{ flex: 1 }}
@@ -460,7 +473,7 @@ export default function OnboardingScreen() {
                                         style={styles.avatarRing}
                                     >
                                         <View style={styles.avatarPlaceholder}>
-                                            <Feather name="camera" size={24} color="#a1a1aa" />
+                                            <Feather name="camera" size={24} color={E.textSecondary} />
                                         </View>
                                     </LinearGradient>
                                 )}
@@ -475,7 +488,7 @@ export default function OnboardingScreen() {
                             <TextInput
                                 style={[styles.input, styles.inputMultiline]}
                                 placeholder="Tell people about your style..."
-                                placeholderTextColor="#52525b"
+                                placeholderTextColor={E.placeholder}
                                 value={bio}
                                 onChangeText={setBio}
                                 multiline
@@ -488,7 +501,7 @@ export default function OnboardingScreen() {
                             <TextInput
                                 style={styles.input}
                                 placeholder="City, Country"
-                                placeholderTextColor="#52525b"
+                                placeholderTextColor={E.placeholder}
                                 value={location}
                                 onChangeText={setLocation}
                             />
@@ -499,7 +512,7 @@ export default function OnboardingScreen() {
                             <TextInput
                                 style={styles.input}
                                 placeholder="e.g. Carhartt WIP"
-                                placeholderTextColor="#52525b"
+                                placeholderTextColor={E.placeholder}
                                 value={favoriteBrand}
                                 onChangeText={setFavoriteBrand}
                             />
@@ -511,14 +524,14 @@ export default function OnboardingScreen() {
                                 <TextInput
                                     style={[styles.input, styles.rowInput]}
                                     placeholder="Title"
-                                    placeholderTextColor="#52525b"
+                                    placeholderTextColor={E.placeholder}
                                     value={songTitle}
                                     onChangeText={setSongTitle}
                                 />
                                 <TextInput
                                     style={[styles.input, styles.rowInput]}
                                     placeholder="Artist"
-                                    placeholderTextColor="#52525b"
+                                    placeholderTextColor={E.placeholder}
                                     value={songArtist}
                                     onChangeText={setSongArtist}
                                 />
@@ -530,7 +543,7 @@ export default function OnboardingScreen() {
                             <TextInput
                                 style={styles.input}
                                 placeholder="yoursite.com"
-                                placeholderTextColor="#52525b"
+                                placeholderTextColor={E.placeholder}
                                 autoCapitalize="none"
                                 value={website}
                                 onChangeText={setWebsite}
@@ -540,33 +553,33 @@ export default function OnboardingScreen() {
                         <View style={styles.fieldGroup}>
                             <Text style={styles.fieldLabel}>Socials</Text>
                             <View style={styles.socialRow}>
-                                <Feather name="instagram" size={18} color="#71717a" style={styles.socialIcon} />
+                                <Feather name="instagram" size={18} color={E.textSecondary} style={styles.socialIcon} />
                                 <TextInput
                                     style={[styles.input, styles.socialInput]}
                                     placeholder="Instagram username"
-                                    placeholderTextColor="#52525b"
+                                    placeholderTextColor={E.placeholder}
                                     autoCapitalize="none"
                                     value={instagram}
                                     onChangeText={setInstagram}
                                 />
                             </View>
                             <View style={styles.socialRow}>
-                                <Feather name="music" size={18} color="#71717a" style={styles.socialIcon} />
+                                <Feather name="music" size={18} color={E.textSecondary} style={styles.socialIcon} />
                                 <TextInput
                                     style={[styles.input, styles.socialInput]}
                                     placeholder="TikTok username"
-                                    placeholderTextColor="#52525b"
+                                    placeholderTextColor={E.placeholder}
                                     autoCapitalize="none"
                                     value={tiktok}
                                     onChangeText={setTiktok}
                                 />
                             </View>
                             <View style={styles.socialRow}>
-                                <Feather name="twitter" size={18} color="#71717a" style={styles.socialIcon} />
+                                <Feather name="twitter" size={18} color={E.textSecondary} style={styles.socialIcon} />
                                 <TextInput
                                     style={[styles.input, styles.socialInput]}
                                     placeholder="Twitter / X username"
-                                    placeholderTextColor="#52525b"
+                                    placeholderTextColor={E.placeholder}
                                     autoCapitalize="none"
                                     value={twitter}
                                     onChangeText={setTwitter}
@@ -596,13 +609,13 @@ export default function OnboardingScreen() {
         const displayPrice = storePrices[plan.id] || plan.price;
         return (
             <View style={styles.container}>
-                <StatusBar style="light" />
+                <StatusBar style="dark" />
                 <SafeAreaView style={{ flex: 1 }}>
                     <View style={styles.paywallInner}>
 
                         {/* Back */}
                         <Pressable onPress={() => setStep('profile')} style={styles.backBtn} hitSlop={12}>
-                            <Feather name="arrow-left" size={20} color="#fff" />
+                            <Feather name="arrow-left" size={20} color={E.text} />
                         </Pressable>
 
                         {/* Heading */}
@@ -705,7 +718,7 @@ export default function OnboardingScreen() {
     // ─── CONTENT SLIDES ──────────────────────────────────────────
     return (
         <View style={styles.container}>
-            <StatusBar style="light" />
+            <StatusBar style="dark" />
 
             <AnimatedFlatList
                 ref={listRef as any}
@@ -747,7 +760,7 @@ export default function OnboardingScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#000',
+        backgroundColor: E.background,
     },
 
     // ── Slides ──────────────────────────────────────────
@@ -766,20 +779,20 @@ const styles = StyleSheet.create({
     appName: {
         fontFamily: 'Inter_900Black',
         fontSize: 80,
-        color: '#fff',
+        color: E.text,
         letterSpacing: -5,
         lineHeight: 76,
     },
     tagline: {
         fontFamily: 'Inter_700Bold',
         fontSize: 38,
-        color: '#fff',
+        color: E.text,
         letterSpacing: -2,
         lineHeight: 42,
     },
     welcomeBody: {
         fontSize: 16,
-        color: '#a1a1aa',
+        color: E.textSecondary,
         lineHeight: 25,
         marginTop: 6,
     },
@@ -818,13 +831,13 @@ const styles = StyleSheet.create({
     featureTitle: {
         fontFamily: 'Inter_700Bold',
         fontSize: 38,
-        color: '#fff',
+        color: E.text,
         letterSpacing: -1.5,
         lineHeight: 42,
     },
     featureBody: {
         fontSize: 16,
-        color: '#a1a1aa',
+        color: E.textSecondary,
         lineHeight: 26,
     },
 
@@ -846,7 +859,7 @@ const styles = StyleSheet.create({
     dot: {
         height: 6,
         borderRadius: 3,
-        backgroundColor: '#fff',
+        backgroundColor: E.text,
     },
 
     // Gradient CTA
@@ -874,7 +887,7 @@ const styles = StyleSheet.create({
         height: 40,
         borderRadius: 20,
         borderWidth: 1,
-        borderColor: '#27272a',
+        borderColor: E.border,
         alignItems: 'center',
         justifyContent: 'center',
         marginBottom: 20,
@@ -882,13 +895,13 @@ const styles = StyleSheet.create({
     paywallTitle: {
         fontFamily: 'Inter_900Black',
         fontSize: 52,
-        color: '#fff',
+        color: E.text,
         letterSpacing: -3,
         lineHeight: 52,
     },
     paywallSubtitle: {
         fontSize: 15,
-        color: '#a1a1aa',
+        color: E.textSecondary,
         marginTop: 8,
         marginBottom: 24,
     },
@@ -896,7 +909,7 @@ const styles = StyleSheet.create({
     // Plan tabs
     planTabs: {
         flexDirection: 'row',
-        backgroundColor: '#111',
+        backgroundColor: E.backgroundSecondary,
         borderRadius: 12,
         padding: 4,
         marginBottom: 20,
@@ -908,24 +921,24 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     planTabActive: {
-        backgroundColor: '#fff',
+        backgroundColor: E.primary,
     },
     planTabText: {
         fontSize: 12,
         fontWeight: '700',
-        color: '#71717a',
+        color: E.textSecondary,
     },
     planTabTextActive: {
-        color: '#000',
+        color: E.primaryForeground,
     },
 
     // Plan card
     planCard: {
-        backgroundColor: '#111',
+        backgroundColor: E.backgroundSecondary,
         borderRadius: 20,
         padding: 20,
         borderWidth: 1,
-        borderColor: '#27272a',
+        borderColor: E.border,
     },
     planCardHead: {
         flexDirection: 'row',
@@ -946,21 +959,21 @@ const styles = StyleSheet.create({
     planName: {
         fontFamily: 'Inter_700Bold',
         fontSize: 16,
-        color: '#fff',
+        color: E.text,
     },
     planTagline: {
         fontSize: 13,
-        color: '#71717a',
+        color: E.textSecondary,
         marginTop: 2,
     },
     planPrice: {
         fontFamily: 'Inter_700Bold',
         fontSize: 16,
-        color: '#fff',
+        color: E.text,
     },
     planDivider: {
         height: 1,
-        backgroundColor: '#27272a',
+        backgroundColor: E.border,
         marginBottom: 20,
     },
     perkRow: {
@@ -979,7 +992,7 @@ const styles = StyleSheet.create({
     },
     perkText: {
         fontSize: 15,
-        color: '#e4e4e7',
+        color: E.text,
         lineHeight: 22,
         flex: 1,
     },
@@ -995,7 +1008,7 @@ const styles = StyleSheet.create({
     },
     skipText: {
         fontSize: 14,
-        color: '#52525b',
+        color: E.textTertiary,
     },
 
     // ── Profile setup ────────────────────────────────────
@@ -1007,13 +1020,13 @@ const styles = StyleSheet.create({
     profileTitle: {
         fontFamily: 'Inter_900Black',
         fontSize: 52,
-        color: '#fff',
+        color: E.text,
         letterSpacing: -3,
         lineHeight: 52,
     },
     profileSubtitle: {
         fontSize: 15,
-        color: '#a1a1aa',
+        color: E.textSecondary,
         marginTop: 8,
         marginBottom: 24,
         lineHeight: 21,
@@ -1039,13 +1052,13 @@ const styles = StyleSheet.create({
         width: 80,
         height: 80,
         borderRadius: 40,
-        backgroundColor: '#111',
+        backgroundColor: E.backgroundSecondary,
         alignItems: 'center',
         justifyContent: 'center',
     },
     avatarLabel: {
         fontSize: 13,
-        color: '#a1a1aa',
+        color: E.textSecondary,
     },
     fieldGroup: {
         marginBottom: 18,
@@ -1053,18 +1066,18 @@ const styles = StyleSheet.create({
     fieldLabel: {
         fontFamily: 'Inter_700Bold',
         fontSize: 13,
-        color: '#fff',
+        color: E.text,
         marginBottom: 8,
     },
     input: {
-        backgroundColor: '#111',
+        backgroundColor: E.input,
         borderWidth: 1,
-        borderColor: '#27272a',
+        borderColor: E.inputBorder,
         borderRadius: 12,
         paddingHorizontal: 16,
         paddingVertical: 14,
         fontSize: 15,
-        color: '#fff',
+        color: E.text,
     },
     inputMultiline: {
         minHeight: 80,
