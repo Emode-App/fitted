@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
+import { Image } from 'expo-image';
 import { useAuthStore } from '@/stores/authStore';
 import { useTheme } from '@/hooks/useTheme';
 import { LEGAL } from '@/constants/legal';
@@ -67,6 +68,15 @@ export default function LoginScreen() {
                 showsVerticalScrollIndicator={false}
             >
                 <View style={styles.logoContainer}>
+                    {/* The mark is a transparent glyph tinted to the theme's text
+                        colour, so it reads on the white light theme and the cream
+                        one without shipping a background with it. */}
+                    <Image
+                        source={require('@/assets/images/logo-e.png')}
+                        style={styles.mark}
+                        contentFit="contain"
+                        tintColor={colors.text}
+                    />
                     <Text style={[styles.logo, { color: colors.text }]}>emode</Text>
                     <Text style={[styles.tagline, { color: colors.textSecondary }]}>AI-Powered Virtual Try-On</Text>
                 </View>
@@ -104,6 +114,7 @@ const styles = StyleSheet.create({
     container: { flex: 1 },
     inner: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 40 },
     logoContainer: { alignItems: 'center', marginBottom: 48 },
+    mark: { width: 78, height: 89, marginBottom: 14 },
     logo: { fontSize: 48, fontWeight: '700', letterSpacing: -2 },
     tagline: { fontSize: 14, marginTop: 8 },
     form: { width: '100%', maxWidth: 340 },
