@@ -60,7 +60,7 @@ const CANVAS_TUTORIAL_STEPS: TutorialStep[] = [
     {
         icon: 'zap',
         title: 'Generate & Post',
-        body: 'Hit generate for an AI-rendered look, then share it to your feed or save it to your wardrobe.',
+        body: 'Hit generate for your look, then share it to your feed or save it to your wardrobe.',
     },
 ];
 
