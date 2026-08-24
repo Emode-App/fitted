@@ -3309,9 +3309,13 @@ const styles = StyleSheet.create({
     },
     imageContainer: {
         width: '100%',
-        aspectRatio: 1.25, // 5:4 ratio (replaces ITEM_WIDTH * 0.8)
+        // Square rather than 5:4. Product photography is square or portrait, so
+        // a wide box gave the shot less height than it needed and left it
+        // looking cramped and over-large in the frame.
+        aspectRatio: 1,
         borderTopLeftRadius: 12,
         borderTopRightRadius: 12,
+        overflow: 'hidden',
     },
     productImage: {
         width: '100%',

@@ -314,7 +314,15 @@ serve(async (req: Request) => {
                 '{"name": string, "brand": string, "price": number|null, "productUrl": string, "imageUrl": string|null}',
                 '',
                 'Rules:',
-                '- name is the specific product, without the brand repeated inside it.',
+                '- Return the PRODUCT, not somebody selling one. A resale listing --',
+                '  "Lightning Jordan Retro 4s Size 10.5 New Never Worn", "size 6.5y" --',
+                '  is one person offering one pair, with their own photo and their own',
+                '  asking price. Give the product as the brand names it.',
+                '- name is the official product name, without the brand repeated inside it',
+                '  and without size, condition or seller wording.',
+                '- Several entries for one release are fine and useful, since each comes',
+                '  with a different photograph. Name the retro year when releases differ:',
+                '  an Air Jordan 4 Lightning from 2006 and from 2021 are not the same shoe.',
                 '- productUrl must be a real product page you found.',
                 '- Prefer stockx.com, goat.com, grailed.com, lyst.com, nike.com or the',
                 '  brand site itself, whose photos come out best. Other retailers are fine.',
@@ -439,7 +447,35 @@ serve(async (req: Request) => {
                 return item;
             }));
 
-            const usable = resolved.filter(Boolean).slice(0, 24) as any[];
+            // A resale listing is one person selling one pair: their photo, their
+            // asking price, their sizing in the title. Those are what made the
+            // Lightning 4 results look like a car boot sale, and they are also
+            // the entries that arrive with no price, because there is no product
+            // page behind them to read one off.
+            const RESALE = new RegExp(
+                [
+                    'size\\s*\\d',
+                    '\\b\\d+(\\.\\d)?y\\b',
+                    '\\bus\\s*\\d',
+                    '\\b(new|never)\\s+(never\\s+)?worn\\b',
+                    '\\b(vnds|dswt|deadstock|preowned|pre-owned|used|worn once)\\b',
+                    '\\bno box\\b',
+                    '\\b(bid|auction|offer)\\b',
+                ].join('|'),
+                'i',
+            );
+
+            // Several entries for one release are wanted, not a problem: they come
+            // with different photographs, and picking the angle that suits the
+            // board is the point. So no de-duplication by name -- only the
+            // requirement that each one reads like a product rather than someone
+            // clearing out their wardrobe.
+            const usable = (resolved.filter(Boolean) as any[])
+                .filter((item) => !RESALE.test(String(item.name)))
+                // A listing with a price came from a product page. Those first.
+                .sort((a, b) => (Number(b?.price) > 0 ? 1 : 0) - (Number(a?.price) > 0 ? 1 : 0))
+                .slice(0, 24);
+
 
             // Resolve a real photo for each result.
             //
