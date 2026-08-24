@@ -713,6 +713,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         gap: 10,
+        marginTop: 8,
     },
     itemCard: {
         width: 140,
@@ -781,7 +782,10 @@ const styles = StyleSheet.create({
     modalPrice: {
         fontSize: 22,
         fontWeight: '700',
-        marginTop: 8,
+        // No marginTop. It lived here and pushed the price down inside the row
+        // while the heart beside it stayed put, so the two sat 8px apart
+        // vertically however the row was aligned. The row owns the spacing now.
+        lineHeight: 26,
     },
     shopButton: {
         flexDirection: 'row',

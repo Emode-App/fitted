@@ -311,7 +311,7 @@ serve(async (req: Request) => {
             const prompt = [
                 'Find real clothing or footwear products matching: "' + query + '".',
                 'Reply with a raw JSON array of up to 24 objects, no markdown fence, each exactly:',
-                '{"name": string, "brand": string, "price": number|null, "productUrl": string}',
+                '{"name": string, "brand": string, "price": number|null, "productUrl": string, "imageUrl": string|null}',
                 '',
                 'Rules:',
                 '- name is the specific product, without the brand repeated inside it.',
@@ -456,11 +456,29 @@ serve(async (req: Request) => {
                 }
             };
 
+            // Last resort: the model's own image link, but only once it has been
+            // checked. Taking it unverified is what made the original version
+            // unreliable; discarding it entirely is what made this one return
+            // nothing, because the sites grounding likes best -- Farfetch, Mr
+            // Porter -- refuse scripted requests outright.
+            const verifiedImage = async (candidate: unknown): Promise<string | null> => {
+                if (typeof candidate !== 'string' || !/^https?:\/\//i.test(candidate)) return null;
+                try {
+                    const head = await fetch(candidate, { method: 'HEAD' });
+                    const type = head.headers.get('content-type') || '';
+                    return head.ok && type.startsWith('image/') ? candidate : null;
+                } catch {
+                    return null;
+                }
+            };
+
             const withImages = await Promise.all(usable.map(async (item: any) => {
                 const isStockx = /(^|\.)stockx\.com/i.test(new URL(item.productUrl).hostname);
                 const imageUrl = isStockx
-                    ? await stockxImage(item.productUrl)
-                    : (await ogImage(item.productUrl)) ?? await stockxImage(item.productUrl);
+                    ? (await stockxImage(item.productUrl)) ?? await verifiedImage(item.imageUrl)
+                    : (await ogImage(item.productUrl))
+                        ?? (await stockxImage(item.productUrl))
+                        ?? await verifiedImage(item.imageUrl);
 
                 return {
                     name: String(item.name).trim().slice(0, 200),
@@ -471,8 +489,17 @@ serve(async (req: Request) => {
                 };
             }));
 
-            // A tile with no picture is worse than one fewer result.
-            return json({ products: withImages.filter((item) => !!item.imageUrl) });
+            // A tile with no picture is worse than one fewer result -- but when
+            // that drops everything, the counts are the only way to tell which
+            // stage lost them. An empty result used to log nothing at all.
+            const withPictures = withImages.filter((item) => !!item.imageUrl);
+            console.log(
+                `[search-products] "${query}": model ${items.length}, usable ${usable.length}, with image ${withPictures.length}`,
+            );
+            if (!withPictures.length && usable.length) {
+                console.log('[search-products] all dropped at image stage:', usable.map((i: any) => i.productUrl).slice(0, 5).join(' | '));
+            }
+            return json({ products: withPictures });
         }
 
         return json({ error: 'Unknown action' }, 400);
