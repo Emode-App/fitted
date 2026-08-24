@@ -52,6 +52,13 @@ function humanAuthError(raw: string): string {
     return raw;
 }
 
+/** The three things somebody gets, stated before they hand over an email. */
+const PITCH: { icon: keyof typeof Feather.glyphMap; text: string }[] = [
+    { icon: 'zap', text: 'Try on anything, then share the fit' },
+    { icon: 'star', text: 'Style others, get styled, get paid' },
+    { icon: 'shopping-bag', text: 'Sell your closet, try on theirs' },
+];
+
 export default function LoginScreen() {
     const { colors } = useTheme();
     const [isLogin, setIsLogin] = useState(true);
@@ -136,6 +143,15 @@ export default function LoginScreen() {
                     />
                     <Text style={[styles.logo, { color: colors.text }]}>emode</Text>
                     <Text style={[styles.tagline, { color: colors.textSecondary }]}>The world's first social ecosystem for fashion fanatics.</Text>
+
+                    <View style={styles.pitch}>
+                        {PITCH.map((line) => (
+                            <View key={line.text} style={styles.pitchRow}>
+                                <Feather name={line.icon} size={14} color={colors.textSecondary} />
+                                <Text style={[styles.pitchText, { color: colors.textSecondary }]}>{line.text}</Text>
+                            </View>
+                        ))}
+                    </View>
                 </View>
 
                 <View style={styles.form}>
@@ -211,10 +227,13 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
     container: { flex: 1 },
     inner: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 40 },
-    logoContainer: { alignItems: 'center', marginBottom: 48 },
+    logoContainer: { alignItems: 'center', marginBottom: 26 },
     mark: { width: 78, height: 89, marginBottom: 14 },
     logo: { fontSize: 48, fontWeight: '700', letterSpacing: -2 },
     tagline: { fontSize: 14, marginTop: 8, textAlign: 'center', maxWidth: 300, lineHeight: 20 },
+    pitch: { marginTop: 18, gap: 9, alignSelf: 'stretch', paddingHorizontal: 8 },
+    pitchRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+    pitchText: { fontSize: 13.5, flexShrink: 1 },
     form: { width: '100%', maxWidth: 340 },
     inputWithAction: { paddingRight: 44 },
     inputAction: { position: 'absolute', right: 14, top: 0, bottom: 0, justifyContent: 'center' },
