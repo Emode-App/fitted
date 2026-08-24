@@ -5,6 +5,7 @@ import { BlurView } from 'expo-blur';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
+import { supabase } from '@/services/supabase';
 import { accountKey } from '@/services/localUserData';
 
 export interface TutorialStep {
@@ -26,37 +27,50 @@ interface TutorialModalProps {
 export function useFirstVisitTutorial(storageKey: string, enabled: boolean = true) {
     const [visible, setVisible] = useState(false);
     const userId = useAuthStore((state) => state.user?.id);
-    // Keyed per account. The flag used to be a bare key that sign-out wiped, so
-    // every time somebody signed back in they were walked through every tutorial
-    // again. Slotting it means it survives sign-out and still cannot carry over
-    // to whoever signs in next.
-    const key = accountKey(storageKey, userId);
+
+    // The answer lives on the account, not the device.
+    //
+    // Two previous attempts kept it in AsyncStorage -- first a bare key that
+    // sign-out wiped, then one slotted per account -- and people still reported
+    // the tour on every sign-in. Device storage is the wrong home for a fact
+    // about an account: it cannot be inspected from the server, so "it works
+    // now" is unverifiable, and it dies on reinstall or a second phone anyway.
+    // user_settings.seen_tutorials is checkable and permanent. The local copy
+    // stays as a cache so the modal does not flash before the row loads.
+    const cacheKey = accountKey(storageKey, userId);
 
     useEffect(() => {
         if (!enabled || !userId) return;
         let cancelled = false;
-        (async () => {
-            let seen = await AsyncStorage.getItem(key);
 
-            // Anyone who dismissed these before they were slotted has the old
-            // unkeyed flag. Honour it once and carry it across, rather than
-            // making them sit through the tour a final time.
-            if (seen !== 'true') {
-                const legacy = await AsyncStorage.getItem(storageKey);
-                if (legacy === 'true') {
-                    seen = 'true';
-                    await AsyncStorage.setItem(key, 'true');
-                }
+        (async () => {
+            if (await AsyncStorage.getItem(cacheKey) === 'true') return;
+
+            const { data } = await supabase
+                .from('user_settings')
+                .select('seen_tutorials')
+                .eq('user_id', userId)
+                .maybeSingle();
+
+            const seen: string[] = data?.seen_tutorials ?? [];
+            if (seen.includes(storageKey)) {
+                await AsyncStorage.setItem(cacheKey, 'true');
+                return;
             }
 
-            if (!cancelled && seen !== 'true') setVisible(true);
+            if (!cancelled) setVisible(true);
         })();
+
         return () => { cancelled = true; };
-    }, [enabled, key, userId]);
+    }, [enabled, userId, cacheKey, storageKey]);
 
     const dismiss = async () => {
         setVisible(false);
-        await AsyncStorage.setItem(key, 'true');
+        // Cache first so it cannot come back on this device even if the write
+        // fails; the server call is what makes it stick everywhere else.
+        await AsyncStorage.setItem(cacheKey, 'true').catch(() => {});
+        const { error } = await supabase.rpc('mark_tutorial_seen', { tutorial_key: storageKey });
+        if (error) console.warn('[tutorial] could not record dismissal:', error.message);
     };
 
     return { visible, dismiss };
