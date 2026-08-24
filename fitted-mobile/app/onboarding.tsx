@@ -32,6 +32,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
 import { LEGAL } from '@/constants/legal';
 import { Colors } from '@/constants/colors';
+import { ONBOARDING_MEDIA, type OnboardingSlot } from '@/constants/onboardingMedia';
 
 /**
  * Onboarding is painted in Emode's own colours, not the viewer's theme.
@@ -72,6 +73,25 @@ export const onboardingKeyFor = (userId?: string | null) =>
 
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
 
+/**
+ * How many accounts the follow step will ever render.
+ *
+ * There are only a handful of people here today, so this is a ceiling rather
+ * than a target -- it exists so the step stays a short, scannable suggestion
+ * once the app fills up, instead of turning into an endless directory.
+ */
+const SUGGESTED_LIMIT = 15;
+
+interface SuggestedAccount {
+    id: string;
+    username: string | null;
+    handle: string | null;
+    avatar_url: string | null;
+    bio: string | null;
+    is_verified_stylist: boolean | null;
+    is_business_account: boolean | null;
+}
+
 // ─────────────────────────────────────── SLIDE DATA ───
 
 const SLIDES = [
@@ -79,23 +99,42 @@ const SLIDES = [
     {
         id: 'fits',
         emoji: '🎨',
+        media: 'board' as const,
         title: 'Build Your Fit',
-        body: 'Drag and drop pieces onto a canvas. Style mood boards with anything from your wardrobe or the web.',
+        body: 'Drag pieces onto a canvas and style a board from your wardrobe, your camera roll, or anywhere on the web.',
         gradient: ['#8b5cf6', '#ec4899'] as const,
     },
     {
         id: 'ai',
         emoji: '🤖',
-        title: 'Try On Anything',
-        body: 'Upload a photo and let AI style you in any outfit — no fitting room, no guesswork.',
+        media: 'tryOn' as const,
+        title: 'See It On You',
+        body: 'Upload one photo and try on any outfit. Every piece stays shoppable — tap straight through to buy it.',
         gradient: ['#06b6d4', '#3b82f6'] as const,
+    },
+    {
+        id: 'styling',
+        emoji: '👑',
+        media: 'styling' as const,
+        title: 'Get Styled. Or Style.',
+        body: 'Book a verified stylist to put a look together for you — or become one, set your rate, and get paid for it.',
+        gradient: ['#f59e0b', '#ef4444'] as const,
+    },
+    {
+        id: 'shop',
+        emoji: '🛍️',
+        media: 'shop' as const,
+        title: 'Shop & Sell',
+        body: 'Save the pieces you love, and list your own from your profile. Secure checkout, straight to your account.',
+        gradient: ['#10b981', '#06b6d4'] as const,
     },
     {
         id: 'social',
         emoji: '🌟',
+        media: 'feed' as const,
         title: 'Your Stage',
-        body: 'Share fits, discover creators, and build a following around your personal style.',
-        gradient: ['#f59e0b', '#ef4444'] as const,
+        body: 'Post your fits, tag what you wore, and find the people whose style you actually want to see.',
+        gradient: ['#8b5cf6', '#3b82f6'] as const,
     },
 ] as const;
 
@@ -262,26 +301,42 @@ function Slide({ item, index, scrollX }: { item: any; index: number; scrollX: Sh
         );
     }
 
+    const art = 'media' in item ? ONBOARDING_MEDIA[item.media as OnboardingSlot] : null;
+
     return (
         <View style={styles.slide}>
             <Animated.View style={[styles.featureContent, contentStyle]}>
-                <View style={styles.iconWrap}>
-                    {/* Soft color halo */}
-                    <LinearGradient
-                        colors={item.gradient}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.iconGlow}
-                    />
-                    <LinearGradient
-                        colors={item.gradient}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.featureIconCircle}
-                    >
-                        <Text style={styles.featureEmoji}>{item.emoji}</Text>
-                    </LinearGradient>
-                </View>
+                {art ? (
+                    // The screen itself, sitting behind its own colour wash. A
+                    // slide that shows the thing beats a slide that describes it.
+                    <View style={styles.artWrap}>
+                        <LinearGradient
+                            colors={item.gradient}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={styles.artGlow}
+                        />
+                        <Image source={art} style={styles.art} contentFit="contain" />
+                    </View>
+                ) : (
+                    <View style={styles.iconWrap}>
+                        {/* Soft color halo */}
+                        <LinearGradient
+                            colors={item.gradient}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={styles.iconGlow}
+                        />
+                        <LinearGradient
+                            colors={item.gradient}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                            style={styles.featureIconCircle}
+                        >
+                            <Text style={styles.featureEmoji}>{item.emoji}</Text>
+                        </LinearGradient>
+                    </View>
+                )}
                 <Text style={styles.featureTitle}>{item.title}</Text>
                 <Text style={styles.featureBody}>{item.body}</Text>
             </Animated.View>
@@ -307,7 +362,10 @@ export default function OnboardingScreen() {
     const listRef = useRef<FlatList>(null);
     const scrollX = useSharedValue(0);
     const [currentIndex, setCurrentIndex] = useState(0);
-    const [step, setStep] = useState<'slides' | 'profile' | 'paywall'>('slides');
+    const [step, setStep] = useState<'slides' | 'profile' | 'follow' | 'paywall'>('slides');
+    const [suggested, setSuggested] = useState<SuggestedAccount[]>([]);
+    const [following, setFollowing] = useState<Set<string>>(new Set());
+    const [loadingSuggested, setLoadingSuggested] = useState(false);
     const [activePlan, setActivePlan] = useState(0);
     const [purchasing, setPurchasing] = useState(false);
     const [storePrices, setStorePrices] = useState<Record<SubscriptionType, string | null>>({ stylist: null, business: null, proTryOns: null });
@@ -329,6 +387,60 @@ export default function OnboardingScreen() {
     const [savingProfile, setSavingProfile] = useState(false);
 
     const isLastSlide = currentIndex === SLIDES.length - 1;
+
+    useEffect(() => {
+        if (step !== 'follow' || !user?.id) return;
+        let cancelled = false;
+        setLoadingSuggested(true);
+
+        (async () => {
+            // Verified stylists first -- they are the reason someone would follow
+            // anybody on their first day -- then the rest by how much they have
+            // posted. Capped well under the render limit so the list stays a
+            // suggestion rather than a directory as the app fills up.
+            const { data } = await supabase
+                .from('users')
+                .select('id, username, handle, avatar_url, bio, is_verified_stylist, is_business_account')
+                .neq('id', user.id)
+                .order('is_verified_stylist', { ascending: false })
+                .order('created_at', { ascending: true })
+                .limit(SUGGESTED_LIMIT);
+
+            if (cancelled) return;
+            setSuggested((data ?? []) as SuggestedAccount[]);
+            setLoadingSuggested(false);
+        })();
+
+        return () => { cancelled = true; };
+    }, [step, user?.id]);
+
+    const toggleFollow = async (accountId: string) => {
+        if (!user?.id) return;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+
+        const wasFollowing = following.has(accountId);
+        const next = new Set(following);
+        if (wasFollowing) next.delete(accountId); else next.add(accountId);
+        setFollowing(next);
+
+        try {
+            if (wasFollowing) {
+                await supabase.from('follows').delete()
+                    .eq('follower_id', user.id).eq('following_id', accountId);
+            } else {
+                await supabase.from('follows')
+                    .insert({ follower_id: user.id, following_id: accountId });
+                await supabase.from('notifications').insert({
+                    user_id: accountId, actor_id: user.id, type: 'follow',
+                });
+            }
+        } catch (error) {
+            console.warn('[onboarding] follow failed:', error);
+            const reverted = new Set(following);
+            if (wasFollowing) reverted.add(accountId); else reverted.delete(accountId);
+            setFollowing(reverted);
+        }
+    };
 
     useEffect(() => {
         if (step !== 'paywall') return;
@@ -383,7 +495,7 @@ export default function OnboardingScreen() {
 
     const handleSaveProfile = async () => {
         if (!user) {
-            setStep('paywall');
+            setStep('follow');
             return;
         }
 
@@ -427,7 +539,7 @@ export default function OnboardingScreen() {
             console.error('Error saving onboarding profile:', error);
         } finally {
             setSavingProfile(false);
-            setStep('paywall');
+            setStep('follow');
         }
     };
 
@@ -606,7 +718,7 @@ export default function OnboardingScreen() {
                             onPress={handleSaveProfile}
                             disabled={savingProfile}
                         />
-                        <Pressable onPress={() => setStep('paywall')} style={styles.skipBtn} disabled={savingProfile}>
+                        <Pressable onPress={() => setStep('follow')} style={styles.skipBtn} disabled={savingProfile}>
                             <Text style={styles.skipText}>Skip for now  →</Text>
                         </Pressable>
                     </View>
@@ -616,6 +728,96 @@ export default function OnboardingScreen() {
     }
 
     // ─── PAYWALL ─────────────────────────────────────────────────
+    if (step === 'follow') {
+        return (
+            <View style={styles.container}>
+                <StatusBar style="dark" />
+                <SafeAreaView style={{ flex: 1 }}>
+                    <ScrollView contentContainerStyle={styles.profileScroll} keyboardShouldPersistTaps="handled">
+                        <Text style={styles.profileTitle}>Find your people</Text>
+                        <Text style={styles.profileSubtitle}>
+                            Follow a few accounts so your feed has something in it. You can change this any time.
+                        </Text>
+
+                        {loadingSuggested ? (
+                            <View style={{ paddingVertical: 48, alignItems: 'center' }}>
+                                <Text style={{ color: E.mutedText }}>Looking for accounts…</Text>
+                            </View>
+                        ) : suggested.length === 0 ? (
+                            <View style={{ paddingVertical: 48, alignItems: 'center' }}>
+                                <Text style={{ color: E.mutedText, textAlign: 'center' }}>
+                                    Nobody to suggest yet — you are early. Your feed fills up as people join.
+                                </Text>
+                            </View>
+                        ) : (
+                            <View style={{ gap: 10, marginTop: 8 }}>
+                                {suggested.map((account) => {
+                                    const isFollowing = following.has(account.id);
+                                    return (
+                                        <View key={account.id} style={styles.suggestRow}>
+                                            {account.avatar_url ? (
+                                                <Image source={{ uri: account.avatar_url }} style={styles.suggestAvatar} />
+                                            ) : (
+                                                <View style={[styles.suggestAvatar, styles.suggestAvatarEmpty]}>
+                                                    <Feather name="user" size={18} color={E.faintText} />
+                                                </View>
+                                            )}
+
+                                            <View style={{ flex: 1 }}>
+                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                                                    <Text style={styles.suggestName} numberOfLines={1}>
+                                                        {account.username || 'Emode user'}
+                                                    </Text>
+                                                    {!!account.is_verified_stylist && (
+                                                        <Feather name="check-circle" size={13} color="#3b82f6" />
+                                                    )}
+                                                </View>
+                                                <Text style={styles.suggestMeta} numberOfLines={1}>
+                                                    {account.is_verified_stylist
+                                                        ? 'Verified stylist'
+                                                        : account.bio?.trim() || account.handle || ''}
+                                                </Text>
+                                            </View>
+
+                                            <Pressable
+                                                onPress={() => toggleFollow(account.id)}
+                                                style={[
+                                                    styles.followBtn,
+                                                    isFollowing
+                                                        ? { backgroundColor: 'transparent', borderColor: E.hairline }
+                                                        : { backgroundColor: E.primary, borderColor: E.primary },
+                                                ]}
+                                            >
+                                                <Text style={{
+                                                    fontSize: 13,
+                                                    fontWeight: '700',
+                                                    color: isFollowing ? E.mutedText : E.primaryForeground,
+                                                }}>
+                                                    {isFollowing ? 'Following' : 'Follow'}
+                                                </Text>
+                                            </Pressable>
+                                        </View>
+                                    );
+                                })}
+                            </View>
+                        )}
+
+                        <View style={{ marginTop: 28 }}>
+                            <GradientButton
+                                label={following.size > 0 ? `Continue with ${following.size}` : 'Continue'}
+                                onPress={() => setStep('paywall')}
+                                icon="arrow-right"
+                            />
+                        </View>
+                        <Pressable onPress={() => setStep('paywall')} style={styles.skipBtn}>
+                            <Text style={styles.skipText}>Skip for now</Text>
+                        </Pressable>
+                    </ScrollView>
+                </SafeAreaView>
+            </View>
+        );
+    }
+
     if (step === 'paywall') {
         const plan = PLANS[activePlan];
         const displayPrice = storePrices[plan.id] || plan.price;
@@ -626,7 +828,7 @@ export default function OnboardingScreen() {
                     <View style={styles.paywallInner}>
 
                         {/* Back */}
-                        <Pressable onPress={() => setStep('profile')} style={styles.backBtn} hitSlop={12}>
+                        <Pressable onPress={() => setStep('follow')} style={styles.backBtn} hitSlop={12}>
                             <Feather name="arrow-left" size={20} color={E.text} />
                         </Pressable>
 
@@ -776,6 +978,23 @@ const styles = StyleSheet.create({
     },
 
     // ── Slides ──────────────────────────────────────────
+    artWrap: {
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        marginBottom: 28,
+    },
+    art: {
+        width: SW * 0.56,
+        height: SW * 1.02,
+    },
+    artGlow: {
+        position: 'absolute',
+        width: SW * 0.7,
+        height: SW * 0.7,
+        borderRadius: SW * 0.35,
+        opacity: 0.16,
+        top: SW * 0.12,
+    },
     slide: {
         width: SW,
         flex: 1,
@@ -886,6 +1105,45 @@ const styles = StyleSheet.create({
         fontFamily: 'Inter_700Bold',
         fontSize: 16,
         color: '#fff',
+    },
+
+    suggestRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: '#DFD8CA',
+        backgroundColor: '#EFEBE3',
+    },
+    suggestAvatar: {
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+    },
+    suggestAvatarEmpty: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#E8E3D8',
+    },
+    suggestName: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#09090b',
+        fontFamily: 'Inter_700Bold',
+    },
+    suggestMeta: {
+        fontSize: 12.5,
+        color: '#6B655A',
+        marginTop: 1,
+    },
+    followBtn: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 999,
+        borderWidth: 1,
     },
 
     // ── Paywall ─────────────────────────────────────────

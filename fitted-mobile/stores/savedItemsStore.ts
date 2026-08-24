@@ -16,6 +16,16 @@ import {
 
 interface SavedItemsState {
     keys: Set<string>;
+    /**
+     * Bumped once a write has actually landed.
+     *
+     * `keys` moves optimistically, so a screen that refetches when `keys`
+     * changes races the insert and reads the table before the row is there --
+     * which is why a newly saved piece did not appear in the Saved tab until
+     * something else forced a reload. Watch this instead and the refetch happens
+     * after the server agrees.
+     */
+    revision: number;
     hydratedFor: string | null;
     /** Load this account's saved keys. Cheap and idempotent per account. */
     hydrate: (userId: string) => Promise<void>;
@@ -27,6 +37,7 @@ interface SavedItemsState {
 
 export const useSavedItemsStore = create<SavedItemsState>((set, get) => ({
     keys: new Set(),
+    revision: 0,
     hydratedFor: null,
 
     hydrate: async (userId) => {
@@ -50,6 +61,7 @@ export const useSavedItemsStore = create<SavedItemsState>((set, get) => ({
         try {
             if (wasSaved) await unsaveItem(userId, key);
             else await saveItem(userId, item);
+            set({ revision: get().revision + 1 });
         } catch (error) {
             console.warn('[savedItems] toggle failed:', error);
             const reverted = new Set(get().keys);
@@ -58,5 +70,5 @@ export const useSavedItemsStore = create<SavedItemsState>((set, get) => ({
         }
     },
 
-    reset: () => set({ keys: new Set(), hydratedFor: null }),
+    reset: () => set({ keys: new Set(), hydratedFor: null, revision: 0 }),
 }));

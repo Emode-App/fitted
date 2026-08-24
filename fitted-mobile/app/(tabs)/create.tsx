@@ -1266,6 +1266,33 @@ export default function CreateScreen() {
                 publicBoardUrl = await uploadImage('posts', filename, base64);
             }
 
+            // Put every item photo somewhere that outlives this device.
+            //
+            // A piece picked from the camera roll arrives as a
+            // file:///.../ImagePicker/... path into this app's own cache. That
+            // was written into the post verbatim, so the tag sheet rendered a
+            // blank box for anyone else -- and for the poster too, once the
+            // cache was cleared or the app reinstalled. 4 of the 10 items tagged
+            // so far are dead paths like that.
+            const uploadedItemUrls = new Map<string, string>();
+            for (const item of canvasItems) {
+                const url = item.url || '';
+                if (!url || /^https?:/i.test(url)) continue;
+                try {
+                    const base64 = url.startsWith('data:')
+                        ? url.split(',')[1]
+                        : await FileSystem.readAsStringAsync(url, { encoding: FileSystem.EncodingType.Base64 });
+                    const filename = `${user.id}/items/${Date.now()}_${item.id}.jpg`;
+                    const publicUrl = await uploadImage('posts', filename, base64);
+                    if (publicUrl) uploadedItemUrls.set(item.id, publicUrl);
+                } catch (error) {
+                    // A piece that will not upload still gets tagged -- the brand
+                    // and name are the useful part, and a missing photo beats
+                    // losing the post.
+                    console.warn('[create] could not upload item image:', error);
+                }
+            }
+
             // Build items array — itemLinks (entered in preview form) takes priority over
             // canvas item data so the user's manual edits always win.
             const itemsWithPositions = canvasItems.map((item) => ({
@@ -1273,7 +1300,7 @@ export default function CreateScreen() {
                 brand: itemLinks[item.id]?.brand || item.brand || 'Unknown',
                 name: itemLinks[item.id]?.name || item.itemName || 'Item',
                 price: parseFloat(itemLinks[item.id]?.price || '0') || 0,
-                image_url: item.url,
+                image_url: uploadedItemUrls.get(item.id) || item.url,
                 purchase_link: itemLinks[item.id]?.url || item.purchaseLink || '',
                 canvas_state: {
                     x: item.x,

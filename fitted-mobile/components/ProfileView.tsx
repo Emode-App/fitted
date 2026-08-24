@@ -120,6 +120,9 @@ export default function ProfileView({
     // Re-read when a heart is toggled anywhere, so unsaving from this screen
     // removes the tile instead of leaving a stale one behind.
     const savedKeys = useSavedItemsStore((state) => state.keys);
+    // Refetch only once a write has landed; `keys` alone moves optimistically
+    // and would race the insert.
+    const savedRevision = useSavedItemsStore((state) => state.revision);
     const [showStylistModal, setShowStylistModal] = useState(false);
     const [showUploadModal, setShowUploadModal] = useState(false);
 
@@ -193,7 +196,7 @@ export default function ProfileView({
         let cancelled = false;
         fetchSavedItems(user.id).then((rows) => { if (!cancelled) setSavedItems(rows); });
         return () => { cancelled = true; };
-    }, [activeTab, savedTab, isOwnProfile, user.id, savedKeys]);
+    }, [activeTab, savedTab, isOwnProfile, user.id, savedRevision]);
 
     const showingSavedItems = activeTab === 'saved' && savedTab === 'items';
 
