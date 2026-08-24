@@ -51,24 +51,15 @@ function ItemLinkModal({
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <Pressable style={styles.modalOverlay} onPress={onClose}>
                 <Pressable style={[styles.modalContent, { backgroundColor: colors.background }]} onPress={e => e.stopPropagation()}>
-                    {/* Item image */}
-                    <ExpoImage
-                        source={{ uri: item.image_url }}
-                        style={styles.modalItemImage}
-                        contentFit="contain"
-                    />
-
-                    {/* Item details */}
-                    <RNText style={[styles.modalBrand, { color: colors.textSecondary }]}>{item.brand}</RNText>
-                    <RNText style={[styles.modalName, { color: colors.text }]}>{item.name}</RNText>
-                    {item.price > 0 && (
-                        <RNText style={[styles.modalPrice, { color: colors.primary }]}>${item.price}</RNText>
-                    )}
-
-                    {/* This is the sheet reached from the tag pills on a fit, and
-                        the one that matters most for saving: these are pieces
-                        somebody actually wore, link or no link. */}
-                    <RNView style={styles.saveRow}>
+                    {/* Item image, with the save control on its corner. These are
+                        pieces somebody actually wore, so this is the sheet where
+                        saving matters most -- link or no link. */}
+                    <RNView style={styles.modalImageWrap}>
+                        <ExpoImage
+                            source={{ uri: item.image_url }}
+                            style={styles.modalItemImage}
+                            contentFit="contain"
+                        />
                         <SaveItemButton
                             item={{
                                 brandName: item.brand,
@@ -78,10 +69,16 @@ function ItemLinkModal({
                                 price: item.price || null,
                                 sourcePostId: postId ?? null,
                             }}
-                            variant="inline"
-                            size={26}
+                            size={18}
                         />
                     </RNView>
+
+                    {/* Item details */}
+                    <RNText style={[styles.modalBrand, { color: colors.textSecondary }]}>{item.brand}</RNText>
+                    <RNText style={[styles.modalName, { color: colors.text }]}>{item.name}</RNText>
+                    {item.price > 0 && (
+                        <RNText style={[styles.modalPrice, { color: colors.primary }]}>${item.price}</RNText>
+                    )}
 
                     {/* Link circle(s) for this item — one per purchase URL, max 5 */}
                     {item.purchase_link && (
@@ -562,19 +559,27 @@ const styles = StyleSheet.create({
     },
     stackedTagsContainer: {
         position: 'absolute',
-        left: 16,
-        top: '50%',
-        transform: [{ translateY: -50 }],
-        gap: 8,
+        left: 20,
+        // Centred by the layout rather than by a guess. translateY was a flat
+        // -50px, which only lands centre for one particular stack height -- with
+        // three pills it hung low, and the more brands a fit tagged the further
+        // out it drifted.
+        top: 0,
+        bottom: 0,
+        justifyContent: 'center',
+        // Never let a long brand name run under the action rail on the right.
+        maxWidth: '62%',
+        gap: 10,
     },
     tagPill: {
         flexDirection: 'row',
         alignItems: 'center',
+        alignSelf: 'flex-start',
         backgroundColor: 'rgba(255,255,255,0.9)',
-        paddingHorizontal: 12,
-        paddingVertical: 8,
+        paddingHorizontal: 14,
+        paddingVertical: 9,
         borderRadius: 20,
-        gap: 6,
+        gap: 8,
         boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.15)',
         elevation: 3,
     },
@@ -670,7 +675,6 @@ const styles = StyleSheet.create({
         width: 150,
         height: 150,
         borderRadius: 8,
-        marginBottom: 16,
     },
     modalBrand: {
         fontSize: 14,
@@ -716,9 +720,12 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         width: 64,
     },
-    saveRow: {
-        alignItems: 'center',
-        marginTop: 14,
+    modalImageWrap: {
+        // Sized to the image so the absolute heart lands on its corner rather
+        // than the sheet's.
+        width: 150,
+        height: 150,
+        marginBottom: 16,
     },
     modalCloseButton: {
         paddingVertical: 16,

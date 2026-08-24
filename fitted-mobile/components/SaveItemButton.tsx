@@ -50,7 +50,9 @@ export default function SaveItemButton({ item, variant = 'overlay', size = 18 }:
                 <Ionicons
                     name={saved ? 'heart' : 'heart-outline'}
                     size={size}
-                    color={saved ? '#ff3b5c' : variant === 'overlay' ? '#ffffff' : '#8e8e93'}
+                    // Dark on the white pill, not white: product shots are mostly
+                    // white and a white-on-white heart disappears into them.
+                    color={saved ? '#ff3b5c' : variant === 'overlay' ? '#3a3a3c' : '#8e8e93'}
                 />
             </View>
         </Pressable>
@@ -70,8 +72,14 @@ const styles = StyleSheet.create({
         borderRadius: 15,
         alignItems: 'center',
         justifyContent: 'center',
-        // Product shots are mostly white, so an unfilled white heart needs
-        // something behind it to stay visible.
-        backgroundColor: 'rgba(0,0,0,0.35)',
+        // A white pill lifted off the image by a soft shadow. The shadow is what
+        // separates it from a white product shot -- without one it would melt
+        // into the background it usually sits on.
+        backgroundColor: '#ffffff',
+        shadowColor: '#000',
+        shadowOpacity: 0.18,
+        shadowRadius: 4,
+        shadowOffset: { width: 0, height: 1 },
+        elevation: 3,
     },
 });

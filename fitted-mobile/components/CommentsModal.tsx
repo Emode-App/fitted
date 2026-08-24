@@ -234,8 +234,25 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
         }
     };
 
+    /**
+     * The overflow menu, on every comment.
+     *
+     * One affordance rather than a trash icon on yours and dots on everyone
+     * else's: the menu is where more actions go as they arrive, and a row that
+     * changes its control depending on whose comment it is is harder to learn
+     * than a row that always has the same one.
+     */
     const showCommentActions = (comment: CommentWithUser) => {
-        if (!user || comment.user_id === user.id) return;
+        if (!user) return;
+
+        if (comment.user_id === user.id) {
+            Alert.alert('Comment Options', undefined, [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Delete Comment', style: 'destructive', onPress: () => handleDeleteComment(comment) },
+            ]);
+            return;
+        }
+
         Alert.alert('Comment Options', `Take action on ${comment.user?.username || 'this user'}?`, [
             { text: 'Cancel', style: 'cancel' },
             {
@@ -341,14 +358,10 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
             </Pressable>
             <Pressable
                 style={styles.likeButton}
-                onPress={() => (item.user_id === user?.id ? handleDeleteComment(item) : showCommentActions(item))}
-                accessibilityLabel={item.user_id === user?.id ? 'Delete comment' : 'Comment moderation options'}
+                onPress={() => showCommentActions(item)}
+                accessibilityLabel="Comment options"
             >
-                <Feather
-                    name={item.user_id === user?.id ? 'trash-2' : 'more-horizontal'}
-                    size={15}
-                    color={colors.textTertiary}
-                />
+                <Feather name="more-horizontal" size={15} color={colors.textTertiary} />
             </Pressable>
         </View>
         );
