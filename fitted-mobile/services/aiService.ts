@@ -3,7 +3,7 @@
 
 import { supabase } from './supabase';
 import { captureException } from './monitoring';
-import { searchProducts as searchCatalogProducts } from './productSearch';
+import { searchProducts as searchCatalogProducts, searchWebProducts as searchWebCatalogue } from './productSearch';
 import { ensureAiFaceConsent } from './privacyService';
 
 /**
@@ -118,6 +118,38 @@ export async function searchProducts(query: string): Promise<Product[]> {
         }));
     } catch (error) {
         console.error('Search error:', error);
+        return [];
+    }
+}
+
+/**
+ * The web half of a search, as a second pass.
+ *
+ * Kept separate from searchProducts so the caller can put catalogue results on
+ * screen straight away and let these arrive behind them, rather than holding
+ * everything back for the slowest source.
+ */
+export async function searchProductsOnWeb(query: string, exclude: Product[] = []): Promise<Product[]> {
+    try {
+        const already = exclude.map((item) => ({
+            id: item.id, name: item.name, brand: item.brand,
+            imageUrl: item.imageUrl ?? '', thumbnail: item.imageUrl ?? '',
+            styleId: item.sku ?? '', purchaseLink: item.purchaseLink,
+        })) as any[];
+
+        const found = await searchWebCatalogue(query, already);
+        return found.map((item) => ({
+            id: item.id,
+            name: item.name,
+            brand: item.brand,
+            price: item.retailPrice || 0,
+            sku: item.styleId || undefined,
+            imageUrl: item.imageUrl || undefined,
+            purchaseLink: item.purchaseLink
+                || `https://stockx.com/search?s=${encodeURIComponent(`${item.brand} ${item.name}`)}`,
+        }));
+    } catch (error) {
+        console.warn('[aiService] web search unavailable:', error);
         return [];
     }
 }

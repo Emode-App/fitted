@@ -45,7 +45,7 @@ import TutorialModal, { useFirstVisitTutorial, TutorialStep } from '@/components
 import ProductSearchModal from '@/components/ProductSearchModal';
 import FolderCarousel from '@/components/FolderCarousel';
 import AssetGrid from '@/components/AssetGrid';
-import { Product, generateOutfit, searchProducts, identifyItem, ItemSuggestion } from '@/services/aiService';
+import { Product, generateOutfit, searchProducts, searchProductsOnWeb, identifyItem, ItemSuggestion } from '@/services/aiService';
 import { Asset, useWardrobeStore } from '@/stores/wardrobeStore';
 import { useTheme } from '@/hooks/useTheme';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -418,6 +418,8 @@ export default function CreateScreen() {
     const [searchResults, setSearchResults] = useState<Product[]>([]);
     /** Guards against an earlier, slower search landing after a later one. */
     const searchRunRef = useRef(0);
+    /** Web pass still running behind results that are already showing. */
+    const [searchExpanding, setSearchExpanding] = useState(false);
     const [searchLoading, setSearchLoading] = useState(false);
     const [hasSearched, setHasSearched] = useState(false);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
@@ -1030,17 +1032,32 @@ export default function CreateScreen() {
         setSearchLoading(true);
         setHasSearched(true);
         try {
+            // The catalogue answers in well under a tenth of a second, so it goes
+            // on screen on its own rather than waiting on the web pass behind it.
             const results = await searchProducts(query);
             if (run !== searchRunRef.current) return;
             setSearchResults(results);
+            setSearchLoading(false);
+
             // Only a deliberate search is worth remembering; every keystroke is
             // not a search somebody wants back later.
             if (options?.remember) await saveRecentSearch(query);
+
+            // Then the web, which takes seconds. Results append rather than
+            // replace, so nothing already on screen moves under the user's
+            // thumb, and a stale run is dropped on arrival.
+            setSearchExpanding(true);
+            const fromWeb = await searchProductsOnWeb(query, results);
+            if (run !== searchRunRef.current) return;
+            if (fromWeb.length) setSearchResults((current) => [...current, ...fromWeb]);
         } catch (error) {
             console.error('Search error:', error);
             if (run === searchRunRef.current) setSearchResults([]);
         } finally {
-            if (run === searchRunRef.current) setSearchLoading(false);
+            if (run === searchRunRef.current) {
+                setSearchLoading(false);
+                setSearchExpanding(false);
+            }
         }
     };
 
@@ -1862,6 +1879,7 @@ export default function CreateScreen() {
                                             </View>
                                         ) : searchResults.length > 0 ? (
                                             /* Search Results - 2 column grid */
+                                            <>
                                             <View style={styles.searchResultsGrid}>
                                                 {searchResults.map((item, index) => (
                                                     <Pressable
@@ -1891,7 +1909,20 @@ export default function CreateScreen() {
                                                     </Pressable>
                                                 ))}
                                             </View>
-                                        ) : hasSearched ? (
+
+                                            {/* The web pass runs behind results that are
+                                                already showing, so say so rather than
+                                                letting the list look finished. */}
+                                            {searchExpanding && (
+                                                <View style={styles.searchExpanding}>
+                                                    <ActivityIndicator size="small" color={colors.textSecondary} />
+                                                    <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+                                                        Searching the web for more…
+                                                    </Text>
+                                                </View>
+                                            )}
+                                        </>
+                                    ) : hasSearched ? (
                                             /* No results */
                                             <View style={{ alignItems: 'center', paddingTop: 40 }}>
                                                 <Feather name="search" size={48} color={colors.textSecondary} />
@@ -2496,6 +2527,13 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         borderWidth: 2,
         borderColor: '#444',
+    },
+    searchExpanding: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 18,
     },
     betaBadge: {
         paddingHorizontal: 5,

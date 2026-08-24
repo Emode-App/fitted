@@ -23,35 +23,35 @@ export interface SearchResult {
  * Search for sneakers/products using KicksDB API
  */
 export async function searchProducts(query: string, limit: number = 20): Promise<SearchResult> {
-    if (!query.trim()) {
-        return { products: [], total: 0 };
-    }
+    if (!query.trim()) return { products: [], total: 0 };
+    return searchTaggedCatalogue(query, limit);
+}
 
-    // The crawled catalogue answers first: its prices, links and images are all
-    // real and it comes back in under a tenth of a second.
-    const local = await searchTaggedCatalogue(query, limit);
-
-    // It only covers a small slice of the directory though, so a thin result is
-    // usually the catalogue's coverage rather than the piece not existing. The
-    // web fills the rest in -- and only the rest, so a verified listing is never
-    // pushed down the page by a guess.
-    if (local.products.length >= limit) return local;
+/**
+ * The catalogue and the web, as two separate awaits.
+ *
+ * They used to be one call that resolved when both were done, so the screen sat
+ * on a spinner for the length of a grounded web search -- several seconds -- even
+ * when the catalogue had answers ready in under a tenth of one. The caller now
+ * paints the catalogue immediately and fills the web in behind it.
+ */
+export async function searchWebProducts(query: string, exclude: Product[] = []): Promise<Product[]> {
+    if (query.trim().length < 2) return [];
 
     const fromWeb = await searchWeb(query);
-    if (!fromWeb.length) return local;
+    if (!fromWeb.length) return [];
 
-    const seen = new Set(local.products.map((p) => `${p.brand}|${p.name}`.toLowerCase()));
-    const merged = [...local.products];
+    const seen = new Set(exclude.map((p) => `${p.brand}|${p.name}`.toLowerCase()));
+    const fresh: Product[] = [];
 
     for (const item of fromWeb) {
-        if (merged.length >= limit) break;
         const key = `${item.brand}|${item.name}`.toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
-        merged.push(item);
+        fresh.push(item);
     }
 
-    return { products: merged, total: merged.length };
+    return fresh;
 }
 
 /**

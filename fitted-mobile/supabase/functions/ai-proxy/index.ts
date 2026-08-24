@@ -310,7 +310,7 @@ serve(async (req: Request) => {
 
             const prompt = [
                 'Find real clothing or footwear products matching: "' + query + '".',
-                'Reply with a raw JSON array of up to 12 objects, no markdown fence, each exactly:',
+                'Reply with a raw JSON array of up to 24 objects, no markdown fence, each exactly:',
                 '{"name": string, "brand": string, "price": number|null, "productUrl": string}',
                 '',
                 'Rules:',
@@ -319,7 +319,10 @@ serve(async (req: Request) => {
                 '- Never return a google.com, vertexaisearch or redirect URL. Omit the item instead.',
                 '- price is the current retail or market price in USD, or null if unsure.',
                 '  Do not guess a number to fill the field.',
-                '- Prefer distinct products over colourways of the same one.',
+                '- Adult sizing only. No toddler, infant, baby, preschool, kids or GS',
+                '  releases unless the search explicitly asks for them.',
+                '- Every entry must be a different product. Colourways of the same model',
+                '  are fine, duplicates of one colourway are not.',
             ].join(String.fromCharCode(10));
 
             const resp = await fetch(GEMINI_BASE + '/' + searchModel + ':generateContent?key=' + GEMINI_API_KEY, {
@@ -352,13 +355,19 @@ serve(async (req: Request) => {
                 return json({ products: [] });
             }
 
+            // Asking the model not to return kids' sizing is a request, not a
+            // guarantee -- a toddler shoe came back on a plain "jordan 5" search.
+            const KIDS = /\b(toddler|infant|baby|preschool|pre-school|kids|child|youth|grade school)\b|\((td|ps|gs)\)/i;
+
             const usable = items.filter((item: any) => {
                 const url = typeof item?.productUrl === 'string' ? item.productUrl : '';
+                const label = `${item?.name ?? ''} ${item?.brand ?? ''}`;
+                if (KIDS.test(label) && !KIDS.test(query)) return false;
                 if (!/^https?:\/\//i.test(url)) return false;
                 // Grounding hands back redirect stubs that 404 for the user.
                 if (/vertexaisearch|google\.com|googleusercontent/i.test(url)) return false;
                 return typeof item?.name === 'string' && item.name.trim().length > 1;
-            }).slice(0, 12);
+            }).slice(0, 24);
 
             // Resolve a real photo for each result.
             //
@@ -392,7 +401,7 @@ serve(async (req: Request) => {
             const ogImage = async (productUrl: string): Promise<string | null> => {
                 try {
                     const controller = new AbortController();
-                    const timer = setTimeout(() => controller.abort(), 4000);
+                    const timer = setTimeout(() => controller.abort(), 2500);
                     const page = await fetch(productUrl, {
                         signal: controller.signal,
                         headers: {
