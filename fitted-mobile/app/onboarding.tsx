@@ -118,7 +118,7 @@ const SLIDES = [
         emoji: '🤖',
         media: 'tryOn' as const,
         title: 'See It On You',
-        body: 'Upload one photo and try on anything — including the secondhand pieces your peers are selling. It all lands in your dressing room.',
+        body: 'Upload one photo and try on anything — including the secondhand pieces your peers are selling. Welcome to your dressing room.',
         gradient: ['#06b6d4', '#3b82f6'] as const,
     },
     {
