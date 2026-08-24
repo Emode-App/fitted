@@ -704,7 +704,11 @@ export default function ProfileView({
                             : showingSavedItems ? styles.savedItemsColumn
                             : undefined
                     }
-                    ListHeaderComponentStyle={activeTab === 'shop' ? { marginBottom: 16 } : undefined}
+                    ListHeaderComponentStyle={
+                        activeTab === 'shop' ? { marginBottom: 16 }
+                            : showingSavedItems ? { marginBottom: 8 }
+                            : undefined
+                    }
                 />
             </View>
 
@@ -772,15 +776,20 @@ export default function ProfileView({
     );
 }
 
-// 12 outer padding each side, 12 between the two columns.
-const SAVED_ITEM_WIDTH = (width - 36) / 2;
+// 20 outer each side to line up with the rest of the profile, 12 between the
+// two columns.
+const SAVED_ITEM_WIDTH = (width - 52) / 2;
 
 const styles = StyleSheet.create({
     savedSwitch: {
         flexDirection: 'row',
         gap: 8,
-        paddingTop: 14,
-        paddingHorizontal: 4,
+        paddingTop: 16,
+        // No horizontal padding of its own: this sits inside profileContent,
+        // which already insets by 20. Adding 12 on top put the chips at 32
+        // while the grid below sat at 12, so the two never lined up. The grid
+        // uses 20 to match.
+        paddingBottom: 16,
     },
     savedSwitchButton: {
         paddingHorizontal: 16,
@@ -795,7 +804,7 @@ const styles = StyleSheet.create({
     },
     savedItemsColumn: {
         gap: 12,
-        paddingHorizontal: 12,
+        paddingHorizontal: 20,
     },
     savedItemImageWrap: {
         width: SAVED_ITEM_WIDTH,
