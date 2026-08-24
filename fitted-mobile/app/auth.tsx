@@ -2,9 +2,55 @@ import { useState } from 'react';
 import { Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { Image } from 'expo-image';
+import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '@/stores/authStore';
 import { useTheme } from '@/hooks/useTheme';
 import { LEGAL } from '@/constants/legal';
+
+/**
+ * What the server actually enforces on a new password.
+ *
+ * These mirror the Supabase project's password policy. Stating them up front is
+ * the point: the rules used to be invisible until you failed, and the failure
+ * was the raw server string, which reads out the entire permitted symbol set.
+ */
+const PASSWORD_RULES: { label: string; test: (value: string) => boolean }[] = [
+    { label: 'At least 8 characters', test: (v) => v.length >= 8 },
+    { label: 'A lowercase letter', test: (v) => /[a-z]/.test(v) },
+    { label: 'An uppercase letter', test: (v) => /[A-Z]/.test(v) },
+    { label: 'A number', test: (v) => /\d/.test(v) },
+    { label: 'A symbol (!@#$…)', test: (v) => /[^A-Za-z0-9]/.test(v) },
+];
+
+/**
+ * Turn an auth error into something a person can act on.
+ *
+ * Supabase's messages are written for developers -- the password one lists every
+ * acceptable character -- and passing them straight to an alert is what made
+ * this screen feel unfinished.
+ */
+function humanAuthError(raw: string): string {
+    const message = raw.toLowerCase();
+    if (message.includes('password should contain')) {
+        return 'That password does not meet the requirements listed under the field.';
+    }
+    if (message.includes('password should be at least')) {
+        return 'That password is too short — use at least 8 characters.';
+    }
+    if (message.includes('already registered') || message.includes('already been registered')) {
+        return 'An account already exists for that email. Try signing in instead.';
+    }
+    if (message.includes('invalid login credentials')) {
+        return 'That email and password do not match an account.';
+    }
+    if (message.includes('email not confirmed')) {
+        return 'Confirm your email first — check your inbox for the link.';
+    }
+    if (message.includes('rate limit') || message.includes('too many')) {
+        return 'Too many attempts. Wait a minute and try again.';
+    }
+    return raw;
+}
 
 export default function LoginScreen() {
     const { colors } = useTheme();
@@ -14,6 +60,7 @@ export default function LoginScreen() {
     const [username, setUsername] = useState('');
     const [acceptedTerms, setAcceptedTerms] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
     const signIn = useAuthStore((state) => state.signIn);
     const signUp = useAuthStore((state) => state.signUp);
     const requestPasswordReset = useAuthStore((state) => state.requestPasswordReset);
@@ -24,7 +71,17 @@ export default function LoginScreen() {
         if (!isLogin && !/^[a-zA-Z0-9_.]{3,30}$/.test(username.trim())) {
             return Alert.alert('Invalid Username', 'Use 3–30 letters, numbers, underscores, or periods.');
         }
-        if (!isLogin && password.length < 8) return Alert.alert('Password Too Short', 'Use at least 8 characters.');
+        if (!isLogin) {
+            // Fail here rather than at the server, so the message can name the
+            // one rule that is missing instead of reciting all of them.
+            const missing = PASSWORD_RULES.filter((rule) => !rule.test(password));
+            if (missing.length > 0) {
+                return Alert.alert(
+                    'Password Needs Work',
+                    `Still missing: ${missing.map((rule) => rule.label.toLowerCase()).join(', ')}.`,
+                );
+            }
+        }
         if (!isLogin && !acceptedTerms) {
             return Alert.alert('Terms Required', 'Agree to the Terms of Use and Privacy Policy to create an account.');
         }
@@ -33,13 +90,13 @@ export default function LoginScreen() {
         try {
             if (isLogin) {
                 const { error } = await signIn(email.trim(), password);
-                if (error) return Alert.alert('Sign In Failed', error);
+                if (error) return Alert.alert('Sign In Failed', humanAuthError(error));
                 router.replace('/(tabs)');
                 return;
             }
 
             const { error, needsEmailConfirmation } = await signUp(email.trim(), password, username.trim());
-            if (error) return Alert.alert('Account Creation Failed', error);
+            if (error) return Alert.alert('Account Creation Failed', humanAuthError(error));
             if (needsEmailConfirmation) {
                 Alert.alert('Check Your Email', 'Open the confirmation link, then return here to sign in.');
                 setIsLogin(true);
@@ -78,13 +135,54 @@ export default function LoginScreen() {
                         tintColor={colors.text}
                     />
                     <Text style={[styles.logo, { color: colors.text }]}>emode</Text>
-                    <Text style={[styles.tagline, { color: colors.textSecondary }]}>AI-Powered Virtual Try-On</Text>
+                    <Text style={[styles.tagline, { color: colors.textSecondary }]}>The world's first social ecosystem for fashion fanatics.</Text>
                 </View>
 
                 <View style={styles.form}>
                     {!isLogin && <TextInput style={[styles.input, { backgroundColor: colors.input, borderColor: colors.inputBorder, color: colors.text }]} placeholder="Username" placeholderTextColor={colors.placeholder} value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} maxLength={30} />}
                     <TextInput style={[styles.input, { backgroundColor: colors.input, borderColor: colors.inputBorder, color: colors.text }]} placeholder="Email" placeholderTextColor={colors.placeholder} value={email} onChangeText={setEmail} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" textContentType="emailAddress" />
-                    <TextInput style={[styles.input, { backgroundColor: colors.input, borderColor: colors.inputBorder, color: colors.text }]} placeholder="Password" placeholderTextColor={colors.placeholder} value={password} onChangeText={setPassword} secureTextEntry textContentType={isLogin ? 'password' : 'newPassword'} />
+                    <View>
+                        <TextInput
+                            style={[styles.input, styles.inputWithAction, { backgroundColor: colors.input, borderColor: colors.inputBorder, color: colors.text }]}
+                            placeholder="Password"
+                            placeholderTextColor={colors.placeholder}
+                            value={password}
+                            onChangeText={setPassword}
+                            secureTextEntry={!showPassword}
+                            textContentType={isLogin ? 'password' : 'newPassword'}
+                        />
+                        {/* Rules this strict are miserable to satisfy blind. */}
+                        <Pressable
+                            onPress={() => setShowPassword((value) => !value)}
+                            style={styles.inputAction}
+                            hitSlop={10}
+                            accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                        >
+                            <Feather name={showPassword ? 'eye-off' : 'eye'} size={18} color={colors.textSecondary} />
+                        </Pressable>
+                    </View>
+
+                    {/* The requirements, up front and ticking off live, rather than
+                        as a wall of text after a rejected submit. */}
+                    {!isLogin && (
+                        <View style={styles.rules}>
+                            {PASSWORD_RULES.map((rule) => {
+                                const met = rule.test(password);
+                                return (
+                                    <View key={rule.label} style={styles.ruleRow}>
+                                        <Feather
+                                            name={met ? 'check-circle' : 'circle'}
+                                            size={13}
+                                            color={met ? '#10b981' : colors.textTertiary}
+                                        />
+                                        <Text style={[styles.ruleText, { color: met ? colors.textSecondary : colors.textTertiary }]}>
+                                            {rule.label}
+                                        </Text>
+                                    </View>
+                                );
+                            })}
+                        </View>
+                    )}
 
                     {!isLogin && (
                         <View style={styles.termsRow}>
@@ -116,8 +214,13 @@ const styles = StyleSheet.create({
     logoContainer: { alignItems: 'center', marginBottom: 48 },
     mark: { width: 78, height: 89, marginBottom: 14 },
     logo: { fontSize: 48, fontWeight: '700', letterSpacing: -2 },
-    tagline: { fontSize: 14, marginTop: 8 },
+    tagline: { fontSize: 14, marginTop: 8, textAlign: 'center', maxWidth: 300, lineHeight: 20 },
     form: { width: '100%', maxWidth: 340 },
+    inputWithAction: { paddingRight: 44 },
+    inputAction: { position: 'absolute', right: 14, top: 0, bottom: 0, justifyContent: 'center' },
+    rules: { marginTop: -4, marginBottom: 14, gap: 6, paddingHorizontal: 2 },
+    ruleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+    ruleText: { fontSize: 12.5 },
     input: { borderRadius: 12, padding: 16, marginBottom: 12, fontSize: 16, borderWidth: 1 },
     termsRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 },
     checkbox: { width: 22, height: 22, borderWidth: 1, borderRadius: 5, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
