@@ -1898,9 +1898,14 @@ export default function CreateScreen() {
                                                             <View style={styles.productInfo}>
                                                                 <Text style={[styles.productBrand, { color: colors.textSecondary }]}>{item.brand}</Text>
                                                                 <Text style={[styles.productName, { color: colors.text }]} numberOfLines={2}>{item.name}</Text>
-                                                                {item.price > 0 && (
-                                                                    <Text style={[styles.productPrice, { color: colors.primary }]}>${item.price}</Text>
-                                                                )}
+                                                                {/* A blank where the price should be reads as a
+                                                                    broken tile. The number is left out only when it
+                                                                    is genuinely unknown -- inventing one is how the
+                                                                    old version ended up quoting years-stale prices --
+                                                                    so say so rather than showing nothing. */}
+                                                                <Text style={[styles.productPrice, { color: item.price > 0 ? colors.primary : colors.textTertiary }]}>
+                                                                    {item.price > 0 ? `$${item.price}` : 'See price'}
+                                                                </Text>
                                                             </View>
                                                             <View style={[styles.productAddButton, { backgroundColor: colors.primary }]}>
                                                                 <Feather name="plus" size={16} color="#fff" />
@@ -1922,7 +1927,16 @@ export default function CreateScreen() {
                                                 </View>
                                             )}
                                         </>
-                                    ) : hasSearched ? (
+                                    ) : searchExpanding ? (
+                                            /* The catalogue came back empty but the web pass is
+                                               still out. Declaring "No products found" here was
+                                               announcing a verdict seconds before the answer --
+                                               and the results then appeared underneath it. */
+                                            <View style={{ alignItems: 'center', paddingTop: 40 }}>
+                                                <ActivityIndicator size="large" color={colors.primary} />
+                                                <Text style={{ color: colors.textSecondary, marginTop: 12 }}>Searching the web…</Text>
+                                            </View>
+                                        ) : hasSearched ? (
                                             /* No results */
                                             <View style={{ alignItems: 'center', paddingTop: 40 }}>
                                                 <Feather name="search" size={48} color={colors.textSecondary} />
