@@ -5,6 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/services/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { useMarketplaceStore } from '@/stores/marketplaceStore';
@@ -16,6 +17,7 @@ import { computeTrendingBrands, TrendingBrand } from '@/constants/brands';
 import type { BrandHit } from '@/components/ExploreComponents';
 
 const { width } = Dimensions.get('window');
+const SEARCH_ORDER_KEY = 'search_results_order';
 const GRID_SIZE = width / 3;
 
 export default function ExploreScreen() {
@@ -33,6 +35,10 @@ export default function ExploreScreen() {
     const [userResults, setUserResults] = useState<User[]>([]);
     const [brandResults, setBrandResults] = useState<BrandHit[]>([]);
     const [shopResults, setShopResults] = useState<User[]>([]);
+    // Whether people outrank labels in the results. A device preference rather
+    // than an account one: it is about how somebody reads a list, and it should
+    // apply the moment they change it, offline included.
+    const [accountsFirst, setAccountsFirst] = useState(false);
     const [productResults, setProductResults] = useState<Product[]>([]);
 
     // Product Modal State
@@ -41,6 +47,20 @@ export default function ExploreScreen() {
     // Loading State
     const [refreshing, setRefreshing] = useState(false);
     const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        AsyncStorage.getItem(SEARCH_ORDER_KEY)
+            .then((value) => { if (value) setAccountsFirst(value === 'accounts'); })
+            .catch(() => {});
+    }, []);
+
+    const toggleSearchOrder = () => {
+        setAccountsFirst((previous) => {
+            const next = !previous;
+            AsyncStorage.setItem(SEARCH_ORDER_KEY, next ? 'accounts' : 'brands').catch(() => {});
+            return next;
+        });
+    };
 
     // Initial Fetch
     useFocusEffect(
@@ -229,6 +249,8 @@ export default function ExploreScreen() {
                         brandResults={brandResults}
                         shopResults={shopResults}
                         onViewBrandPage={handleViewBrandPage}
+                        accountsFirst={accountsFirst}
+                        onToggleOrder={toggleSearchOrder}
                         productResults={productResults}
                         loading={searching}
                         onViewProfile={handleViewProfile}

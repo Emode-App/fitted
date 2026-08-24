@@ -933,11 +933,9 @@ export default function CreateScreen() {
         setCanvasItems([...canvasItems, newItem]);
         setShowProductSearch(false);
 
-        // Switch to upload mode after selecting product
-        setUploadMode('upload');
-        setSearchQuery('');
-        setSearchResults([]);
-        setHasSearched(false);
+        // Stay in search with the results up: outfits are built from several
+        // pieces, and being kicked back to Upload after every pick meant
+        // re-searching from scratch for the second one.
 
         // Auto-save to wardrobe "Last Used"
         addAssetToWardrobe('last_used', {
@@ -1646,23 +1644,28 @@ export default function CreateScreen() {
                                 </View>
                             )}
 
-                            {/* Upload / Search Toggle */}
-                            {canvasItems.length === 0 && !facePhotoUri && (
-                                <View style={styles.toggleContainer}>
-                                    <Pressable
-                                        style={[styles.toggleButton, uploadMode === 'upload' && styles.toggleButtonActive]}
-                                        onPress={() => setUploadMode('upload')}
-                                    >
-                                        <Text style={[styles.toggleText, uploadMode === 'upload' && styles.toggleTextActive]}>Upload</Text>
-                                    </Pressable>
-                                    <Pressable
-                                        style={[styles.toggleButton, uploadMode === 'search' && styles.toggleButtonActive]}
-                                        onPress={() => setUploadMode('search')}
-                                    >
-                                        <Text style={[styles.toggleText, uploadMode === 'search' && styles.toggleTextActive]}>Search</Text>
-                                    </Pressable>
-                                </View>
-                            )}
+                            {/* Upload / Search Toggle
+                                Shown unconditionally. It used to hide whenever a
+                                face photo was set, and any account with a saved
+                                AI face has one from the moment this screen mounts
+                                -- so product search simply did not exist for
+                                them, while a newer account saw it fine. Whether
+                                somebody has uploaded a face has nothing to do
+                                with whether they want to search for clothes. */}
+                            <View style={styles.toggleContainer}>
+                                <Pressable
+                                    style={[styles.toggleButton, uploadMode === 'upload' && styles.toggleButtonActive]}
+                                    onPress={() => setUploadMode('upload')}
+                                >
+                                    <Text style={[styles.toggleText, uploadMode === 'upload' && styles.toggleTextActive]}>Upload</Text>
+                                </Pressable>
+                                <Pressable
+                                    style={[styles.toggleButton, uploadMode === 'search' && styles.toggleButtonActive]}
+                                    onPress={() => setUploadMode('search')}
+                                >
+                                    <Text style={[styles.toggleText, uploadMode === 'search' && styles.toggleTextActive]}>Search</Text>
+                                </Pressable>
+                            </View>
 
                             {/* Canvas Area - show when upload mode OR has items */}
                             {(uploadMode === 'upload' || canvasItems.length > 0) && (
@@ -1763,7 +1766,13 @@ export default function CreateScreen() {
                             )}
 
                             {/* Search products without fabricating fallback inventory or prices. */}
-                            {uploadMode === 'search' && canvasItems.length === 0 && (
+                            {/* Not gated on an empty canvas any more. Search
+                                vanished the moment a single piece was placed, so
+                                whether it existed at all appeared to depend on
+                                the account -- a fresh one saw it, an account with
+                                anything on its canvas did not. A fit is more than
+                                one item; searching has to survive the first. */}
+                            {uploadMode === 'search' && (
                                 <View style={[styles.canvasContainer, { backgroundColor: colors.background }]}>
                                     <View style={{ padding: 16, gap: 16 }}>
                                         {/* Search Input */}
