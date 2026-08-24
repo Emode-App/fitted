@@ -404,15 +404,42 @@ serve(async (req: Request) => {
             // guarantee -- a toddler shoe came back on a plain "jordan 5" search.
             const KIDS = /\b(toddler|infant|baby|preschool|pre-school|kids|child|youth|grade school)\b|\((td|ps|gs)\)/i;
 
-            const usable = items.filter((item: any) => {
+            // Grounding sometimes answers with its own redirect stubs instead of
+            // the page it found. Those were being discarded, and when a whole
+            // batch came back that way the search reported nothing -- one run
+            // logged "model 24, usable 0" while the identical query four minutes
+            // earlier had returned 16 real listings. The stub resolves to the
+            // real URL, so follow it rather than throwing the result away.
+            const resolveRedirect = async (url: string): Promise<string | null> => {
+                try {
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), 3000);
+                    const hop = await fetch(url, { redirect: 'follow', signal: controller.signal });
+                    clearTimeout(timer);
+                    const final = hop.url || '';
+                    return /vertexaisearch|google\.com|googleusercontent/i.test(final) ? null : final;
+                } catch {
+                    return null;
+                }
+            };
+
+            const resolved = await Promise.all(items.map(async (item: any) => {
                 const url = typeof item?.productUrl === 'string' ? item.productUrl : '';
+                if (!/^https?:\/\//i.test(url)) return null;
+                if (typeof item?.name !== 'string' || item.name.trim().length < 2) return null;
+
                 const label = `${item?.name ?? ''} ${item?.brand ?? ''}`;
-                if (KIDS.test(label) && !KIDS.test(query)) return false;
-                if (!/^https?:\/\//i.test(url)) return false;
-                // Grounding hands back redirect stubs that 404 for the user.
-                if (/vertexaisearch|google\.com|googleusercontent/i.test(url)) return false;
-                return typeof item?.name === 'string' && item.name.trim().length > 1;
-            }).slice(0, 24);
+                if (KIDS.test(label) && !KIDS.test(query)) return null;
+
+                if (/vertexaisearch|google\.com|googleusercontent/i.test(url)) {
+                    const direct = await resolveRedirect(url);
+                    if (!direct) return null;
+                    return { ...item, productUrl: direct };
+                }
+                return item;
+            }));
+
+            const usable = resolved.filter(Boolean).slice(0, 24) as any[];
 
             // Resolve a real photo for each result.
             //
@@ -527,6 +554,19 @@ serve(async (req: Request) => {
             console.log(
                 `[search-products] "${query}": model ${items.length}, usable ${usable.length}, with image ${withPictures.length}`,
             );
+            // Say what the filter took, not just how many survived. "usable 0"
+            // on its own gave no clue that a whole batch had arrived as
+            // redirect stubs.
+            if (usable.length < items.length) {
+                console.log(
+                    `[search-products] filtered ${items.length - usable.length}:`,
+                    items
+                        .filter((item: any) => !usable.some((u: any) => u.name === item.name))
+                        .map((item: any) => String(item?.productUrl ?? '(no url)').slice(0, 90))
+                        .slice(0, 5)
+                        .join(' | '),
+                );
+            }
             if (!withPictures.length && usable.length) {
                 console.log('[search-products] all dropped at image stage:', usable.map((i: any) => i.productUrl).slice(0, 5).join(' | '));
             }
