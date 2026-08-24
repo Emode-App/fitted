@@ -470,8 +470,15 @@ serve(async (req: Request) => {
             // board is the point. So no de-duplication by name -- only the
             // requirement that each one reads like a product rather than someone
             // clearing out their wardrobe.
-            const usable = (resolved.filter(Boolean) as any[])
-                .filter((item) => !RESALE.test(String(item.name)))
+            const found = resolved.filter(Boolean) as any[];
+            const clean = found.filter((item) => !RESALE.test(String(item.name)));
+
+            // A filter that empties a good query is worse than the listings it
+            // was meant to remove: the grid goes blank and the search reads as
+            // broken. One run turned 24 results into none. So the tidier list
+            // is used when it has something in it, and the raw one otherwise --
+            // scruffy results beat no results.
+            const usable = (clean.length > 0 ? clean : found)
                 // A listing with a price came from a product page. Those first.
                 .sort((a, b) => (Number(b?.price) > 0 ? 1 : 0) - (Number(a?.price) > 0 ? 1 : 0))
                 .slice(0, 24);
@@ -588,7 +595,10 @@ serve(async (req: Request) => {
             // stage lost them. An empty result used to log nothing at all.
             const withPictures = withImages.filter((item) => !!item.imageUrl);
             console.log(
-                `[search-products] "${query}": model ${items.length}, usable ${usable.length}, with image ${withPictures.length}`,
+                '[search-products] "' + query + '": model ' + items.length +
+                    ', kept ' + clean.length + '/' + found.length +
+                    (clean.length ? '' : ' (resale filter emptied it, fell back)') +
+                    ', usable ' + usable.length + ', with image ' + withPictures.length,
             );
             // Say what the filter took, not just how many survived. "usable 0"
             // on its own gave no clue that a whole batch had arrived as
