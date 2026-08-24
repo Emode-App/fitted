@@ -416,6 +416,8 @@ export default function CreateScreen() {
     // Inline search state
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<Product[]>([]);
+    /** Guards against an earlier, slower search landing after a later one. */
+    const searchRunRef = useRef(0);
     const [searchLoading, setSearchLoading] = useState(false);
     const [hasSearched, setHasSearched] = useState(false);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
@@ -1016,29 +1018,54 @@ export default function CreateScreen() {
     };
 
     // Inline search handler
-    const handleInlineSearch = async (query: string) => {
+    const handleInlineSearch = async (query: string, options?: { remember?: boolean }) => {
         if (!query.trim()) {
             setSearchResults([]);
+            setHasSearched(false);
             return;
         }
+        // Tag each run so a slow one cannot overwrite the results of a faster
+        // one typed after it.
+        const run = ++searchRunRef.current;
         setSearchLoading(true);
         setHasSearched(true);
         try {
             const results = await searchProducts(query);
+            if (run !== searchRunRef.current) return;
             setSearchResults(results);
-            await saveRecentSearch(query);
+            // Only a deliberate search is worth remembering; every keystroke is
+            // not a search somebody wants back later.
+            if (options?.remember) await saveRecentSearch(query);
         } catch (error) {
             console.error('Search error:', error);
-            setSearchResults([]);
+            if (run === searchRunRef.current) setSearchResults([]);
         } finally {
-            setSearchLoading(false);
+            if (run === searchRunRef.current) setSearchLoading(false);
         }
     };
+
+    // Results arrive while typing.
+    //
+    // The catalogue lookup is a single indexed query, so it is cheap enough to
+    // run on a pause rather than making somebody hit a button and wait. Two
+    // characters is the floor -- one letter matches most of the catalogue and
+    // tells nobody anything.
+    useEffect(() => {
+        if (uploadMode !== 'search') return;
+        const query = searchQuery.trim();
+        if (query.length < 2) {
+            setSearchResults([]);
+            setHasSearched(false);
+            return;
+        }
+        const timer = setTimeout(() => { void handleInlineSearch(query); }, 280);
+        return () => clearTimeout(timer);
+    }, [searchQuery, uploadMode]);
 
     // Handle recent search tap
     const handleRecentSearchTap = (term: string) => {
         setSearchQuery(term);
-        handleInlineSearch(term);
+        handleInlineSearch(term, { remember: true });
     };
 
     // Add asset from wardrobe to canvas - restore product data if available
@@ -1692,6 +1719,11 @@ export default function CreateScreen() {
                                     onPress={() => setUploadMode('search')}
                                 >
                                     <Text style={[styles.toggleText, uploadMode === 'search' && styles.toggleTextActive]}>Search</Text>
+                                    {/* Says out loud that this one is still being worked on, so a
+                                        thin result reads as unfinished rather than broken. */}
+                                    <View style={[styles.betaBadge, { backgroundColor: uploadMode === 'search' ? colors.primary : colors.textTertiary }]}>
+                                        <Text style={styles.betaBadgeText}>BETA</Text>
+                                    </View>
                                 </Pressable>
                             </View>
 
@@ -1811,12 +1843,12 @@ export default function CreateScreen() {
                                                 placeholderTextColor={colors.placeholder}
                                                 value={searchQuery}
                                                 onChangeText={setSearchQuery}
-                                                onSubmitEditing={() => handleInlineSearch(searchQuery)}
+                                                onSubmitEditing={() => handleInlineSearch(searchQuery, { remember: true })}
                                                 returnKeyType="search"
                                             />
                                             <Pressable
                                                 style={[styles.addUrlButton, { backgroundColor: colors.primary }]}
-                                                onPress={() => handleInlineSearch(searchQuery)}
+                                                onPress={() => handleInlineSearch(searchQuery, { remember: true })}
                                             >
                                                 <Feather name="search" size={18} color="#fff" />
                                             </Pressable>
@@ -2465,6 +2497,18 @@ const styles = StyleSheet.create({
         borderWidth: 2,
         borderColor: '#444',
     },
+    betaBadge: {
+        paddingHorizontal: 5,
+        paddingVertical: 1,
+        borderRadius: 4,
+        marginLeft: 6,
+    },
+    betaBadgeText: {
+        color: '#fff',
+        fontSize: 8.5,
+        fontWeight: '800',
+        letterSpacing: 0.4,
+    },
     removeItemButton: {
         position: 'absolute',
         top: -8,
@@ -2937,7 +2981,9 @@ const styles = StyleSheet.create({
     toggleButton: {
         flex: 1,
         paddingVertical: 10,
+        flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         borderRadius: 8,
     },
     toggleButtonActive: {

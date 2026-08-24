@@ -286,6 +286,152 @@ serve(async (req: Request) => {
             });
         }
 
+        if (action === 'search-products') {
+            // Finds pieces the crawled catalogue does not have.
+            //
+            // The catalogue covers a small fraction of the brands in the
+            // directory, so a search for anything outside it comes back empty
+            // even though the piece plainly exists. This searches the live web,
+            // which is what the app did originally and why that version found
+            // more.
+            //
+            // What it does NOT do is trust the model for anything checkable. The
+            // old version took price, image URL and product link straight from
+            // it: prices were recalled and stale, links were routinely invented
+            // or Google redirect stubs. Here the link is validated and the image
+            // is read from the product page itself.
+            const query = typeof payload?.query === 'string' ? payload.query.trim().slice(0, 120) : '';
+            if (query.length < 2) return json({ products: [] });
+
+            const rate = await checkRateLimit(user.id, 'ai:search-products', 120, 3600);
+            if (!rate.allowed) return rateLimitResponse(rate, cors);
+
+            const searchModel = Deno.env.get('GEMINI_SEARCH_MODEL') || 'gemini-2.5-flash';
+
+            const prompt = [
+                'Find real clothing or footwear products matching: "' + query + '".',
+                'Reply with a raw JSON array of up to 12 objects, no markdown fence, each exactly:',
+                '{"name": string, "brand": string, "price": number|null, "productUrl": string}',
+                '',
+                'Rules:',
+                '- name is the specific product, without the brand repeated inside it.',
+                '- productUrl must be a real product page you found. Retailer or brand sites only.',
+                '- Never return a google.com, vertexaisearch or redirect URL. Omit the item instead.',
+                '- price is the current retail or market price in USD, or null if unsure.',
+                '  Do not guess a number to fill the field.',
+                '- Prefer distinct products over colourways of the same one.',
+            ].join(String.fromCharCode(10));
+
+            const resp = await fetch(GEMINI_BASE + '/' + searchModel + ':generateContent?key=' + GEMINI_API_KEY, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                    tools: [{ googleSearch: {} }],
+                    generationConfig: { temperature: 0.2 },
+                }),
+            });
+
+            if (!resp.ok) {
+                console.error('search-products upstream', resp.status, (await resp.text()).slice(0, 300));
+                return json({ products: [] });
+            }
+
+            const data = await resp.json();
+            const text = data?.candidates?.[0]?.content?.parts?.find((p: any) => typeof p?.text === 'string')?.text ?? '';
+
+            let items: any[] = [];
+            try {
+                const cleaned = text.replace(/```(?:json)?/g, '').trim();
+                const start = cleaned.indexOf('[');
+                const end = cleaned.lastIndexOf(']');
+                const parsed = start >= 0 && end > start ? JSON.parse(cleaned.slice(start, end + 1)) : null;
+                if (Array.isArray(parsed)) items = parsed;
+            } catch {
+                console.error('search-products unparseable', text.slice(0, 200));
+                return json({ products: [] });
+            }
+
+            const usable = items.filter((item: any) => {
+                const url = typeof item?.productUrl === 'string' ? item.productUrl : '';
+                if (!/^https?:\/\//i.test(url)) return false;
+                // Grounding hands back redirect stubs that 404 for the user.
+                if (/vertexaisearch|google\.com|googleusercontent/i.test(url)) return false;
+                return typeof item?.name === 'string' && item.name.trim().length > 1;
+            }).slice(0, 12);
+
+            // Resolve a real photo for each result.
+            //
+            // Two routes, because one is not enough. Most sites hand over an
+            // og:image if asked with a browser user-agent -- GOAT, Nike, the
+            // aggregator, brand sites. StockX and SSENSE sit behind bot
+            // protection and return 403 to anything scripted, and StockX is
+            // exactly where sneaker listings come from, so its image URL is
+            // derived from the product slug and then checked before use.
+            //
+            // Deliberately not taking the model's own imageUrl: that is what the
+            // original version did and the links were frequently dead or pointed
+            // at something else entirely.
+            const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+
+            const stockxImage = async (productUrl: string): Promise<string | null> => {
+                const slug = productUrl.split('?')[0].split('/').filter(Boolean).pop();
+                if (!slug) return null;
+                const title = slug.split('-')
+                    .map((w: string) => (/^\d+$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+                    .join('-');
+                const candidate = `https://images.stockx.com/images/${title}-Product.jpg?fit=fill&bg=FFFFFF&w=1000&q=90`;
+                try {
+                    const head = await fetch(candidate, { method: 'HEAD' });
+                    return head.ok ? candidate : null;
+                } catch {
+                    return null;
+                }
+            };
+
+            const ogImage = async (productUrl: string): Promise<string | null> => {
+                try {
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), 4000);
+                    const page = await fetch(productUrl, {
+                        signal: controller.signal,
+                        headers: {
+                            'user-agent': BROWSER_UA,
+                            accept: 'text/html,application/xhtml+xml',
+                            'accept-language': 'en-US,en;q=0.9',
+                        },
+                    });
+                    clearTimeout(timer);
+                    if (!page.ok) return null;
+                    const html = (await page.text()).slice(0, 200000);
+                    const og = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+                        || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+                    if (!og || !og[1]) return null;
+                    return og[1].startsWith('//') ? 'https:' + og[1] : og[1];
+                } catch {
+                    return null;
+                }
+            };
+
+            const withImages = await Promise.all(usable.map(async (item: any) => {
+                const isStockx = /(^|\.)stockx\.com/i.test(new URL(item.productUrl).hostname);
+                const imageUrl = isStockx
+                    ? await stockxImage(item.productUrl)
+                    : (await ogImage(item.productUrl)) ?? await stockxImage(item.productUrl);
+
+                return {
+                    name: String(item.name).trim().slice(0, 200),
+                    brand: typeof item.brand === 'string' ? item.brand.trim().slice(0, 80) : '',
+                    price: Number.isFinite(Number(item.price)) && Number(item.price) > 0 ? Number(item.price) : null,
+                    productUrl: item.productUrl,
+                    imageUrl,
+                };
+            }));
+
+            // A tile with no picture is worse than one fewer result.
+            return json({ products: withImages.filter((item) => !!item.imageUrl) });
+        }
+
         return json({ error: 'Unknown action' }, 400);
     } catch (error: any) {
         console.error('ai-proxy error', error?.message);

@@ -27,35 +27,64 @@ export async function searchProducts(query: string, limit: number = 20): Promise
         return { products: [], total: 0 };
     }
 
-    try {
-        const { data, error } = await supabase.functions.invoke('product-search', {
-            body: { query, limit },
-        });
+    // The crawled catalogue answers first: its prices, links and images are all
+    // real and it comes back in under a tenth of a second.
+    const local = await searchTaggedCatalogue(query, limit);
 
-        if (!error && data?.raw) {
-            const upstream = transformResponse(data.raw);
-            if (upstream.products.length > 0) return upstream;
-        } else if (error) {
-            // The upstream is a sneaker database behind a metered API. When its
-            // subscription lapses or it rejects the key, every search silently
-            // returned nothing at all. Fall through to what this app already knows.
-            console.warn('[productSearch] upstream unavailable, using tagged catalogue:', error.message);
-        }
+    // It only covers a small slice of the directory though, so a thin result is
+    // usually the catalogue's coverage rather than the piece not existing. The
+    // web fills the rest in -- and only the rest, so a verified listing is never
+    // pushed down the page by a guess.
+    if (local.products.length >= limit) return local;
 
-        return searchTaggedCatalogue(query, limit);
-    } catch (error) {
-        console.warn('[productSearch] upstream threw, using tagged catalogue:', error);
-        return searchTaggedCatalogue(query, limit);
+    const fromWeb = await searchWeb(query);
+    if (!fromWeb.length) return local;
+
+    const seen = new Set(local.products.map((p) => `${p.brand}|${p.name}`.toLowerCase()));
+    const merged = [...local.products];
+
+    for (const item of fromWeb) {
+        if (merged.length >= limit) break;
+        const key = `${item.brand}|${item.name}`.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(item);
     }
+
+    return { products: merged, total: merged.length };
 }
 
 /**
- * Search the pieces people have tagged on their own posts.
+ * Ask the server to search the live web for pieces the catalogue lacks.
  *
- * Not a replacement for a real catalogue -- it only knows what has been worn and
- * attributed here -- but the results are real, they carry the price and link the
- * tagger entered, and they do not disappear when somebody else's API goes down.
+ * Failure here is quiet on purpose: the catalogue results are already on screen
+ * and a web lookup that times out should not take them down with it.
  */
+async function searchWeb(query: string): Promise<Product[]> {
+    try {
+        const { data, error } = await supabase.functions.invoke('ai-proxy', {
+            body: { action: 'search-products', query },
+        });
+
+        if (error || !Array.isArray(data?.products)) return [];
+
+        return data.products.map((item: any, index: number) => ({
+            id: `web_${index}`,
+            name: item.name || 'Item',
+            brand: item.brand || '',
+            imageUrl: item.imageUrl || '',
+            thumbnail: item.imageUrl || '',
+            styleId: '',
+            retailPrice: typeof item.price === 'number' ? item.price : undefined,
+            lastSale: undefined,
+            purchaseLink: item.productUrl || undefined,
+        }));
+    } catch (error) {
+        console.warn('[productSearch] web search unavailable:', error);
+        return [];
+    }
+}
+
 async function searchTaggedCatalogue(query: string, limit: number): Promise<SearchResult> {
     try {
         // Matching happens in the database, word by word.
