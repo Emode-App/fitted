@@ -228,7 +228,7 @@ export default function BrandDetailScreen() {
                                 Discover the latest collection and trending items from {brandName} on Emode.
                             </Text>
                         </View>
-                        <Text style={[styles.itemsCount, { color: colors.textSecondary, paddingHorizontal: 16 }]}>
+                        <Text style={[styles.itemsCount, { color: colors.textSecondary }]}>
                             {loading ? 'LOADING...' : `${items.length}${exhausted ? '' : '+'} ITEMS`}
                         </Text>
                     </>
@@ -329,20 +329,17 @@ const styles = StyleSheet.create({
         fontSize: 15,
         lineHeight: 22,
     },
-    gridContainer: {
-        padding: 16,
-    },
     itemsCount: {
         fontSize: 12,
         fontWeight: '600',
         textTransform: 'uppercase',
-        marginBottom: 16,
         letterSpacing: 0.5,
-    },
-    grid: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: GAP,
+        // Carries its own spacing now. It used to sit inside a padded grid
+        // wrapper that the FlatList replaced, so it lost every edge at once and
+        // ended up jammed against the hero above it.
+        paddingHorizontal: 16,
+        paddingTop: 20,
+        marginBottom: 12,
     },
     card: {
         width: ITEM_WIDTH,
