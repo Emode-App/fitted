@@ -48,6 +48,11 @@ function RootLayout() {
   const [appReady, setAppReady] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
   const [timedOut, setTimedOut] = useState(false);
+  // A launch that came from an email link carries a session that has not been
+  // exchanged yet. Without holding the gate for it, the redirect runs first,
+  // decides nobody is signed in, and drops a freshly confirmed account on the
+  // sign in screen -- which then has to be signed into by hand.
+  const [authLinkPending, setAuthLinkPending] = useState(true);
 
   const initialize = useAuthStore((state) => state.initialize);
   const isLoading = useAuthStore((state) => state.isLoading);
@@ -86,11 +91,31 @@ function RootLayout() {
 
   // Timeout fallback for web to prevent permanent white screen
   useEffect(() => {
-    Linking.getInitialURL().then((url) => applySupabaseAuthLink(url)).catch(() => {});
+    // Never let the hold outlive the thing it is waiting for. This flag gates
+    // every redirect in the app, so a promise that does not settle would leave
+    // the whole thing parked on a blank route with no way out.
+    const release = setTimeout(() => setAuthLinkPending(false), 2500);
+
+    Linking.getInitialURL()
+      .then((url) => applySupabaseAuthLink(url))
+      .catch(() => {})
+      .finally(() => {
+        clearTimeout(release);
+        setAuthLinkPending(false);
+      });
+
     const subscription = Linking.addEventListener('url', ({ url }) => {
-      applySupabaseAuthLink(url).catch(() => {});
+      // A link arriving while the app is open holds the gate the same way, so a
+      // confirmation tapped from the background lands on onboarding too.
+      setAuthLinkPending(true);
+      applySupabaseAuthLink(url)
+        .catch(() => {})
+        .finally(() => setAuthLinkPending(false));
     });
-    return () => subscription.remove();
+    return () => {
+      clearTimeout(release);
+      subscription.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -106,7 +131,7 @@ function RootLayout() {
 
   // Handle auth + onboarding redirects
   useEffect(() => {
-    if (isLoading && !timedOut) return;
+    if ((isLoading || authLinkPending) && !timedOut) return;
 
     const checkRedirect = async () => {
       const inAuthGroup = segments[0] === 'auth';
@@ -143,7 +168,7 @@ function RootLayout() {
     };
 
     checkRedirect();
-  }, [isAuthenticated, segments, isLoading, timedOut, user, user?.onboarded_at, user?.id]);
+  }, [isAuthenticated, segments, isLoading, authLinkPending, timedOut, user, user?.onboarded_at, user?.id]);
 
   useEffect(() => {
     if (error) throw error;

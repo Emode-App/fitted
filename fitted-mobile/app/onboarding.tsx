@@ -31,6 +31,7 @@ import { getSubscriptionPrice, purchaseSubscription, restorePurchases, type Subs
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
 import { LEGAL } from '@/constants/legal';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '@/constants/colors';
 import { ONBOARDING_MEDIA, type OnboardingSlot } from '@/constants/onboardingMedia';
 
@@ -294,7 +295,7 @@ function Slide({ item, index, scrollX }: { item: any; index: number; scrollX: Sh
                     </MaskedView>
                     <Text style={styles.tagline}>internet{'\n'}fashion.</Text>
                     <Text style={styles.welcomeBody}>
-                        The platform built for fashion-forward creators. 🚀
+                        The platform built for the fashion-forward.
                     </Text>
                 </Animated.View>
             </View>
@@ -366,6 +367,7 @@ export default function OnboardingScreen() {
     const [suggested, setSuggested] = useState<SuggestedAccount[]>([]);
     const [following, setFollowing] = useState<Set<string>>(new Set());
     const [loadingSuggested, setLoadingSuggested] = useState(false);
+    const insets = useSafeAreaInsets();
     const [activePlan, setActivePlan] = useState(0);
     const [purchasing, setPurchasing] = useState(false);
     const [storePrices, setStorePrices] = useState<Record<SubscriptionType, string | null>>({ stylist: null, business: null, proTryOns: null });
@@ -953,7 +955,7 @@ export default function OnboardingScreen() {
             />
 
             {/* Dots + Next */}
-            <SafeAreaView style={styles.bottomNav}>
+            <View style={[styles.bottomNav, { paddingBottom: 20 + insets.bottom }]}>
                 <View style={styles.dots}>
                     {SLIDES.map((_, i) => (
                         <Dot key={i} index={i} scrollX={scrollX} />
@@ -964,7 +966,7 @@ export default function OnboardingScreen() {
                     onPress={handleNext}
                     icon={isLastSlide ? 'arrow-right' : undefined}
                 />
-            </SafeAreaView>
+            </View>
         </View>
     );
 }
@@ -1079,7 +1081,6 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         paddingHorizontal: 32,
-        paddingBottom: 20,
         gap: 20,
     },
     dots: {

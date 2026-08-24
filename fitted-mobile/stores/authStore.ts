@@ -64,6 +64,24 @@ async function recordLoginSession(userId: string): Promise<string | null> {
  * local cache would push that emptiness at the server. syncWardrobe is additive
  * and idempotent, so running it afterwards is safe either way.
  */
+/**
+ * Read the profile row, allowing for it not being there quite yet.
+ *
+ * It is created by a trigger inside the signup transaction, but the very first
+ * read after confirming an email can still land before it is visible. A null
+ * profile leaves the app authenticated with no user, and the onboarding gate
+ * deliberately does nothing in that state -- which strands somebody on the sign
+ * in screen with no way forward but relaunching.
+ */
+async function fetchProfileWithRetry(userId: string, attempts = 3): Promise<any> {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        const { data } = await supabase.from('users').select('*').eq('id', userId).single();
+        if (data) return data;
+        if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    return null;
+}
+
 async function hydrateWardrobe(userId: string): Promise<void> {
     startWardrobeSync(userId);
     await restoreWardrobeFromStorage(userId);
@@ -95,11 +113,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                 await claimLocalCache(session.user.id);
                 void hydrateWardrobe(session.user.id);
 
-                const { data: profile } = await supabase
-                    .from('users')
-                    .select('*')
-                    .eq('id', session.user.id)
-                    .single();
+                const profile = await fetchProfileWithRetry(session.user.id);
 
                 set({
                     session,
@@ -119,13 +133,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                     await claimLocalCache(session.user.id);
                     void hydrateWardrobe(session.user.id);
 
-                    const { data: profile } = await supabase
-                        .from('users')
-                        .select('*')
-                        .eq('id', session.user.id)
-                        .single();
+                    const profile = await fetchProfileWithRetry(session.user.id);
 
-                    set({ session, user: await hydrateProfile(profile), isAuthenticated: true });
+                    // isLoading is cleared here too. It was only ever cleared by
+                    // initialize(), so a session that arrived through this
+                    // listener -- an email confirmation link, an account switch --
+                    // could leave the flag set, and the onboarding gate bails out
+                    // while it is.
+                    set({
+                        session,
+                        user: await hydrateProfile(profile),
+                        isAuthenticated: true,
+                        isLoading: false,
+                    });
 
                     if (event === 'SIGNED_IN') {
                         const sessionId = await recordLoginSession(session.user.id);
@@ -139,7 +159,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                         await deleteSecureItem(SESSION_KEY);
                         set({ currentSessionId: null });
                     }
-                    set({ session: null, user: null, isAuthenticated: false });
+                    set({ session: null, user: null, isAuthenticated: false, isLoading: false });
                 }
             });
         } catch (error) {
