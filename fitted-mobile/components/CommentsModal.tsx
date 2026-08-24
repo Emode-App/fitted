@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, TextInput, Pressable, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, View, Animated, PanResponder, Dimensions, Alert } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 
@@ -36,6 +38,16 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
     const user = useAuthStore((state) => state.user);
 
     const translateY = useRef(new Animated.Value(0)).current;
+    /**
+     * One swipe handle per comment, so tapping the trash can close the row it
+     * belongs to. Object refs rather than callback refs -- Swipeable types its
+     * `ref` as a RefObject and rejects a function.
+     */
+    const swipeRefs = useRef<Record<string, { current: any }>>({});
+    const swipeRefFor = (commentId: string) => {
+        if (!swipeRefs.current[commentId]) swipeRefs.current[commentId] = { current: null };
+        return swipeRefs.current[commentId];
+    };
 
     // Pan responder for swipe to close
     const panResponder = useRef(
@@ -243,8 +255,60 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
         ]);
     };
 
-    const renderComment = ({ item }: { item: CommentWithUser }) => (
-        <View style={styles.commentItem}>
+    /**
+     * Remove your own comment.
+     *
+     * There was no way to do this at all: the overflow menu is rendered only for
+     * OTHER people's comments (report and block), so your own had no affordance
+     * whatsoever. The delete policy on the table has always allowed it.
+     */
+    const handleDeleteComment = (comment: CommentWithUser) => {
+        if (!user || comment.user_id !== user.id) return;
+
+        Alert.alert('Delete comment', 'This cannot be undone.', [
+            { text: 'Cancel', style: 'cancel' },
+            {
+                text: 'Delete',
+                style: 'destructive',
+                onPress: async () => {
+                    // Drop it locally first so the row leaves under the swipe,
+                    // and put it back if the server disagrees.
+                    const previous = comments;
+                    setComments((items) => items.filter((item) => item.id !== comment.id));
+
+                    const { error } = await supabase
+                        .from('comments')
+                        .delete()
+                        .eq('id', comment.id)
+                        .eq('user_id', user.id);
+
+                    if (error) {
+                        console.error('[comments] delete failed:', error);
+                        setComments(previous);
+                        Alert.alert('Could not delete', 'Please try again.');
+                    }
+                },
+            },
+        ]);
+    };
+
+    /** Red trash panel revealed by swiping a comment to the right. */
+    const renderDeleteAction = (comment: CommentWithUser) => () => (
+        <Pressable
+            onPress={() => {
+                swipeRefs.current[comment.id]?.current?.close();
+                handleDeleteComment(comment);
+            }}
+            style={styles.deleteAction}
+            accessibilityLabel="Delete comment"
+        >
+            <Feather name="trash-2" size={20} color="#ffffff" />
+        </Pressable>
+    );
+
+    const renderComment = ({ item }: { item: CommentWithUser }) => {
+        const row = (
+        <View style={[styles.commentItem, { backgroundColor: colors.background }]}>
             <Pressable style={styles.avatarContainer} onPress={() => handleCommentUserPress(item.user?.id)}>
                 {item.user?.avatar_url ? (
                     <Image source={{ uri: item.user.avatar_url }} style={styles.avatar} />
@@ -282,7 +346,23 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                 </Pressable>
             )}
         </View>
-    );
+        );
+
+        // Only your own comment swipes; there is nothing to reveal on anyone
+        // else's, and a swipe that opens an empty panel reads as broken.
+        if (item.user_id !== user?.id) return row;
+
+        return (
+            <Swipeable
+                ref={swipeRefFor(item.id)}
+                friction={2}
+                leftThreshold={40}
+                renderLeftActions={renderDeleteAction(item)}
+            >
+                {row}
+            </Swipeable>
+        );
+    };
 
     return (
         <Modal
@@ -291,7 +371,7 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
             transparent={true}
             onRequestClose={onClose}
         >
-            <View style={styles.overlay}>
+            <GestureHandlerRootView style={styles.overlay}>
                 <Pressable style={styles.backdrop} onPress={onClose} />
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -376,7 +456,7 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                         </View>
                     </Animated.View>
                 </KeyboardAvoidingView>
-            </View>
+            </GestureHandlerRootView>
         </Modal>
     );
 }
@@ -446,6 +526,14 @@ const styles = StyleSheet.create({
     commentItem: {
         flexDirection: 'row',
         marginBottom: 16,
+    },
+    deleteAction: {
+        backgroundColor: '#ef4444',
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: 72,
+        marginBottom: 16,
+        borderRadius: 10,
     },
     avatarContainer: {
         marginRight: 12,

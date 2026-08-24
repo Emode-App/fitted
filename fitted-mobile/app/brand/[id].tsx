@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, View, Text, FlatList, Pressable, Dimensions, ActivityIndicator, Alert, Linking } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Image } from 'expo-image';
@@ -40,15 +40,42 @@ export default function BrandDetailScreen() {
     const [showSort, setShowSort] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const [exhausted, setExhausted] = useState(false);
+    const [category, setCategory] = useState<string | null>(null);
+    const [categories, setCategories] = useState<string[]>([]);
+    // Rows consumed from the query, which is NOT items.length once duplicates
+    // have been dropped. Paging on the visible count re-requested rows already
+    // seen, they deduped to nothing, and the grid stuck mid-scroll.
+    const cursor = useRef(0);
 
     // Normalize brand name
     const brandName = id || 'Brand';
 
     useEffect(() => {
-        // A new brand or a new sort starts the list over.
+        // A new brand, sort or category starts the list over.
         setExhausted(false);
+        cursor.current = 0;
         fetchBrandItems(0);
-    }, [id, sort]);
+    }, [id, sort, category]);
+
+    // Which shelves this brand actually has, so the filter only offers real ones.
+    useEffect(() => {
+        let cancelled = false;
+        supabase
+            .from('brand_items')
+            .select('category')
+            .ilike('brand_name', brandName)
+            .limit(400)
+            .then(({ data }) => {
+                if (cancelled || !data) return;
+                const counts = new Map<string, number>();
+                for (const row of data) {
+                    const key = (row as any).category as string | null;
+                    if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
+                }
+                setCategories([...counts.entries()].sort((a, b) => b[1] - a[1]).map(([key]) => key));
+            });
+        return () => { cancelled = true; };
+    }, [id]);
 
     // What people actually wore and tagged, not a live catalogue lookup.
     //
@@ -71,6 +98,8 @@ export default function BrandDetailScreen() {
                 .select('brand_name, name, image_url, product_url, price, is_tagged')
                 .ilike('brand_name', brandName);
 
+            if (category) query = query.eq('category', category);
+
             if (sort === 'worn') {
                 query = query.eq('is_tagged', true).order('sort_at', { ascending: false });
             } else if (sort === 'price-asc') {
@@ -88,8 +117,13 @@ export default function BrandDetailScreen() {
 
             if (error) throw error;
 
+            const fetched = data?.length ?? 0;
+            // Advance by rows read, not by rows shown.
+            cursor.current = offset + fetched;
+
             // A short page means the catalogue is spent; stop asking for more.
-            if ((data?.length ?? 0) < PAGE_SIZE) setExhausted(true);
+            const spent = fetched < PAGE_SIZE;
+            if (spent) setExhausted(true);
 
             // The same piece can appear in several posts; show it once. The set
             // carries what is already on screen so a later page cannot re-add a
@@ -115,6 +149,17 @@ export default function BrandDetailScreen() {
             }
 
             setItems(offset === 0 ? mapped : [...existing, ...mapped]);
+
+            // A full page that was entirely duplicates adds nothing to the grid,
+            // so onEndReached will never fire again -- the user is already at the
+            // bottom and it does not move. Loewe hits this: 328 listings collapse
+            // to 227 names, so whole pages can vanish. Pull the next one straight
+            // away instead of waiting for a scroll that cannot happen.
+            if (!spent && mapped.length === 0) {
+                setLoadingMore(false);
+                void fetchBrandItems(cursor.current);
+                return;
+            }
 
             // Nothing to show yet: ask for this brand to be crawled.
             //
@@ -143,7 +188,7 @@ export default function BrandDetailScreen() {
     /** Pull the next page when the grid runs out. */
     const handleEndReached = () => {
         if (loading || loadingMore || exhausted || items.length === 0) return;
-        fetchBrandItems(items.length);
+        fetchBrandItems(cursor.current);
     };
 
     /** Open the listing on the retailer it came from. */
@@ -178,7 +223,7 @@ export default function BrandDetailScreen() {
                 <Feather
                     name="filter"
                     size={24}
-                    color={sort === 'featured' ? colors.textSecondary : colors.text}
+                    color={sort === 'featured' && !category ? colors.textSecondary : colors.text}
                 />
             </Pressable>
         </View>
@@ -191,6 +236,38 @@ export default function BrandDetailScreen() {
 
             {showSort && (
                 <View style={[styles.sortSheet, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
+                    {categories.length > 1 && (
+                        <>
+                            <Text style={[styles.sheetHeading, { color: colors.textTertiary }]}>CATEGORY</Text>
+                            <View style={styles.chipRow}>
+                                {[null, ...categories].map((option) => {
+                                    const active = category === option;
+                                    return (
+                                        <Pressable
+                                            key={option ?? 'all'}
+                                            onPress={() => { setCategory(option); setShowSort(false); }}
+                                            style={[
+                                                styles.chip,
+                                                {
+                                                    backgroundColor: active ? colors.primary : colors.backgroundSecondary,
+                                                    borderColor: active ? colors.primary : colors.border,
+                                                },
+                                            ]}
+                                        >
+                                            <Text style={{
+                                                fontSize: 13,
+                                                fontWeight: '600',
+                                                color: active ? colors.primaryForeground : colors.textSecondary,
+                                            }}>
+                                                {option ?? 'All'}
+                                            </Text>
+                                        </Pressable>
+                                    );
+                                })}
+                            </View>
+                            <Text style={[styles.sheetHeading, { color: colors.textTertiary }]}>SORT</Text>
+                        </>
+                    )}
                     {SORTS.map((option) => (
                         <Pressable
                             key={option.id}
@@ -286,6 +363,27 @@ const styles = StyleSheet.create({
     sortSheet: {
         borderBottomWidth: 1,
         paddingVertical: 4,
+    },
+    sheetHeading: {
+        fontSize: 11,
+        fontWeight: '700',
+        letterSpacing: 0.6,
+        paddingHorizontal: 20,
+        paddingTop: 12,
+        paddingBottom: 6,
+    },
+    chipRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        paddingHorizontal: 20,
+        paddingBottom: 8,
+    },
+    chip: {
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+        borderRadius: 999,
+        borderWidth: 1,
     },
     sortRow: {
         flexDirection: 'row',

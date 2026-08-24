@@ -289,23 +289,21 @@ export default function PostDetailScreen() {
                     .or(`post_id.is.null,post_id.neq.${id}`)
                     .order('is_tagged', { ascending: false })
                     .order('sort_at', { ascending: false })
-                    .limit(60);
+                    .limit(120);
 
                 if (error) throw error;
 
                 // One piece can be tagged in several posts; show it once.
                 const seen = new Set<string>();
-                const mappedItems: ClothingItem[] = [];
+                const pool: ClothingItem[] = [];
 
                 for (const row of data ?? []) {
-                    // A carousel scrolls; 8 was sized for an API that returned almost nothing.
-                    if (mappedItems.length >= 20) break;
                     const key = (row.name ?? '').toLowerCase();
                     if (!key || seen.has(key)) continue;
                     seen.add(key);
 
-                    mappedItems.push({
-                        id: `dyn_${brand}_${mappedItems.length}`,
+                    pool.push({
+                        id: `dyn_${brand}_${pool.length}`,
                         brand: row.brand_name || brand,
                         name: row.name || 'Item',
                         price: Number(row.price) || 0,
@@ -313,6 +311,24 @@ export default function PostDetailScreen() {
                         purchase_link: row.product_url || '',
                     });
                 }
+
+                // Show a different slice each time the post is opened.
+                //
+                // The same twenty pieces every visit makes a 300-item catalogue
+                // look like a shelf of twenty. Pieces somebody here actually wore
+                // keep their place at the front -- those are the point of the
+                // section -- and the catalogue behind them is shuffled.
+                const wornCount = (data ?? []).filter((row) => row.is_tagged).length;
+                const worn = pool.slice(0, Math.min(wornCount, pool.length));
+                const rest = pool.slice(worn.length);
+
+                for (let i = rest.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [rest[i], rest[j]] = [rest[j], rest[i]];
+                }
+
+                // A carousel scrolls; 8 was sized for an API that returned almost nothing.
+                const mappedItems = [...worn, ...rest].slice(0, 20);
 
                 if (mappedItems.length > 0) {
                     setBrandCollections(prev => ({ ...prev, [brand]: mappedItems }));
