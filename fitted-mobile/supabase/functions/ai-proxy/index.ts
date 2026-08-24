@@ -331,7 +331,8 @@ serve(async (req: Request) => {
                 body: JSON.stringify({
                     contents: [{ role: 'user', parts: [{ text: prompt }] }],
                     tools: [{ googleSearch: {} }],
-                    generationConfig: { temperature: 0.2 },
+                    // Enough room for 24 objects; the default cut replies mid-array.
+                    generationConfig: { temperature: 0.2, maxOutputTokens: 4096 },
                 }),
             });
 
@@ -343,15 +344,48 @@ serve(async (req: Request) => {
             const data = await resp.json();
             const text = data?.candidates?.[0]?.content?.parts?.find((p: any) => typeof p?.text === 'string')?.text ?? '';
 
-            let items: any[] = [];
-            try {
-                const cleaned = text.replace(/```(?:json)?/g, '').trim();
-                const start = cleaned.indexOf('[');
-                const end = cleaned.lastIndexOf(']');
-                const parsed = start >= 0 && end > start ? JSON.parse(cleaned.slice(start, end + 1)) : null;
-                if (Array.isArray(parsed)) items = parsed;
-            } catch {
-                console.error('search-products unparseable', text.slice(0, 200));
+            // Salvage whole objects rather than demanding a whole array.
+            //
+            // The response is a stream that can stop mid-array, and asking for
+            // 24 items makes that likely. Requiring a closing bracket threw away
+            // everything on a truncated reply -- a real search for Rick Owens
+            // Ramones came back with the right product and was discarded because
+            // the array never closed. Each complete {...} is parsed on its own
+            // and a half-written trailing one is simply dropped.
+            const items: any[] = [];
+            const raw = text.replace(/```(?:json)?/g, '');
+            let depth = 0;
+            let start = -1;
+            let inString = false;
+            let escaped = false;
+
+            for (let i = 0; i < raw.length; i++) {
+                const ch = raw[i];
+
+                if (inString) {
+                    if (escaped) escaped = false;
+                    else if (ch === '\\') escaped = true;
+                    else if (ch === '"') inString = false;
+                    continue;
+                }
+
+                if (ch === '"') { inString = true; continue; }
+                if (ch === '{') { if (depth === 0) start = i; depth++; continue; }
+                if (ch === '}') {
+                    depth--;
+                    if (depth === 0 && start >= 0) {
+                        try {
+                            items.push(JSON.parse(raw.slice(start, i + 1)));
+                        } catch {
+                            // One malformed object is not a reason to lose the rest.
+                        }
+                        start = -1;
+                    }
+                }
+            }
+
+            if (!items.length) {
+                console.error('search-products produced nothing usable', text.slice(0, 400));
                 return json({ products: [] });
             }
 

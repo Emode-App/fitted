@@ -145,6 +145,12 @@ async function resolveImage(productUrl: string): Promise<string | null> {
         if (!/\.(?:jpg|jpeg|png|webp)(?:[?#]|$)/i.test(url)) continue;
         // Sprites, badges, payment marks and tracking pixels are not products.
         if (/(logo|icon|sprite|badge|placeholder|pixel|klarna|afterpay|flag)/i.test(url)) continue;
+        // A reseller listing carries /lyst_photos/<date>/<numeric id>, and for a
+        // marketplace seller that is often their SHOP BANNER rather than the
+        // item. It is how a Rick Owens bomber ended up represented by a "World
+        // Class Fashion" logo. Retailer photos live under /photos/<retailer>/
+        // with the garment in the filename; take those only.
+        if (/\/lyst_photos\//i.test(url)) continue;
         return url;
     }
 

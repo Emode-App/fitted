@@ -22,6 +22,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { supabase } from '@/services/supabase';
 import { searchProducts } from '@/services/aiService';
 import { shareCaption } from '@/constants/share';
+import { reportContent } from '@/services/moderation';
 import SaveItemButton from '@/components/SaveItemButton';
 import { Post, ClothingItem } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
@@ -342,6 +343,38 @@ export default function PostDetailScreen() {
         }));
     };
 
+    /**
+     * Flag a listing whose photo is not the product.
+     *
+     * Filed against the image URL, not the item: one bad picture is usually a
+     * shop banner reused across many listings, so the URL is what identifies the
+     * problem and what a sweep can act on.
+     */
+    const reportItemImage = (item: ClothingItem) => {
+        Alert.alert(
+            'Report this picture',
+            `Tell us the photo shown for "${item.name}" is not that item?`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Report',
+                    style: 'destructive',
+                    onPress: async () => {
+                        const result = await reportContent({
+                            contentType: 'product',
+                            contentId: item.image_url || item.purchase_link || item.name,
+                            reason: `Wrong image for ${item.brand} ${item.name}`.slice(0, 200),
+                        });
+                        Alert.alert(
+                            result.error ? 'Could Not Report' : 'Thanks',
+                            result.error || 'We will take another look at this listing.',
+                        );
+                    },
+                },
+            ],
+        );
+    };
+
     const handleSearchGoogle = (item: ClothingItem) => {
         const query = [item.brand, item.name].filter(Boolean).join(' ');
         handleOpenLink(`https://www.google.com/search?q=${encodeURIComponent(query)}`);
@@ -566,6 +599,16 @@ export default function PostDetailScreen() {
                                     </Pressable>
                                 </View>
 
+                                {/* Catalogue photos are scraped, and a scrape can
+                                    pick up a shop banner instead of the garment.
+                                    Somebody looking at a wrong picture is the
+                                    fastest way to hear about it. */}
+                                <Pressable onPress={() => reportItemImage(selectedItem)} hitSlop={8}>
+                                    <Text style={[styles.reportImageText, { color: colors.textTertiary }]}>
+                                        Picture doesn't match? Report it
+                                    </Text>
+                                </Pressable>
+
                                 <Pressable style={styles.closeButton} onPress={() => setSelectedItem(null)}>
                                     <Text style={[styles.closeButtonText, { color: colors.textTertiary }]}>
                                         Close
@@ -663,10 +706,13 @@ const styles = StyleSheet.create({
         paddingRight: 16,
     },
     modalPriceRow: {
+        // Centred as a pair. space-between pinned the heart to the far edge
+        // while the price sat in the middle, so they read as two unrelated
+        // things rather than one control on one price.
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 12,
+        justifyContent: 'center',
+        gap: 10,
     },
     itemCard: {
         width: 140,
@@ -752,6 +798,12 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 16,
         fontWeight: '600',
+    },
+    reportImageText: {
+        fontSize: 12.5,
+        textAlign: 'center',
+        marginTop: 14,
+        textDecorationLine: 'underline',
     },
     linksRow: {
         flexDirection: 'row',
