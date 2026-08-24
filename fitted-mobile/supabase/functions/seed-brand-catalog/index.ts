@@ -25,6 +25,9 @@ const MAX_BRANDS_PER_RUN = 1;
 const MAX_PAGES_PER_DEPARTMENT = 2;
 const MAX_LISTINGS_PER_BRAND = 240;
 const MAX_IMAGE_LOOKUPS = 8;
+// A recovery run does no index scraping, so it can afford more lookups for the
+// same number of Firecrawl calls.
+const MAX_RECOVERY_LOOKUPS = 12;
 const RATE_LIMIT_RETRIES = 3;
 
 /**
@@ -499,7 +502,7 @@ serve(async (req: Request) => {
         // while obscure ones were refreshed on schedule.
         let query = admin
             .from('brand_seed_queue')
-            .select('brand_slug, source, source_slug, product_slug_prefix, page_cursor, brand_name')
+            .select('brand_slug, source, source_slug, product_slug_prefix, page_cursor, brand_name, parked_count')
             .eq('is_enabled', true)
             .order('priority', { ascending: true })
             .order('synced_at', { ascending: true, nullsFirst: true })
@@ -525,6 +528,27 @@ serve(async (req: Request) => {
             }
 
             const brandName = (job as any).brand_name ?? job.brand_slug;
+
+            // A brand with rows already crawled but hidden for want of an image
+            // gets the whole run spent on those instead of fetching more.
+            //
+            // brand_items only shows rows that have an image, so a parked row is
+            // a listing that cost a scrape and shows nobody anything. Crawling
+            // further just manufactures more of them. The Firecrawl budget is
+            // unchanged -- an index crawl is roughly four scrapes plus eight
+            // lookups, and this is twelve lookups and no index.
+            const parked = Number((job as any).parked_count ?? 0);
+            if (parked > 0) {
+                const recovered = await recoverParked(job, MAX_RECOVERY_LOOKUPS);
+                await admin.from('brand_sources')
+                    .update({ synced_at: new Date().toISOString() })
+                    .eq('brand_slug', job.brand_slug)
+                    .eq('source', job.source);
+                console.log(`[${key}] recovery run: ${recovered} of ${parked} parked row(s) now visible`);
+                report[key] = recovered;
+                continue;
+            }
+
             const { listings, nextCursor } = await crawlSource(
                 source,
                 job.source_slug,
