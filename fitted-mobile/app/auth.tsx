@@ -1,8 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
+import Animated, {
+    useSharedValue,
+    useAnimatedStyle,
+    withDelay,
+    withRepeat,
+    withSequence,
+    withTiming,
+    Easing,
+} from 'react-native-reanimated';
 import { useAuthStore } from '@/stores/authStore';
 import { useTheme } from '@/hooks/useTheme';
 import { LEGAL } from '@/constants/legal';
@@ -53,11 +62,39 @@ function humanAuthError(raw: string): string {
 }
 
 /** The three things somebody gets, stated before they hand over an email. */
-const PITCH: { icon: keyof typeof Feather.glyphMap; text: string }[] = [
-    { icon: 'zap', text: 'Try on anything, then share the fit' },
-    { icon: 'star', text: 'Style others, get styled, get paid' },
-    { icon: 'shopping-bag', text: 'Sell your closet, try on theirs' },
+const PITCH: { emoji: string; text: string }[] = [
+    { emoji: '🪄', text: 'Try on anything, then share the fit' },
+    { emoji: '👑', text: 'Style others, get styled, get paid' },
+    { emoji: '🛍️', text: 'Sell your closet, try on theirs in your dressing room' },
 ];
+
+/**
+ * A pitch emoji, bobbing.
+ *
+ * Staggered so the three drift out of phase with each other -- in step they read
+ * as one blinking block rather than three separate things.
+ */
+function BobbingEmoji({ emoji, delay }: { emoji: string; delay: number }) {
+    const t = useSharedValue(0);
+
+    useEffect(() => {
+        t.value = withDelay(
+            delay,
+            withRepeat(
+                withSequence(
+                    withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.quad) }),
+                    withTiming(0, { duration: 1500, easing: Easing.inOut(Easing.quad) }),
+                ),
+                -1,
+                true,
+            ),
+        );
+    }, []);
+
+    const style = useAnimatedStyle(() => ({ transform: [{ translateY: t.value * -4 }] }));
+
+    return <Animated.Text style={[styles.pitchEmoji, style]}>{emoji}</Animated.Text>;
+}
 
 export default function LoginScreen() {
     const { colors } = useTheme();
@@ -145,9 +182,9 @@ export default function LoginScreen() {
                     <Text style={[styles.tagline, { color: colors.textSecondary }]}>The world's first social ecosystem for fashion fanatics.</Text>
 
                     <View style={styles.pitch}>
-                        {PITCH.map((line) => (
+                        {PITCH.map((line, index) => (
                             <View key={line.text} style={styles.pitchRow}>
-                                <Feather name={line.icon} size={14} color={colors.textSecondary} />
+                                <BobbingEmoji emoji={line.emoji} delay={index * 320} />
                                 <Text style={[styles.pitchText, { color: colors.textSecondary }]}>{line.text}</Text>
                             </View>
                         ))}
@@ -232,8 +269,9 @@ const styles = StyleSheet.create({
     logo: { fontSize: 48, fontWeight: '700', letterSpacing: -2 },
     tagline: { fontSize: 14, marginTop: 8, textAlign: 'center', maxWidth: 300, lineHeight: 20 },
     pitch: { marginTop: 18, gap: 9, alignSelf: 'stretch', paddingHorizontal: 8 },
-    pitchRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
-    pitchText: { fontSize: 13.5, flexShrink: 1 },
+    pitchEmoji: { fontSize: 15, width: 20, textAlign: 'center' },
+    pitchRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 9 },
+    pitchText: { fontSize: 13.5, flexShrink: 1, lineHeight: 18 },
     form: { width: '100%', maxWidth: 340 },
     // The field's own bottom margin moves to the wrapper. Left on the input it
     // was inside the box the eye is centred against, so the icon sat half the
