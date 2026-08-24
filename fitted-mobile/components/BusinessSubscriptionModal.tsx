@@ -195,9 +195,9 @@ const styles = StyleSheet.create({
     title: { fontSize: 24, fontWeight: '700', fontFamily: 'Inter_700Bold', textAlign: 'center', marginBottom: 8 },
     subtitle: { fontSize: 14, textAlign: 'center', marginBottom: 24, lineHeight: 20 },
     pricingCard: { width: '100%', borderRadius: 16, padding: 20, borderWidth: 1, marginBottom: 20 },
-    pricingHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+    pricingHeader: { marginBottom: 16, gap: 2 }, // stacked so a long price cannot collide with the label
     pricingTitle: { fontSize: 16, fontWeight: '600', fontFamily: 'Inter_700Bold' },
-    priceRow: { flexDirection: 'row', alignItems: 'baseline' },
+    priceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
     price: { fontSize: 24, fontWeight: '700', fontFamily: 'Inter_700Bold' },
     priceUnit: { fontSize: 14 },
     benefitsList: { gap: 12 },

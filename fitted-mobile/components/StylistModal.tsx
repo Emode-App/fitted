@@ -263,10 +263,12 @@ const styles = StyleSheet.create({
         marginBottom: 20,
     },
     pricingHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
+        // Stacked, not a space-between row. The row put a 16pt title and a 24pt
+        // price on one line with no gap and no flex on either, so
+        // "Stylist Subscription" and "$24.99" ran straight into each other --
+        // and any longer price or localised currency makes it worse.
         marginBottom: 16,
+        gap: 2,
     },
     pricingTitle: {
         fontSize: 16,
@@ -276,6 +278,7 @@ const styles = StyleSheet.create({
     priceRow: {
         flexDirection: 'row',
         alignItems: 'baseline',
+        gap: 4,
     },
     price: {
         fontSize: 24,

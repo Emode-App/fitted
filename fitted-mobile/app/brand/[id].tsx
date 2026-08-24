@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, ScrollView, Pressable, Dimensions, ActivityIndicator, Alert, Linking } from 'react-native';
+import { StyleSheet, View, Text, FlatList, Pressable, Dimensions, ActivityIndicator, Alert, Linking } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
@@ -11,6 +11,10 @@ const { width } = Dimensions.get('window');
 const COLUMN_COUNT = 2;
 const GAP = 12;
 const ITEM_WIDTH = (width - 32 - GAP) / COLUMN_COUNT; // 32 for container padding
+
+// The page used to load a flat 60 and stop, so a brand with 328 listings showed
+// 60 of them and looked capped for no stated reason.
+const PAGE_SIZE = 40;
 
 /** A listing carries whether somebody here actually wore it, which is worth filtering on. */
 interface BrandItem extends ClothingItem {
@@ -34,12 +38,16 @@ export default function BrandDetailScreen() {
     const [loading, setLoading] = useState(true);
     const [sort, setSort] = useState<SortMode>('featured');
     const [showSort, setShowSort] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [exhausted, setExhausted] = useState(false);
 
     // Normalize brand name
     const brandName = id || 'Brand';
 
     useEffect(() => {
-        fetchBrandItems();
+        // A new brand or a new sort starts the list over.
+        setExhausted(false);
+        fetchBrandItems(0);
     }, [id, sort]);
 
     // What people actually wore and tagged, not a live catalogue lookup.
@@ -48,9 +56,9 @@ export default function BrandDetailScreen() {
     // poor matches for apparel at the best of times and nothing at all whenever
     // that upstream was down -- which is what emptied every brand page. The
     // brands tagged on real posts are the inventory this app genuinely has.
-    const fetchBrandItems = async () => {
+    const fetchBrandItems = async (offset: number) => {
         try {
-            setLoading(true);
+            if (offset === 0) setLoading(true); else setLoadingMore(true);
 
             // Sorting happens in the query, not on the result.
             //
@@ -76,12 +84,18 @@ export default function BrandDetailScreen() {
                     .order('sort_at', { ascending: false });
             }
 
-            const { data, error } = await query.limit(60);
+            const { data, error } = await query.range(offset, offset + PAGE_SIZE - 1);
 
             if (error) throw error;
 
-            // The same piece can appear in several posts; show it once.
-            const seen = new Set<string>();
+            // A short page means the catalogue is spent; stop asking for more.
+            if ((data?.length ?? 0) < PAGE_SIZE) setExhausted(true);
+
+            // The same piece can appear in several posts; show it once. The set
+            // carries what is already on screen so a later page cannot re-add a
+            // piece an earlier one displayed.
+            const existing = offset === 0 ? [] : items;
+            const seen = new Set(existing.map((item) => item.name.toLowerCase()));
             const mapped: BrandItem[] = [];
 
             for (const row of data ?? []) {
@@ -90,7 +104,7 @@ export default function BrandDetailScreen() {
                 seen.add(key);
 
                 mapped.push({
-                    id: `brand_${mapped.length}`,
+                    id: `brand_${offset}_${mapped.length}`,
                     brand: row.brand_name || brandName,
                     name: row.name || 'Item',
                     price: Number(row.price) || 0,
@@ -100,7 +114,7 @@ export default function BrandDetailScreen() {
                 });
             }
 
-            setItems(mapped);
+            setItems(offset === 0 ? mapped : [...existing, ...mapped]);
 
             // Nothing to show yet: ask for this brand to be crawled.
             //
@@ -110,7 +124,7 @@ export default function BrandDetailScreen() {
             // time somebody actually wants it, which is here and on tagging.
             // Fire-and-forget: the catalogue arrives on a later scheduled run, so
             // there is nothing to wait for and a failure must not blank the page.
-            if (mapped.length === 0) {
+            if (offset === 0 && mapped.length === 0) {
                 supabase
                     .rpc('ensure_brand_sources_by_name', { brand_name: brandName })
                     .then(({ error: rpcError }) => {
@@ -119,10 +133,17 @@ export default function BrandDetailScreen() {
             }
         } catch (e) {
             console.error('[brand] could not load tagged items:', e);
-            setItems([]);
+            if (offset === 0) setItems([]);
         } finally {
             setLoading(false);
+            setLoadingMore(false);
         }
+    };
+
+    /** Pull the next page when the grid runs out. */
+    const handleEndReached = () => {
+        if (loading || loadingMore || exhausted || items.length === 0) return;
+        fetchBrandItems(items.length);
     };
 
     /** Open the listing on the retailer it came from. */
@@ -185,49 +206,58 @@ export default function BrandDetailScreen() {
                 </View>
             )}
 
-            <ScrollView showsVerticalScrollIndicator={false}>
-                {/* Hero Section */}
-                <View style={[styles.heroContainer, { backgroundColor: colors.backgroundSecondary }]}>
-                    <Text style={[styles.heroBrandName, { color: colors.text }]}>{brandName}</Text>
-                    <Text style={[styles.heroDescription, { color: colors.textSecondary }]}>
-                        Discover the latest collection and trending items from {brandName} on Emode.
-                    </Text>
-                </View>
-
-                {/* Grid Section */}
-                <View style={styles.gridContainer}>
-                    <Text style={[styles.itemsCount, { color: colors.textSecondary }]}>
-                        {loading ? 'LOADING...' : `${items.length} ITEMS`}
-                    </Text>
-
-                    {loading ? (
+            <FlatList
+                data={loading ? [] : items}
+                keyExtractor={(item) => item.id}
+                numColumns={COLUMN_COUNT}
+                // Padding lives on the rows, not the container, so the hero stays
+                // full-bleed while the grid keeps the inset ITEM_WIDTH assumes.
+                columnWrapperStyle={{ gap: GAP, paddingHorizontal: 16 }}
+                contentContainerStyle={{ paddingBottom: 40 }}
+                showsVerticalScrollIndicator={false}
+                // A FlatList rather than a ScrollView so the grid can ask for
+                // more when it runs out. Items are also only mounted as they
+                // come into view, which matters for a brand with hundreds.
+                onEndReached={handleEndReached}
+                onEndReachedThreshold={0.6}
+                ListHeaderComponent={
+                    <>
+                        <View style={[styles.heroContainer, { backgroundColor: colors.backgroundSecondary }]}>
+                            <Text style={[styles.heroBrandName, { color: colors.text }]}>{brandName}</Text>
+                            <Text style={[styles.heroDescription, { color: colors.textSecondary }]}>
+                                Discover the latest collection and trending items from {brandName} on Emode.
+                            </Text>
+                        </View>
+                        <Text style={[styles.itemsCount, { color: colors.textSecondary, paddingHorizontal: 16 }]}>
+                            {loading ? 'LOADING...' : `${items.length}${exhausted ? '' : '+'} ITEMS`}
+                        </Text>
+                    </>
+                }
+                renderItem={({ item }) => (
+                    <Pressable
+                        style={({ pressed }) => [styles.card, pressed && { opacity: 0.6 }]}
+                        onPress={() => handleOpenItem(item)}
+                    >
+                        <View style={[styles.imageContainer, { backgroundColor: colors.backgroundSecondary }]}>
+                            <Image
+                                source={{ uri: item.image_url }}
+                                style={styles.image}
+                                contentFit="cover"
+                            />
+                        </View>
+                        <View style={styles.cardInfo}>
+                            <Text style={[styles.cardBrand, { color: colors.textTertiary }]}>{brandName}</Text>
+                            <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
+                            <Text style={[styles.cardPrice, { color: colors.textSecondary }]}>
+                                {item.price > 0 ? `$${item.price}` : 'View item'}
+                            </Text>
+                        </View>
+                    </Pressable>
+                )}
+                ListEmptyComponent={
+                    loading ? (
                         <View style={{ height: 200, justifyContent: 'center' }}>
                             <ActivityIndicator color={colors.text} />
-                        </View>
-                    ) : items.length > 0 ? (
-                        <View style={styles.grid}>
-                            {items.map((item) => (
-                                <Pressable
-                                    key={item.id}
-                                    style={({ pressed }) => [styles.card, pressed && { opacity: 0.6 }]}
-                                    onPress={() => handleOpenItem(item)}
-                                >
-                                    <View style={[styles.imageContainer, { backgroundColor: colors.backgroundSecondary }]}>
-                                        <Image
-                                            source={{ uri: item.image_url }}
-                                            style={styles.image}
-                                            contentFit="cover"
-                                        />
-                                    </View>
-                                    <View style={styles.cardInfo}>
-                                        <Text style={[styles.cardBrand, { color: colors.textTertiary }]}>{brandName}</Text>
-                                        <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
-                                        <Text style={[styles.cardPrice, { color: colors.textSecondary }]}>
-                                            {item.price > 0 ? `$${item.price}` : 'View item'}
-                                        </Text>
-                                    </View>
-                                </Pressable>
-                            ))}
                         </View>
                     ) : (
                         <Text style={{ color: colors.textSecondary, textAlign: 'center', paddingVertical: 40 }}>
@@ -235,11 +265,16 @@ export default function BrandDetailScreen() {
                                 ? `Nobody has tagged a ${brandName} piece yet.`
                                 : `No ${brandName} items yet — check back shortly.`}
                         </Text>
-                    )}
-                </View>
-
-                <View style={{ height: 40 }} />
-            </ScrollView>
+                    )
+                }
+                ListFooterComponent={
+                    loadingMore ? (
+                        <View style={{ paddingVertical: 24 }}>
+                            <ActivityIndicator color={colors.textSecondary} />
+                        </View>
+                    ) : null
+                }
+            />
         </View>
     );
 }

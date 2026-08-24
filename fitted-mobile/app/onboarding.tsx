@@ -43,7 +43,19 @@ import { Colors } from '@/constants/colors';
  * like the brand regardless of which theme they later pick or what their phone
  * is set to.
  */
-const E = Colors.emode;
+const E = {
+    ...Colors.emode,
+    // Warmed locally, not in the shared palette. The emode theme's surfaces and
+    // borders are cool zinc greys, which is the contrast the rest of the app is
+    // built on -- Explore's ground, favourite buttons and every card read against
+    // them. Warming them centrally to suit this one screen changed all of that,
+    // so the cream tints stop here.
+    surface: '#EFEBE3',      // cream, one step down
+    surfaceDeep: '#E8E3D8',  // cream, two steps down
+    hairline: '#DFD8CA',     // warm border
+    mutedText: '#6B655A',    // warm grey, legible on cream
+    faintText: '#8F887A',    // warm grey, muted
+};
 
 const { width: SW } = Dimensions.get('window');
 export const ONBOARDING_KEY = 'has_onboarded';
@@ -473,7 +485,7 @@ export default function OnboardingScreen() {
                                         style={styles.avatarRing}
                                     >
                                         <View style={styles.avatarPlaceholder}>
-                                            <Feather name="camera" size={24} color={E.textSecondary} />
+                                            <Feather name="camera" size={24} color={E.mutedText} />
                                         </View>
                                     </LinearGradient>
                                 )}
@@ -488,7 +500,7 @@ export default function OnboardingScreen() {
                             <TextInput
                                 style={[styles.input, styles.inputMultiline]}
                                 placeholder="Tell people about your style..."
-                                placeholderTextColor={E.placeholder}
+                                placeholderTextColor={E.faintText}
                                 value={bio}
                                 onChangeText={setBio}
                                 multiline
@@ -501,7 +513,7 @@ export default function OnboardingScreen() {
                             <TextInput
                                 style={styles.input}
                                 placeholder="City, Country"
-                                placeholderTextColor={E.placeholder}
+                                placeholderTextColor={E.faintText}
                                 value={location}
                                 onChangeText={setLocation}
                             />
@@ -512,7 +524,7 @@ export default function OnboardingScreen() {
                             <TextInput
                                 style={styles.input}
                                 placeholder="e.g. Carhartt WIP"
-                                placeholderTextColor={E.placeholder}
+                                placeholderTextColor={E.faintText}
                                 value={favoriteBrand}
                                 onChangeText={setFavoriteBrand}
                             />
@@ -524,14 +536,14 @@ export default function OnboardingScreen() {
                                 <TextInput
                                     style={[styles.input, styles.rowInput]}
                                     placeholder="Title"
-                                    placeholderTextColor={E.placeholder}
+                                    placeholderTextColor={E.faintText}
                                     value={songTitle}
                                     onChangeText={setSongTitle}
                                 />
                                 <TextInput
                                     style={[styles.input, styles.rowInput]}
                                     placeholder="Artist"
-                                    placeholderTextColor={E.placeholder}
+                                    placeholderTextColor={E.faintText}
                                     value={songArtist}
                                     onChangeText={setSongArtist}
                                 />
@@ -543,7 +555,7 @@ export default function OnboardingScreen() {
                             <TextInput
                                 style={styles.input}
                                 placeholder="yoursite.com"
-                                placeholderTextColor={E.placeholder}
+                                placeholderTextColor={E.faintText}
                                 autoCapitalize="none"
                                 value={website}
                                 onChangeText={setWebsite}
@@ -553,33 +565,33 @@ export default function OnboardingScreen() {
                         <View style={styles.fieldGroup}>
                             <Text style={styles.fieldLabel}>Socials</Text>
                             <View style={styles.socialRow}>
-                                <Feather name="instagram" size={18} color={E.textSecondary} style={styles.socialIcon} />
+                                <Feather name="instagram" size={18} color={E.mutedText} style={styles.socialIcon} />
                                 <TextInput
                                     style={[styles.input, styles.socialInput]}
                                     placeholder="Instagram username"
-                                    placeholderTextColor={E.placeholder}
+                                    placeholderTextColor={E.faintText}
                                     autoCapitalize="none"
                                     value={instagram}
                                     onChangeText={setInstagram}
                                 />
                             </View>
                             <View style={styles.socialRow}>
-                                <Feather name="music" size={18} color={E.textSecondary} style={styles.socialIcon} />
+                                <Feather name="music" size={18} color={E.mutedText} style={styles.socialIcon} />
                                 <TextInput
                                     style={[styles.input, styles.socialInput]}
                                     placeholder="TikTok username"
-                                    placeholderTextColor={E.placeholder}
+                                    placeholderTextColor={E.faintText}
                                     autoCapitalize="none"
                                     value={tiktok}
                                     onChangeText={setTiktok}
                                 />
                             </View>
                             <View style={styles.socialRow}>
-                                <Feather name="twitter" size={18} color={E.textSecondary} style={styles.socialIcon} />
+                                <Feather name="twitter" size={18} color={E.mutedText} style={styles.socialIcon} />
                                 <TextInput
                                     style={[styles.input, styles.socialInput]}
                                     placeholder="Twitter / X username"
-                                    placeholderTextColor={E.placeholder}
+                                    placeholderTextColor={E.faintText}
                                     autoCapitalize="none"
                                     value={twitter}
                                     onChangeText={setTwitter}
@@ -792,7 +804,7 @@ const styles = StyleSheet.create({
     },
     welcomeBody: {
         fontSize: 16,
-        color: E.textSecondary,
+        color: E.mutedText,
         lineHeight: 25,
         marginTop: 6,
     },
@@ -837,7 +849,7 @@ const styles = StyleSheet.create({
     },
     featureBody: {
         fontSize: 16,
-        color: E.textSecondary,
+        color: E.mutedText,
         lineHeight: 26,
     },
 
@@ -887,7 +899,7 @@ const styles = StyleSheet.create({
         height: 40,
         borderRadius: 20,
         borderWidth: 1,
-        borderColor: E.border,
+        borderColor: E.hairline,
         alignItems: 'center',
         justifyContent: 'center',
         marginBottom: 20,
@@ -901,7 +913,7 @@ const styles = StyleSheet.create({
     },
     paywallSubtitle: {
         fontSize: 15,
-        color: E.textSecondary,
+        color: E.mutedText,
         marginTop: 8,
         marginBottom: 24,
     },
@@ -909,7 +921,7 @@ const styles = StyleSheet.create({
     // Plan tabs
     planTabs: {
         flexDirection: 'row',
-        backgroundColor: E.backgroundSecondary,
+        backgroundColor: E.surface,
         borderRadius: 12,
         padding: 4,
         marginBottom: 20,
@@ -926,7 +938,7 @@ const styles = StyleSheet.create({
     planTabText: {
         fontSize: 12,
         fontWeight: '700',
-        color: E.textSecondary,
+        color: E.mutedText,
     },
     planTabTextActive: {
         color: E.primaryForeground,
@@ -934,11 +946,11 @@ const styles = StyleSheet.create({
 
     // Plan card
     planCard: {
-        backgroundColor: E.backgroundSecondary,
+        backgroundColor: E.surface,
         borderRadius: 20,
         padding: 20,
         borderWidth: 1,
-        borderColor: E.border,
+        borderColor: E.hairline,
     },
     planCardHead: {
         flexDirection: 'row',
@@ -963,7 +975,7 @@ const styles = StyleSheet.create({
     },
     planTagline: {
         fontSize: 13,
-        color: E.textSecondary,
+        color: E.mutedText,
         marginTop: 2,
     },
     planPrice: {
@@ -973,7 +985,7 @@ const styles = StyleSheet.create({
     },
     planDivider: {
         height: 1,
-        backgroundColor: E.border,
+        backgroundColor: E.hairline,
         marginBottom: 20,
     },
     perkRow: {
@@ -1008,7 +1020,7 @@ const styles = StyleSheet.create({
     },
     skipText: {
         fontSize: 14,
-        color: E.textTertiary,
+        color: E.faintText,
     },
 
     // ── Profile setup ────────────────────────────────────
@@ -1026,7 +1038,7 @@ const styles = StyleSheet.create({
     },
     profileSubtitle: {
         fontSize: 15,
-        color: E.textSecondary,
+        color: E.mutedText,
         marginTop: 8,
         marginBottom: 24,
         lineHeight: 21,
@@ -1052,13 +1064,13 @@ const styles = StyleSheet.create({
         width: 80,
         height: 80,
         borderRadius: 40,
-        backgroundColor: E.backgroundSecondary,
+        backgroundColor: E.surface,
         alignItems: 'center',
         justifyContent: 'center',
     },
     avatarLabel: {
         fontSize: 13,
-        color: E.textSecondary,
+        color: E.mutedText,
     },
     fieldGroup: {
         marginBottom: 18,
@@ -1070,9 +1082,9 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
     input: {
-        backgroundColor: E.input,
+        backgroundColor: E.surface,
         borderWidth: 1,
-        borderColor: E.inputBorder,
+        borderColor: E.hairline,
         borderRadius: 12,
         paddingHorizontal: 16,
         paddingVertical: 14,

@@ -27,6 +27,7 @@ import * as Haptics from 'expo-haptics';
 
 import { useTheme } from '@/hooks/useTheme';
 import { User, Post, Product } from '@/types';
+import { shareCaption } from '@/constants/share';
 import StylistModal from '@/components/StylistModal';
 import { useMarketplaceStore } from '@/stores/marketplaceStore';
 import { usePostsStore } from '@/stores/postsStore';
@@ -140,7 +141,7 @@ export default function ProfileView({
     const handleSharePost = async (post: Post) => {
         setPostMenuPost(null);
         try {
-            await Share.share({ message: `Check out this fit! 🔥` });
+            await Share.share({ message: shareCaption('Check out this fit! 🔥') });
         } catch {}
     };
 

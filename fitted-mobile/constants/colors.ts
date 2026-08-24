@@ -43,41 +43,38 @@ export const Colors = {
         // Brand
         tint: '#18181b',
     },
-    // The signature cream. Surfaces and borders here are warm on purpose: this
-    // palette used to inherit the light theme's zinc greys, and a cool grey card
-    // on a warm cream ground reads as a rendering fault rather than a choice.
     emode: {
         // Backgrounds
         background: '#F5F2EC',
-        backgroundSecondary: '#EFEBE3', // cream, one step down
-        backgroundTertiary: '#E8E3D8',  // cream, two steps down
+        backgroundSecondary: '#f9fafb', // gray-50
+        backgroundTertiary: '#f3f4f6',  // gray-100
 
         // Text
         text: '#09090b',       // zinc-950
-        textSecondary: '#6B655A', // warm grey, legible on cream
-        textTertiary: '#8F887A',  // warm grey, muted
+        textSecondary: '#71717a', // zinc-500
+        textTertiary: '#a1a1aa',  // zinc-400
         textInverse: '#ffffff',
 
         // Borders
-        border: '#DFD8CA',      // warm hairline
-        borderLight: '#EAE5DA', // warm hairline, subtler
+        border: '#e4e4e7',      // zinc-200
+        borderLight: '#f4f4f5', // zinc-100
 
         // Interactive
         primary: '#18181b',     // zinc-900 (Black)
         primaryForeground: '#ffffff',
-        secondary: '#EFEBE3',   // cream surface
+        secondary: '#f4f4f5',   // zinc-100
         secondaryForeground: '#18181b',
 
         // Tab bar
         tabBar: '#F5F2EC',
-        tabBarBorder: '#DFD8CA',
+        tabBarBorder: '#e4e4e7',
         tabActive: '#18181b',
-        tabInactive: '#8F887A',
+        tabInactive: '#a1a1aa',
 
         // Inputs
-        input: '#EFEBE3',       // cream surface
-        inputBorder: '#DFD8CA', // warm hairline
-        placeholder: '#8F887A', // warm grey
+        input: '#f4f4f5',       // zinc-100
+        inputBorder: '#e4e4e7', // zinc-200
+        placeholder: '#a1a1aa', // zinc-400
 
         // Status
         success: '#10b981', // emerald-500

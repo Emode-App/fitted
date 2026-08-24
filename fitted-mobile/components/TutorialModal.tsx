@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useTheme } from '@/hooks/useTheme';
 
 export interface TutorialStep {
     icon: keyof typeof Feather.glyphMap;
@@ -45,6 +46,9 @@ export function useFirstVisitTutorial(storageKey: string, enabled: boolean = tru
 
 export default function TutorialModal({ visible, onDismiss, title, steps }: TutorialModalProps) {
     const [stepIndex, setStepIndex] = useState(0);
+    // The card used to bake in a dark palette, so it stayed black on the light
+    // and cream themes while everything behind it was pale.
+    const { colors, isDark } = useTheme();
 
     if (!visible) return null;
 
@@ -62,28 +66,35 @@ export default function TutorialModal({ visible, onDismiss, title, steps }: Tuto
 
     return (
         <View style={styles.overlay} pointerEvents="box-none">
-            <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
-            <View style={styles.card}>
+            <BlurView intensity={40} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+            <View style={[styles.card, { backgroundColor: colors.background, borderColor: colors.border }]}>
                 <Pressable style={styles.skipBtn} onPress={() => { setStepIndex(0); onDismiss(); }} hitSlop={12}>
-                    <Text style={styles.skipText}>Skip</Text>
+                    <Text style={[styles.skipText, { color: colors.textSecondary }]}>Skip</Text>
                 </Pressable>
 
-                <View style={styles.iconCircle}>
-                    <Feather name={step.icon} size={28} color="#fff" />
+                <View style={[styles.iconCircle, { backgroundColor: colors.backgroundSecondary, borderColor: colors.border }]}>
+                    <Feather name={step.icon} size={28} color={colors.text} />
                 </View>
 
-                <Text style={styles.title}>{title}</Text>
-                <Text style={styles.stepTitle}>{step.title}</Text>
-                <Text style={styles.body}>{step.body}</Text>
+                <Text style={[styles.title, { color: colors.textSecondary }]}>{title}</Text>
+                <Text style={[styles.stepTitle, { color: colors.text }]}>{step.title}</Text>
+                <Text style={[styles.body, { color: colors.textSecondary }]}>{step.body}</Text>
 
                 <View style={styles.dots}>
                     {steps.map((_, i) => (
-                        <View key={i} style={[styles.dot, i === stepIndex && styles.dotActive]} />
+                        <View
+                            key={i}
+                            style={[
+                                styles.dot,
+                                { backgroundColor: colors.border },
+                                i === stepIndex && { backgroundColor: colors.primary },
+                            ]}
+                        />
                     ))}
                 </View>
 
-                <Pressable style={styles.nextBtn} onPress={handleNext}>
-                    <Text style={styles.nextBtnText}>{isLast ? 'Got it' : 'Next'}</Text>
+                <Pressable style={[styles.nextBtn, { backgroundColor: colors.primary }]} onPress={handleNext}>
+                    <Text style={[styles.nextBtnText, { color: colors.primaryForeground }]}>{isLast ? 'Got it' : 'Next'}</Text>
                 </Pressable>
             </View>
         </View>
@@ -102,10 +113,8 @@ const styles = StyleSheet.create({
     card: {
         width: '100%',
         maxWidth: 360,
-        backgroundColor: '#111',
         borderRadius: 24,
         borderWidth: 1,
-        borderColor: '#27272a',
         padding: 24,
         alignItems: 'center',
     },
@@ -117,15 +126,12 @@ const styles = StyleSheet.create({
     },
     skipText: {
         fontSize: 13,
-        color: '#71717a',
     },
     iconCircle: {
         width: 56,
         height: 56,
         borderRadius: 28,
-        backgroundColor: '#1f1f1f',
         borderWidth: 1,
-        borderColor: '#3f3f46',
         alignItems: 'center',
         justifyContent: 'center',
         marginBottom: 16,
@@ -134,7 +140,6 @@ const styles = StyleSheet.create({
     title: {
         fontFamily: 'Inter_900Black',
         fontSize: 13,
-        color: '#71717a',
         letterSpacing: 1.5,
         textTransform: 'uppercase',
         marginBottom: 8,
@@ -142,14 +147,12 @@ const styles = StyleSheet.create({
     stepTitle: {
         fontFamily: 'Inter_700Bold',
         fontSize: 22,
-        color: '#fff',
         textAlign: 'center',
         letterSpacing: -0.5,
         marginBottom: 10,
     },
     body: {
         fontSize: 15,
-        color: '#a1a1aa',
         textAlign: 'center',
         lineHeight: 22,
         marginBottom: 20,
@@ -163,14 +166,11 @@ const styles = StyleSheet.create({
         width: 6,
         height: 6,
         borderRadius: 3,
-        backgroundColor: '#27272a',
     },
     dotActive: {
-        backgroundColor: '#fff',
         width: 20,
     },
     nextBtn: {
-        backgroundColor: '#fff',
         borderRadius: 14,
         paddingVertical: 14,
         paddingHorizontal: 40,
@@ -179,6 +179,5 @@ const styles = StyleSheet.create({
     nextBtnText: {
         fontFamily: 'Inter_700Bold',
         fontSize: 15,
-        color: '#000',
     },
 });

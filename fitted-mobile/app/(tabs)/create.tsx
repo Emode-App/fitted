@@ -1,4 +1,4 @@
-import { StyleSheet, TextInput, Pressable, Alert, ActivityIndicator, Dimensions, Keyboard, TouchableWithoutFeedback, View as RNView, Modal } from 'react-native';
+import { StyleSheet, TextInput, Pressable, Alert, ActivityIndicator, Dimensions, Keyboard, TouchableWithoutFeedback, View as RNView, Modal, Platform, Share } from 'react-native';
 import { useState, useRef, useEffect } from 'react';
 import ViewShot, { captureRef } from 'react-native-view-shot';
 import { Feather, Ionicons } from '@expo/vector-icons';
@@ -30,6 +30,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
+import { shareCaption } from '@/constants/share';
 import { useMessagesStore } from '@/stores/messagesStore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 // Removed legacy shared component import that might conflict if not used exactly as before
@@ -1164,11 +1165,21 @@ export default function CreateScreen() {
                 fileUri = tempPath;
             }
 
-            await Sharing.shareAsync(fileUri, {
-                mimeType: 'image/jpeg',
-                dialogTitle: 'Share your fit',
-                UTI: 'public.jpeg',
-            });
+            // On iOS the fit goes out with its credit and a way to get the app.
+            // expo-sharing hands over a file and nothing else -- no caption slot --
+            // so a shared fit arrived in Messages as a bare image that said
+            // nothing about what made it. React Native's Share carries both.
+            if (Platform.OS === 'ios') {
+                await Share.share({ message: shareCaption(), url: fileUri });
+            } else {
+                // Android's share intent takes either text or a stream, not both,
+                // and the image is the point -- so it keeps the file.
+                await Sharing.shareAsync(fileUri, {
+                    mimeType: 'image/jpeg',
+                    dialogTitle: 'Share your fit',
+                    UTI: 'public.jpeg',
+                });
+            }
         } catch (err) {
             console.warn('Social share failed:', err);
         }

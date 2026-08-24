@@ -21,6 +21,7 @@ import CommentsModal from '@/components/CommentsModal';
 import { useTheme } from '@/hooks/useTheme';
 import { supabase } from '@/services/supabase';
 import { searchProducts } from '@/services/aiService';
+import { shareCaption } from '@/constants/share';
 import { Post, ClothingItem } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 import { usePostsStore } from '@/stores/postsStore';
@@ -144,8 +145,9 @@ export default function PostDetailScreen() {
         if (!post) return;
         try {
             await Share.share({
-                message: `Check out this fit by ${post.user?.username || 'user'}: ${post.caption || ''}`,
-                url: `emode://post/${post.id}`, // Deep link if applicable
+                message: shareCaption(
+                    `Check out this fit by ${post.user?.username || 'user'}${post.caption ? `: ${post.caption}` : ''}`,
+                ),
             });
         } catch (error) {
             console.error('Error sharing:', error);
