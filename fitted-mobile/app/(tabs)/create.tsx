@@ -18,6 +18,26 @@ import { Text, View } from '@/components/Themed';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
 import { BACKGROUND_OPTIONS, DEFAULT_BACKGROUND, BackgroundOption, POLAROID_FRAME, polaroidWindowRect } from '@/constants/backgrounds';
+
+/**
+ * How much of a photo `cover` is allowed to throw away before it stops being
+ * worth filling the frame.
+ *
+ * The polaroid opening is near square (700x624). A phone photo is close enough
+ * to that to fill it with a trim nobody notices, which is why framed items use
+ * cover. A catalogue product shot is 1040x1300 -- filling the width crops about
+ * a third off the top and bottom, and a shoe arrives looking like it was
+ * photographed through a keyhole.
+ */
+const MAX_COVER_CROP = 1.25;
+
+function fitForImage(imageWidth?: number, imageHeight?: number, windowWidth?: number, windowHeight?: number) {
+    if (!imageWidth || !imageHeight || !windowWidth || !windowHeight) return 'cover' as const;
+    const image = imageWidth / imageHeight;
+    const window = windowWidth / windowHeight;
+    const overflow = Math.max(image / window, window / image);
+    return overflow > MAX_COVER_CROP ? ('contain' as const) : ('cover' as const);
+}
 import CropModal from '@/components/CropModal';
 import TutorialModal, { useFirstVisitTutorial, TutorialStep } from '@/components/TutorialModal';
 import ProductSearchModal from '@/components/ProductSearchModal';
@@ -162,6 +182,10 @@ function DraggableImage({
     const ITEM_SIZE = 150;
     const POLAROID_SIZE = 180; // Slightly larger to accommodate frame
     const PHOTO = polaroidWindowRect(POLAROID_SIZE);
+    // Decided once the image reports its own dimensions, not guessed from where
+    // the item came from -- a tall photo out of the camera roll needs the same
+    // treatment as a tall product shot.
+    const [photoFit, setPhotoFit] = useState<'cover' | 'contain'>('cover');
 
     return (
         <GestureDetector gesture={composedGesture}>
@@ -179,15 +203,22 @@ function DraggableImage({
                             left: PHOTO.left,
                             width: PHOTO.width,
                             height: PHOTO.height,
-                            overflow: 'hidden'
+                            overflow: 'hidden',
+                            backgroundColor: '#ffffff',
                         }}>
-                            {/* cover, not contain: the frame's border masks the
-                                overflow, so filling the opening is what makes it
-                                read as a photo rather than a shrunken cutout. */}
+                            {/* Fill the opening when the photo is roughly the
+                                right shape, which is what makes a framed item
+                                read as a photo rather than a shrunken cutout --
+                                but fall back to fitting it whole when cover
+                                would cut too much away. */}
                             <Image
                                 source={{ uri: item.url }}
                                 style={{ width: '100%', height: '100%' }}
-                                contentFit="cover"
+                                contentFit={photoFit}
+                                onLoad={(event) => {
+                                    const source: any = (event as any)?.source;
+                                    setPhotoFit(fitForImage(source?.width, source?.height, PHOTO.width, PHOTO.height));
+                                }}
                             />
                         </View>
                         {/* Frame renders second (on top with transparent center) */}
@@ -256,12 +287,25 @@ function PreviewItem({ canvasItem, keepFrames }: { canvasItem: CanvasItem; keepF
         transform: [{ rotate: `${swing.value}rad` }],
     }));
 
+    const [previewFit, setPreviewFit] = useState<'cover' | 'contain'>('cover');
+
     return (
         <Animated.View style={[{ width: PREVIEW_SIZE, height: PREVIEW_SIZE }, swingStyle]}>
             {keepFrames && canvasItem.usePolaroid ? (
                 <View style={{ width: PREVIEW_SIZE, height: PREVIEW_SIZE }}>
-                    <View style={{ position: 'absolute', ...PREVIEW_PHOTO, overflow: 'hidden' }}>
-                        <Image source={{ uri: canvasItem.url }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                    {/* Photo paper behind the image, so a shot that has to be
+                        fitted rather than filled sits on white instead of
+                        showing the canvas through the opening. */}
+                    <View style={{ position: 'absolute', ...PREVIEW_PHOTO, overflow: 'hidden', backgroundColor: '#ffffff' }}>
+                        <Image
+                            source={{ uri: canvasItem.url }}
+                            style={{ width: '100%', height: '100%' }}
+                            contentFit={previewFit}
+                            onLoad={(event) => {
+                                const source: any = (event as any)?.source;
+                                setPreviewFit(fitForImage(source?.width, source?.height, PREVIEW_PHOTO.width, PREVIEW_PHOTO.height));
+                            }}
+                        />
                     </View>
                     <Image source={POLAROID_FRAME} style={{ position: 'absolute', width: '100%', height: '100%' }} contentFit="contain" />
                 </View>

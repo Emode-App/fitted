@@ -163,6 +163,16 @@ async function resolveImage(productUrl: string): Promise<string | null> {
  */
 function squareImage(url: string | null): string | null {
     if (!url) return null;
+
+    // The aggregator's CDN carries the dimensions in the path and serves a fixed
+    // set of them. Product pages lead with a thumbnail -- 300x375, sometimes
+    // 100x100 -- which is unusable blown up to fill a polaroid, so ask for the
+    // large variant instead. 1040/1300 is the largest that resolves for every
+    // stored form; nearby sizes like 800/1000 return 403.
+    if (/lystit\.com\/\d+\/\d+\//.test(url)) {
+        return url.replace(/lystit\.com\/\d+\/\d+\//, 'lystit.com/1040/1300/');
+    }
+
     // Only this one CDN takes transform directives in the path. Other hosts are
     // returned untouched rather than having a path segment mangled into them.
     if (!url.includes('img.ssensemedia.com/image/upload/')) return url;

@@ -99,7 +99,11 @@ export async function searchProducts(query: string): Promise<Product[]> {
     }
 
     try {
-        const { products } = await searchCatalogProducts(query, 12);
+        // 12 was sized for an upstream that returned almost nothing. The
+        // catalogue holds 1,900 Rick Owens pieces alone, so a search that ran
+        // out after a dozen results read as a broken feature rather than a
+        // deliberate limit.
+        const { products } = await searchCatalogProducts(query, 48);
         return products.map((item) => ({
             id: item.id,
             name: item.name,
