@@ -173,6 +173,15 @@ function squareImage(url: string | null): string | null {
         return url.replace(/lystit\.com\/\d+\/\d+\//, 'lystit.com/1040/1300/');
     }
 
+    // The marketplace CDN is imgix, sized by query string, and its listing grid
+    // asks for w=140&h=75&q=60 -- a row thumbnail. Forcing h alongside w also
+    // squashes the shot to a 1.87 aspect, which then gets its sides cropped off
+    // inside a near-square polaroid. Width and quality only; let the photo keep
+    // its own proportions.
+    if (url.includes('images.stockx.com')) {
+        return `${url.split('?')[0]}?fit=fill&bg=FFFFFF&w=1000&q=90`;
+    }
+
     // Only this one CDN takes transform directives in the path. Other hosts are
     // returned untouched rather than having a path segment mangled into them.
     if (!url.includes('img.ssensemedia.com/image/upload/')) return url;

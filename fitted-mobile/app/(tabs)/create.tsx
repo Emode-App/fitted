@@ -9,6 +9,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, withSequence, runOnJS } from 'react-native-reanimated';
 import { Gesture, GestureDetector, GestureHandlerRootView, FlatList, ScrollView } from 'react-native-gesture-handler';
 import { Image } from 'expo-image';
+import { Image as RNImage } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import MaskedView from '@react-native-masked-view/masked-view';
@@ -17,6 +18,7 @@ import LoadingSpinner from '@/components/LoadingSpinner';
 import { Text, View } from '@/components/Themed';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
+import { accountKey } from '@/services/localUserData';
 import { BACKGROUND_OPTIONS, DEFAULT_BACKGROUND, BackgroundOption, POLAROID_FRAME, polaroidWindowRect } from '@/constants/backgrounds';
 
 /**
@@ -182,10 +184,26 @@ function DraggableImage({
     const ITEM_SIZE = 150;
     const POLAROID_SIZE = 180; // Slightly larger to accommodate frame
     const PHOTO = polaroidWindowRect(POLAROID_SIZE);
-    // Decided once the image reports its own dimensions, not guessed from where
-    // the item came from -- a tall photo out of the camera roll needs the same
-    // treatment as a tall product shot.
+    // Measured with RNImage.getSize rather than expo-image's onLoad.
+    //
+    // onLoad's payload shape is not something to rely on -- it never produced
+    // usable dimensions here, so every framed item silently stayed on cover and
+    // a wide product shot kept getting its sides cut off. getSize is a plain
+    // documented call that either returns the intrinsic size or errors.
     const [photoFit, setPhotoFit] = useState<'cover' | 'contain'>('cover');
+
+    useEffect(() => {
+        if (!item.url) return;
+        let cancelled = false;
+        RNImage.getSize(
+            item.url,
+            (width, height) => {
+                if (!cancelled) setPhotoFit(fitForImage(width, height, PHOTO.width, PHOTO.height));
+            },
+            () => { /* unmeasurable: leave it filling the frame */ },
+        );
+        return () => { cancelled = true; };
+    }, [item.url, PHOTO.width, PHOTO.height]);
 
     return (
         <GestureDetector gesture={composedGesture}>
@@ -215,10 +233,6 @@ function DraggableImage({
                                 source={{ uri: item.url }}
                                 style={{ width: '100%', height: '100%' }}
                                 contentFit={photoFit}
-                                onLoad={(event) => {
-                                    const source: any = (event as any)?.source;
-                                    setPhotoFit(fitForImage(source?.width, source?.height, PHOTO.width, PHOTO.height));
-                                }}
                             />
                         </View>
                         {/* Frame renders second (on top with transparent center) */}
@@ -289,6 +303,19 @@ function PreviewItem({ canvasItem, keepFrames }: { canvasItem: CanvasItem; keepF
 
     const [previewFit, setPreviewFit] = useState<'cover' | 'contain'>('cover');
 
+    useEffect(() => {
+        if (!canvasItem.url) return;
+        let cancelled = false;
+        RNImage.getSize(
+            canvasItem.url,
+            (width, height) => {
+                if (!cancelled) setPreviewFit(fitForImage(width, height, PREVIEW_PHOTO.width, PREVIEW_PHOTO.height));
+            },
+            () => {},
+        );
+        return () => { cancelled = true; };
+    }, [canvasItem.url]);
+
     return (
         <Animated.View style={[{ width: PREVIEW_SIZE, height: PREVIEW_SIZE }, swingStyle]}>
             {keepFrames && canvasItem.usePolaroid ? (
@@ -301,10 +328,6 @@ function PreviewItem({ canvasItem, keepFrames }: { canvasItem: CanvasItem; keepF
                             source={{ uri: canvasItem.url }}
                             style={{ width: '100%', height: '100%' }}
                             contentFit={previewFit}
-                            onLoad={(event) => {
-                                const source: any = (event as any)?.source;
-                                setPreviewFit(fitForImage(source?.width, source?.height, PREVIEW_PHOTO.width, PREVIEW_PHOTO.height));
-                            }}
                         />
                     </View>
                     <Image source={POLAROID_FRAME} style={{ position: 'absolute', width: '100%', height: '100%' }} contentFit="contain" />
@@ -947,7 +970,9 @@ export default function CreateScreen() {
     };
 
     // Recent searches constants
-    const RECENT_SEARCHES_KEY = 'emode_recent_product_searches';
+    // Slotted per account. This was a bare key that sign-out wiped, so search
+    // history vanished every time somebody signed back in.
+    const RECENT_SEARCHES_KEY = accountKey('emode_recent_product_searches', user?.id);
     const MAX_RECENT_SEARCHES = 8;
 
     // Load recent searches on mount
@@ -963,7 +988,10 @@ export default function CreateScreen() {
             }
         };
         loadRecentSearches();
-    }, []);
+        // Re-reads when the account resolves. With empty deps this ran once on
+        // mount, before user.id existed, and so read the unslotted key and found
+        // nothing every time.
+    }, [RECENT_SEARCHES_KEY]);
 
     // Save recent search
     const saveRecentSearch = async (query: string) => {

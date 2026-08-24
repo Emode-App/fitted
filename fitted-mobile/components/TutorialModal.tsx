@@ -4,6 +4,8 @@ import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '@/hooks/useTheme';
+import { useAuthStore } from '@/stores/authStore';
+import { accountKey } from '@/services/localUserData';
 
 export interface TutorialStep {
     icon: keyof typeof Feather.glyphMap;
@@ -23,22 +25,38 @@ interface TutorialModalProps {
 // show a one-time, skippable tutorial.
 export function useFirstVisitTutorial(storageKey: string, enabled: boolean = true) {
     const [visible, setVisible] = useState(false);
+    const userId = useAuthStore((state) => state.user?.id);
+    // Keyed per account. The flag used to be a bare key that sign-out wiped, so
+    // every time somebody signed back in they were walked through every tutorial
+    // again. Slotting it means it survives sign-out and still cannot carry over
+    // to whoever signs in next.
+    const key = accountKey(storageKey, userId);
 
     useEffect(() => {
-        if (!enabled) return;
+        if (!enabled || !userId) return;
         let cancelled = false;
         (async () => {
-            const seen = await AsyncStorage.getItem(storageKey);
-            if (!cancelled && seen !== 'true') {
-                setVisible(true);
+            let seen = await AsyncStorage.getItem(key);
+
+            // Anyone who dismissed these before they were slotted has the old
+            // unkeyed flag. Honour it once and carry it across, rather than
+            // making them sit through the tour a final time.
+            if (seen !== 'true') {
+                const legacy = await AsyncStorage.getItem(storageKey);
+                if (legacy === 'true') {
+                    seen = 'true';
+                    await AsyncStorage.setItem(key, 'true');
+                }
             }
+
+            if (!cancelled && seen !== 'true') setVisible(true);
         })();
         return () => { cancelled = true; };
-    }, [enabled]);
+    }, [enabled, key, userId]);
 
     const dismiss = async () => {
         setVisible(false);
-        await AsyncStorage.setItem(storageKey, 'true');
+        await AsyncStorage.setItem(key, 'true');
     };
 
     return { visible, dismiss };
