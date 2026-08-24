@@ -6,6 +6,7 @@ import * as Haptics from 'expo-haptics';
 
 import MentionText from '@/components/MentionText';
 import { Post, ClothingItem } from '@/types';
+import SaveItemButton from '@/components/SaveItemButton';
 import { useTheme } from '@/hooks/useTheme';
 import { reportContent, blockUser } from '@/services/moderation';
 
@@ -30,10 +31,12 @@ function ItemLinkModal({
     visible,
     item,
     onClose,
+    postId,
 }: {
     visible: boolean;
     item: ClothingItem | null;
     onClose: () => void;
+    postId?: string;
 }) {
     const { colors } = useTheme();
 
@@ -61,6 +64,24 @@ function ItemLinkModal({
                     {item.price > 0 && (
                         <RNText style={[styles.modalPrice, { color: colors.primary }]}>${item.price}</RNText>
                     )}
+
+                    {/* This is the sheet reached from the tag pills on a fit, and
+                        the one that matters most for saving: these are pieces
+                        somebody actually wore, link or no link. */}
+                    <RNView style={styles.saveRow}>
+                        <SaveItemButton
+                            item={{
+                                brandName: item.brand,
+                                name: item.name,
+                                imageUrl: item.image_url,
+                                productUrl: item.purchase_link || null,
+                                price: item.price || null,
+                                sourcePostId: postId ?? null,
+                            }}
+                            variant="inline"
+                            size={26}
+                        />
+                    </RNView>
 
                     {/* Link circle(s) for this item — one per purchase URL, max 5 */}
                     {item.purchase_link && (
@@ -441,6 +462,7 @@ export default function PostItem({ post, onLike, onComment, onShare, onSave, onU
                 visible={modalVisible}
                 item={selectedItem}
                 onClose={() => setModalVisible(false)}
+                postId={post.id}
             />
         </RNView>
     );
@@ -693,6 +715,10 @@ const styles = StyleSheet.create({
         fontSize: 11,
         textAlign: 'center',
         width: 64,
+    },
+    saveRow: {
+        alignItems: 'center',
+        marginTop: 14,
     },
     modalCloseButton: {
         paddingVertical: 16,

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, TextInput, Pressable, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, View, Animated, PanResponder, Dimensions, Alert } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { Image } from 'expo-image';
@@ -333,18 +333,23 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
                 </View>
             </View>
             <Pressable style={styles.likeButton} onPress={() => toggleCommentLike(item.id)}>
-                <Feather
-                    name="heart"
-                    size={14}
+                <Ionicons
+                    name={likedComments.has(item.id) ? 'heart' : 'heart-outline'}
+                    size={15}
                     color={likedComments.has(item.id) ? '#ff3b5c' : colors.textTertiary}
-                    fill={likedComments.has(item.id) ? '#ff3b5c' : 'transparent'}
                 />
             </Pressable>
-            {item.user_id !== user?.id && (
-                <Pressable style={styles.likeButton} onPress={() => showCommentActions(item)} accessibilityLabel="Comment moderation options">
-                    <Feather name="more-horizontal" size={15} color={colors.textTertiary} />
-                </Pressable>
-            )}
+            <Pressable
+                style={styles.likeButton}
+                onPress={() => (item.user_id === user?.id ? handleDeleteComment(item) : showCommentActions(item))}
+                accessibilityLabel={item.user_id === user?.id ? 'Delete comment' : 'Comment moderation options'}
+            >
+                <Feather
+                    name={item.user_id === user?.id ? 'trash-2' : 'more-horizontal'}
+                    size={15}
+                    color={colors.textTertiary}
+                />
+            </Pressable>
         </View>
         );
 

@@ -197,10 +197,19 @@ export default function ProfileView({
 
     const showingSavedItems = activeTab === 'saved' && savedTab === 'items';
 
+    // Filter against the store rather than waiting for the refetch.
+    //
+    // Unsaving fires an optimistic key change, which is what the effect above
+    // watches -- so the refetch raced the DELETE, read the row still present,
+    // and put the tile straight back. Reading the live key set means a tile
+    // leaves the instant its heart is cleared, and the refetch only has to
+    // cover additions.
+    const visibleSavedItems = savedItems.filter((item) => savedKeys.has(item.itemKey));
+
     const displayData: any[] = activeTab === 'posts'
         ? localPosts
         : activeTab === 'saved'
-            ? (savedTab === 'items' ? savedItems : savedPosts)
+            ? (savedTab === 'items' ? visibleSavedItems : savedPosts)
             : products;
 
     const handleOpenLink = async (link: string) => {
@@ -690,7 +699,11 @@ export default function ProfileView({
                     }
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ paddingBottom: 0 }}
-                    columnWrapperStyle={activeTab === 'shop' ? { gap: 12, marginBottom: 12, paddingHorizontal: 16 } : undefined}
+                    columnWrapperStyle={
+                        activeTab === 'shop' ? { gap: 12, marginBottom: 12, paddingHorizontal: 16 }
+                            : showingSavedItems ? styles.savedItemsColumn
+                            : undefined
+                    }
                     ListHeaderComponentStyle={activeTab === 'shop' ? { marginBottom: 16 } : undefined}
                 />
             </View>
@@ -759,7 +772,8 @@ export default function ProfileView({
     );
 }
 
-const SAVED_ITEM_WIDTH = (width - 24) / 2;
+// 12 outer padding each side, 12 between the two columns.
+const SAVED_ITEM_WIDTH = (width - 36) / 2;
 
 const styles = StyleSheet.create({
     savedSwitch: {
@@ -776,8 +790,12 @@ const styles = StyleSheet.create({
     },
     savedItemCard: {
         width: SAVED_ITEM_WIDTH,
-        margin: 4,
+        marginBottom: 20,
         gap: 2,
+    },
+    savedItemsColumn: {
+        gap: 12,
+        paddingHorizontal: 12,
     },
     savedItemImageWrap: {
         width: SAVED_ITEM_WIDTH,
