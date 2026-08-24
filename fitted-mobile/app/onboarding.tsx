@@ -98,6 +98,14 @@ interface SuggestedAccount {
 const SLIDES = [
     { id: 'welcome' },
     {
+        id: 'social',
+        emoji: '🌟',
+        media: 'feed' as const,
+        title: 'Your Stage',
+        body: 'Post your fits, tag what you wore, and find the people whose style you actually want to see.',
+        gradient: ['#8b5cf6', '#3b82f6'] as const,
+    },
+    {
         id: 'fits',
         emoji: '🎨',
         media: 'board' as const,
@@ -110,7 +118,7 @@ const SLIDES = [
         emoji: '🤖',
         media: 'tryOn' as const,
         title: 'See It On You',
-        body: 'Upload one photo and try on any outfit. Every piece stays shoppable — tap straight through to buy it.',
+        body: 'Upload one photo and try on anything — including the secondhand pieces your peers are selling. It all lands in your dressing room.',
         gradient: ['#06b6d4', '#3b82f6'] as const,
     },
     {
@@ -128,14 +136,6 @@ const SLIDES = [
         title: 'Shop & Sell',
         body: 'Save the pieces you love, and list your own from your profile. Secure checkout, straight to your account.',
         gradient: ['#10b981', '#06b6d4'] as const,
-    },
-    {
-        id: 'social',
-        emoji: '🌟',
-        media: 'feed' as const,
-        title: 'Your Stage',
-        body: 'Post your fits, tag what you wore, and find the people whose style you actually want to see.',
-        gradient: ['#8b5cf6', '#3b82f6'] as const,
     },
 ] as const;
 
@@ -983,7 +983,9 @@ const styles = StyleSheet.create({
     artWrap: {
         alignItems: 'center',
         justifyContent: 'flex-end',
-        marginBottom: 28,
+        // No margin of its own. featureContent already puts a gap under it, and
+        // the two stacked left the phone floating well clear of its heading.
+        marginBottom: 0,
     },
     art: {
         width: SW * 0.56,
@@ -1035,7 +1037,9 @@ const styles = StyleSheet.create({
 
     // Feature slides
     featureContent: {
-        gap: 28,
+        // Tight enough that the screenshot reads as belonging to the heading
+        // beneath it, loose enough not to collide with it.
+        gap: 18,
     },
     iconWrap: {
         width: 96,
