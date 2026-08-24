@@ -315,7 +315,10 @@ serve(async (req: Request) => {
                 '',
                 'Rules:',
                 '- name is the specific product, without the brand repeated inside it.',
-                '- productUrl must be a real product page you found. Retailer or brand sites only.',
+                '- productUrl must be a real product page you found.',
+                '- Strongly prefer stockx.com, goat.com, grailed.com, lyst.com, nike.com',
+                '  or the brand site itself. Avoid farfetch.com, ssense.com and mrporter.com:',
+                '  their pages cannot be read, so those results get discarded.',
                 '- Never return a google.com, vertexaisearch or redirect URL. Omit the item instead.',
                 '- price is the current retail or market price in USD, or null if unsure.',
                 '  Do not guess a number to fill the field.',
@@ -331,8 +334,15 @@ serve(async (req: Request) => {
                 body: JSON.stringify({
                     contents: [{ role: 'user', parts: [{ text: prompt }] }],
                     tools: [{ googleSearch: {} }],
-                    // Enough room for 24 objects; the default cut replies mid-array.
-                    generationConfig: { temperature: 0.2, maxOutputTokens: 4096 },
+                    generationConfig: {
+                        temperature: 0.2,
+                        // Room for 24 objects, and no thinking. This model thinks
+                        // by default and those tokens come out of the same budget,
+                        // which truncated the array after a single object -- the
+                        // logs read "model 1" on search after search.
+                        maxOutputTokens: 8192,
+                        thinkingConfig: { thinkingBudget: 0 },
+                    },
                 }),
             });
 
