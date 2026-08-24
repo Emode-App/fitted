@@ -157,7 +157,7 @@ export default function LoginScreen() {
                 <View style={styles.form}>
                     {!isLogin && <TextInput style={[styles.input, { backgroundColor: colors.input, borderColor: colors.inputBorder, color: colors.text }]} placeholder="Username" placeholderTextColor={colors.placeholder} value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} maxLength={30} />}
                     <TextInput style={[styles.input, { backgroundColor: colors.input, borderColor: colors.inputBorder, color: colors.text }]} placeholder="Email" placeholderTextColor={colors.placeholder} value={email} onChangeText={setEmail} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" textContentType="emailAddress" />
-                    <View>
+                    <View style={styles.passwordWrap}>
                         <TextInput
                             style={[styles.input, styles.inputWithAction, { backgroundColor: colors.input, borderColor: colors.inputBorder, color: colors.text }]}
                             placeholder="Password"
@@ -235,7 +235,11 @@ const styles = StyleSheet.create({
     pitchRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
     pitchText: { fontSize: 13.5, flexShrink: 1 },
     form: { width: '100%', maxWidth: 340 },
-    inputWithAction: { paddingRight: 44 },
+    // The field's own bottom margin moves to the wrapper. Left on the input it
+    // was inside the box the eye is centred against, so the icon sat half the
+    // margin below the field's real centre.
+    passwordWrap: { marginBottom: 12 },
+    inputWithAction: { paddingRight: 44, marginBottom: 0 },
     inputAction: { position: 'absolute', right: 14, top: 0, bottom: 0, justifyContent: 'center' },
     rules: { marginTop: -4, marginBottom: 14, gap: 6, paddingHorizontal: 2 },
     ruleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
