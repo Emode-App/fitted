@@ -25,6 +25,9 @@ const MAX_BRANDS_PER_RUN = 1;
 const MAX_PAGES_PER_DEPARTMENT = 2;
 const MAX_LISTINGS_PER_BRAND = 240;
 const MAX_IMAGE_LOOKUPS = 8;
+// A recovery run does no index scraping, so it can afford more lookups for the
+// same number of Firecrawl calls.
+const MAX_RECOVERY_LOOKUPS = 12;
 const RATE_LIMIT_RETRIES = 3;
 
 /**
@@ -163,6 +166,25 @@ async function resolveImage(productUrl: string): Promise<string | null> {
  */
 function squareImage(url: string | null): string | null {
     if (!url) return null;
+
+    // The aggregator's CDN carries the dimensions in the path and serves a fixed
+    // set of them. Product pages lead with a thumbnail -- 300x375, sometimes
+    // 100x100 -- which is unusable blown up to fill a polaroid, so ask for the
+    // large variant instead. 1040/1300 is the largest that resolves for every
+    // stored form; nearby sizes like 800/1000 return 403.
+    if (/lystit\.com\/\d+\/\d+\//.test(url)) {
+        return url.replace(/lystit\.com\/\d+\/\d+\//, 'lystit.com/1040/1300/');
+    }
+
+    // The marketplace CDN is imgix, sized by query string, and its listing grid
+    // asks for w=140&h=75&q=60 -- a row thumbnail. Forcing h alongside w also
+    // squashes the shot to a 1.87 aspect, which then gets its sides cropped off
+    // inside a near-square polaroid. Width and quality only; let the photo keep
+    // its own proportions.
+    if (url.includes('images.stockx.com')) {
+        return `${url.split('?')[0]}?fit=fill&bg=FFFFFF&w=1000&q=90`;
+    }
+
     // Only this one CDN takes transform directives in the path. Other hosts are
     // returned untouched rather than having a path segment mangled into them.
     if (!url.includes('img.ssensemedia.com/image/upload/')) return url;
@@ -480,7 +502,7 @@ serve(async (req: Request) => {
         // while obscure ones were refreshed on schedule.
         let query = admin
             .from('brand_seed_queue')
-            .select('brand_slug, source, source_slug, product_slug_prefix, page_cursor, brand_name')
+            .select('brand_slug, source, source_slug, product_slug_prefix, page_cursor, brand_name, parked_count')
             .eq('is_enabled', true)
             .order('priority', { ascending: true })
             .order('synced_at', { ascending: true, nullsFirst: true })
@@ -506,6 +528,27 @@ serve(async (req: Request) => {
             }
 
             const brandName = (job as any).brand_name ?? job.brand_slug;
+
+            // A brand with rows already crawled but hidden for want of an image
+            // gets the whole run spent on those instead of fetching more.
+            //
+            // brand_items only shows rows that have an image, so a parked row is
+            // a listing that cost a scrape and shows nobody anything. Crawling
+            // further just manufactures more of them. The Firecrawl budget is
+            // unchanged -- an index crawl is roughly four scrapes plus eight
+            // lookups, and this is twelve lookups and no index.
+            const parked = Number((job as any).parked_count ?? 0);
+            if (parked > 0) {
+                const recovered = await recoverParked(job, MAX_RECOVERY_LOOKUPS);
+                await admin.from('brand_sources')
+                    .update({ synced_at: new Date().toISOString() })
+                    .eq('brand_slug', job.brand_slug)
+                    .eq('source', job.source);
+                console.log(`[${key}] recovery run: ${recovered} of ${parked} parked row(s) now visible`);
+                report[key] = recovered;
+                continue;
+            }
+
             const { listings, nextCursor } = await crawlSource(
                 source,
                 job.source_slug,

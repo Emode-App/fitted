@@ -23,16 +23,24 @@ const wardrobeKeyFor = (userId: string) => `wardrobe-storage:${userId}`;
 /** Slot used while signed out. Never written to by a signed-in session. */
 const DETACHED_WARDROBE_KEY = 'wardrobe-storage:none';
 
-// Loose AsyncStorage keys written directly by screens, none of which are keyed by
-// account. `has_onboarded` deliberately is NOT here: clearing it made every account
-// switch replay onboarding, and it is now both server-backed (users.onboarded_at)
-// and per-account, so it needs no blunt clearing.
-const USER_SCOPED_KEYS = [
-    'emode_recent_product_searches',
-    'has_seen_canvas_tutorial',
-    'has_seen_ai_tryon_tutorial',
-    'has_seen_marketplace_tutorial',
-];
+// Nothing loose is left to clear.
+//
+// Tutorial flags and recent searches used to live here and be wiped on sign-out,
+// which is why signing back in replayed every tutorial and lost your search
+// history. They are slotted per account now -- accountKey() below -- so they
+// survive a sign-out and still cannot leak to the next account, which is the
+// same trick the wardrobe uses.
+const USER_SCOPED_KEYS: string[] = [];
+
+/**
+ * Namespace a loose AsyncStorage key to one account.
+ *
+ * Anything stored per person should go through this rather than being wiped on
+ * sign-out: wiping loses it forever, while slotting keeps it and still keeps it
+ * private to that account.
+ */
+export const accountKey = (base: string, userId?: string | null) =>
+    userId ? `${base}:${userId}` : base;
 
 /** Remembers which account the loose keys above belong to. */
 const OWNER_KEY = 'local_cache_owner_id';

@@ -58,23 +58,29 @@ export async function searchProducts(query: string, limit: number = 20): Promise
  */
 async function searchTaggedCatalogue(query: string, limit: number): Promise<SearchResult> {
     try {
-        const term = `%${query.trim()}%`;
+        // Matching happens in the database, word by word.
+        //
+        // This used to send the whole query as one ilike pattern, so
+        // "jordan 4 lightning" looked for that exact contiguous string. Names
+        // carry the model in the middle -- "Jordan 4 Retro Lightning" -- so
+        // multi-word searches reported nothing found for pieces that were
+        // sitting in the catalogue. "jordan 4 lakers" matched 0 as a phrase and
+        // 1 by words.
+        const { data, error } = await supabase.rpc('search_brand_items', {
+            q: query.trim(),
+            max_rows: limit * 3,
+        });
 
-        const { data, error } = await supabase
-            .from('brand_items')
-            .select('brand_name, name, image_url, product_url, price, is_tagged')
-            .or(`brand_name.ilike.${term},name.ilike.${term}`)
-            .order('is_tagged', { ascending: false })
-            .order('sort_at', { ascending: false })
-            .limit(limit * 3);
-
-        if (error || !data) return { products: [], total: 0 };
+        if (error || !data) {
+            console.warn('[productSearch] catalogue search failed:', error?.message);
+            return { products: [], total: 0 };
+        }
 
         // The same piece is tagged on every post it appears in; show it once.
         const seen = new Set<string>();
         const products: Product[] = [];
 
-        for (const row of data) {
+        for (const row of data as any[]) {
             if (products.length >= limit) break;
             const key = `${row.brand_name ?? ''}|${row.name ?? ''}`.toLowerCase();
             if (seen.has(key)) continue;
@@ -95,7 +101,7 @@ async function searchTaggedCatalogue(query: string, limit: number): Promise<Sear
 
         return { products, total: products.length };
     } catch (error) {
-        console.warn('[productSearch] tagged catalogue lookup failed:', error);
+        console.warn('[productSearch] catalogue lookup failed:', error);
         return { products: [], total: 0 };
     }
 }

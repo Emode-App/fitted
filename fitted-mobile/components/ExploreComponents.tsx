@@ -38,6 +38,9 @@ export interface BrandHit {
 
 interface SearchResultsProps {
     query: string;
+    /** Whether people rank above labels in the results. Persisted per device. */
+    accountsFirst?: boolean;
+    onToggleOrder?: () => void;
     results: User[];
     /** Labels from the directory — Loewe, Supreme — not accounts. */
     brandResults?: BrandHit[];
@@ -208,7 +211,7 @@ export const TrendingGrid = ({ brands, onViewBrand }: TrendingGridProps) => {
 };
 
 // 4. Search Results
-export const SearchResults = ({ results, brandResults = [], shopResults = [], productResults = [], loading, onViewProfile, onViewProduct, onViewBrandPage }: SearchResultsProps) => {
+export const SearchResults = ({ results, brandResults = [], shopResults = [], productResults = [], loading, onViewProfile, onViewProduct, onViewBrandPage, accountsFirst = false, onToggleOrder }: SearchResultsProps) => {
     const { colors } = useTheme();
 
     if (loading) {
@@ -243,6 +246,27 @@ export const SearchResults = ({ results, brandResults = [], shopResults = [], pr
                     </View>
                 )}
 
+                {/* Order control. Searching a person meant scrolling past every
+                    label that matched first, which is the wrong way round for
+                    anybody who mostly looks up people. */}
+                {(brandResults.length > 0 || results.length > 0) && onToggleOrder && (
+                    <Pressable onPress={onToggleOrder} style={styles.orderToggle}>
+                        <Feather name="repeat" size={12} color={colors.textSecondary} />
+                        <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                            {accountsFirst ? 'Accounts first' : 'Brands first'}
+                        </Text>
+                    </Pressable>
+                )}
+
+                {accountsFirst && results.length > 0 && (
+                    <View style={{ marginBottom: 16 }}>
+                        <Text style={[styles.resultsHeader, { color: colors.textSecondary }]}>ACCOUNTS</Text>
+                        {results.map(user => (
+                            <UserResultRow key={user.id} user={user} onViewProfile={onViewProfile} />
+                        ))}
+                    </View>
+                )}
+
                 {/* Brands Section — labels from the directory */}
                 {brandResults.length > 0 && onViewBrandPage && (
                     <View style={{ marginBottom: 16 }}>
@@ -264,8 +288,9 @@ export const SearchResults = ({ results, brandResults = [], shopResults = [], pr
                 )}
 
                 {/* Accounts Section. Hidden when another section matched but this
-                    one did not, rather than leaving a header over empty space. */}
-                {results.length > 0 && (
+                    one did not, rather than leaving a header over empty space --
+                    and skipped entirely when it has already been rendered above. */}
+                {!accountsFirst && results.length > 0 && (
                     <View>
                         <Text style={[styles.resultsHeader, { color: colors.textSecondary }]}>ACCOUNTS</Text>
                         {results.map(user => (
@@ -345,6 +370,15 @@ const UserResultRow = ({ user, onViewProfile }: { user: User, onViewProfile: (id
 
 
 const styles = StyleSheet.create({
+    orderToggle: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'flex-start',
+        gap: 6,
+        paddingVertical: 6,
+        paddingHorizontal: 4,
+        marginBottom: 4,
+    },
     // Header
     headerContainer: {
         position: 'absolute',

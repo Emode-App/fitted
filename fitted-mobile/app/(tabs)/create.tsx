@@ -9,6 +9,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, withSequence, runOnJS } from 'react-native-reanimated';
 import { Gesture, GestureDetector, GestureHandlerRootView, FlatList, ScrollView } from 'react-native-gesture-handler';
 import { Image } from 'expo-image';
+import { Image as RNImage } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import MaskedView from '@react-native-masked-view/masked-view';
@@ -17,7 +18,28 @@ import LoadingSpinner from '@/components/LoadingSpinner';
 import { Text, View } from '@/components/Themed';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
+import { accountKey } from '@/services/localUserData';
 import { BACKGROUND_OPTIONS, DEFAULT_BACKGROUND, BackgroundOption, POLAROID_FRAME, polaroidWindowRect } from '@/constants/backgrounds';
+
+/**
+ * How much of a photo `cover` is allowed to throw away before it stops being
+ * worth filling the frame.
+ *
+ * The polaroid opening is near square (700x624). A phone photo is close enough
+ * to that to fill it with a trim nobody notices, which is why framed items use
+ * cover. A catalogue product shot is 1040x1300 -- filling the width crops about
+ * a third off the top and bottom, and a shoe arrives looking like it was
+ * photographed through a keyhole.
+ */
+const MAX_COVER_CROP = 1.25;
+
+function fitForImage(imageWidth?: number, imageHeight?: number, windowWidth?: number, windowHeight?: number) {
+    if (!imageWidth || !imageHeight || !windowWidth || !windowHeight) return 'cover' as const;
+    const image = imageWidth / imageHeight;
+    const window = windowWidth / windowHeight;
+    const overflow = Math.max(image / window, window / image);
+    return overflow > MAX_COVER_CROP ? ('contain' as const) : ('cover' as const);
+}
 import CropModal from '@/components/CropModal';
 import TutorialModal, { useFirstVisitTutorial, TutorialStep } from '@/components/TutorialModal';
 import ProductSearchModal from '@/components/ProductSearchModal';
@@ -162,6 +184,26 @@ function DraggableImage({
     const ITEM_SIZE = 150;
     const POLAROID_SIZE = 180; // Slightly larger to accommodate frame
     const PHOTO = polaroidWindowRect(POLAROID_SIZE);
+    // Measured with RNImage.getSize rather than expo-image's onLoad.
+    //
+    // onLoad's payload shape is not something to rely on -- it never produced
+    // usable dimensions here, so every framed item silently stayed on cover and
+    // a wide product shot kept getting its sides cut off. getSize is a plain
+    // documented call that either returns the intrinsic size or errors.
+    const [photoFit, setPhotoFit] = useState<'cover' | 'contain'>('cover');
+
+    useEffect(() => {
+        if (!item.url) return;
+        let cancelled = false;
+        RNImage.getSize(
+            item.url,
+            (width, height) => {
+                if (!cancelled) setPhotoFit(fitForImage(width, height, PHOTO.width, PHOTO.height));
+            },
+            () => { /* unmeasurable: leave it filling the frame */ },
+        );
+        return () => { cancelled = true; };
+    }, [item.url, PHOTO.width, PHOTO.height]);
 
     return (
         <GestureDetector gesture={composedGesture}>
@@ -179,15 +221,18 @@ function DraggableImage({
                             left: PHOTO.left,
                             width: PHOTO.width,
                             height: PHOTO.height,
-                            overflow: 'hidden'
+                            overflow: 'hidden',
+                            backgroundColor: '#ffffff',
                         }}>
-                            {/* cover, not contain: the frame's border masks the
-                                overflow, so filling the opening is what makes it
-                                read as a photo rather than a shrunken cutout. */}
+                            {/* Fill the opening when the photo is roughly the
+                                right shape, which is what makes a framed item
+                                read as a photo rather than a shrunken cutout --
+                                but fall back to fitting it whole when cover
+                                would cut too much away. */}
                             <Image
                                 source={{ uri: item.url }}
                                 style={{ width: '100%', height: '100%' }}
-                                contentFit="cover"
+                                contentFit={photoFit}
                             />
                         </View>
                         {/* Frame renders second (on top with transparent center) */}
@@ -256,12 +301,34 @@ function PreviewItem({ canvasItem, keepFrames }: { canvasItem: CanvasItem; keepF
         transform: [{ rotate: `${swing.value}rad` }],
     }));
 
+    const [previewFit, setPreviewFit] = useState<'cover' | 'contain'>('cover');
+
+    useEffect(() => {
+        if (!canvasItem.url) return;
+        let cancelled = false;
+        RNImage.getSize(
+            canvasItem.url,
+            (width, height) => {
+                if (!cancelled) setPreviewFit(fitForImage(width, height, PREVIEW_PHOTO.width, PREVIEW_PHOTO.height));
+            },
+            () => {},
+        );
+        return () => { cancelled = true; };
+    }, [canvasItem.url]);
+
     return (
         <Animated.View style={[{ width: PREVIEW_SIZE, height: PREVIEW_SIZE }, swingStyle]}>
             {keepFrames && canvasItem.usePolaroid ? (
                 <View style={{ width: PREVIEW_SIZE, height: PREVIEW_SIZE }}>
-                    <View style={{ position: 'absolute', ...PREVIEW_PHOTO, overflow: 'hidden' }}>
-                        <Image source={{ uri: canvasItem.url }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                    {/* Photo paper behind the image, so a shot that has to be
+                        fitted rather than filled sits on white instead of
+                        showing the canvas through the opening. */}
+                    <View style={{ position: 'absolute', ...PREVIEW_PHOTO, overflow: 'hidden', backgroundColor: '#ffffff' }}>
+                        <Image
+                            source={{ uri: canvasItem.url }}
+                            style={{ width: '100%', height: '100%' }}
+                            contentFit={previewFit}
+                        />
                     </View>
                     <Image source={POLAROID_FRAME} style={{ position: 'absolute', width: '100%', height: '100%' }} contentFit="contain" />
                 </View>
@@ -889,11 +956,9 @@ export default function CreateScreen() {
         setCanvasItems([...canvasItems, newItem]);
         setShowProductSearch(false);
 
-        // Switch to upload mode after selecting product
-        setUploadMode('upload');
-        setSearchQuery('');
-        setSearchResults([]);
-        setHasSearched(false);
+        // Stay in search with the results up: outfits are built from several
+        // pieces, and being kicked back to Upload after every pick meant
+        // re-searching from scratch for the second one.
 
         // Auto-save to wardrobe "Last Used"
         addAssetToWardrobe('last_used', {
@@ -905,7 +970,9 @@ export default function CreateScreen() {
     };
 
     // Recent searches constants
-    const RECENT_SEARCHES_KEY = 'emode_recent_product_searches';
+    // Slotted per account. This was a bare key that sign-out wiped, so search
+    // history vanished every time somebody signed back in.
+    const RECENT_SEARCHES_KEY = accountKey('emode_recent_product_searches', user?.id);
     const MAX_RECENT_SEARCHES = 8;
 
     // Load recent searches on mount
@@ -921,7 +988,10 @@ export default function CreateScreen() {
             }
         };
         loadRecentSearches();
-    }, []);
+        // Re-reads when the account resolves. With empty deps this ran once on
+        // mount, before user.id existed, and so read the unslotted key and found
+        // nothing every time.
+    }, [RECENT_SEARCHES_KEY]);
 
     // Save recent search
     const saveRecentSearch = async (query: string) => {
@@ -1602,23 +1672,28 @@ export default function CreateScreen() {
                                 </View>
                             )}
 
-                            {/* Upload / Search Toggle */}
-                            {canvasItems.length === 0 && !facePhotoUri && (
-                                <View style={styles.toggleContainer}>
-                                    <Pressable
-                                        style={[styles.toggleButton, uploadMode === 'upload' && styles.toggleButtonActive]}
-                                        onPress={() => setUploadMode('upload')}
-                                    >
-                                        <Text style={[styles.toggleText, uploadMode === 'upload' && styles.toggleTextActive]}>Upload</Text>
-                                    </Pressable>
-                                    <Pressable
-                                        style={[styles.toggleButton, uploadMode === 'search' && styles.toggleButtonActive]}
-                                        onPress={() => setUploadMode('search')}
-                                    >
-                                        <Text style={[styles.toggleText, uploadMode === 'search' && styles.toggleTextActive]}>Search</Text>
-                                    </Pressable>
-                                </View>
-                            )}
+                            {/* Upload / Search Toggle
+                                Shown unconditionally. It used to hide whenever a
+                                face photo was set, and any account with a saved
+                                AI face has one from the moment this screen mounts
+                                -- so product search simply did not exist for
+                                them, while a newer account saw it fine. Whether
+                                somebody has uploaded a face has nothing to do
+                                with whether they want to search for clothes. */}
+                            <View style={styles.toggleContainer}>
+                                <Pressable
+                                    style={[styles.toggleButton, uploadMode === 'upload' && styles.toggleButtonActive]}
+                                    onPress={() => setUploadMode('upload')}
+                                >
+                                    <Text style={[styles.toggleText, uploadMode === 'upload' && styles.toggleTextActive]}>Upload</Text>
+                                </Pressable>
+                                <Pressable
+                                    style={[styles.toggleButton, uploadMode === 'search' && styles.toggleButtonActive]}
+                                    onPress={() => setUploadMode('search')}
+                                >
+                                    <Text style={[styles.toggleText, uploadMode === 'search' && styles.toggleTextActive]}>Search</Text>
+                                </Pressable>
+                            </View>
 
                             {/* Canvas Area - show when upload mode OR has items */}
                             {(uploadMode === 'upload' || canvasItems.length > 0) && (
@@ -1719,7 +1794,13 @@ export default function CreateScreen() {
                             )}
 
                             {/* Search products without fabricating fallback inventory or prices. */}
-                            {uploadMode === 'search' && canvasItems.length === 0 && (
+                            {/* Not gated on an empty canvas any more. Search
+                                vanished the moment a single piece was placed, so
+                                whether it existed at all appeared to depend on
+                                the account -- a fresh one saw it, an account with
+                                anything on its canvas did not. A fit is more than
+                                one item; searching has to survive the first. */}
+                            {uploadMode === 'search' && (
                                 <View style={[styles.canvasContainer, { backgroundColor: colors.background }]}>
                                     <View style={{ padding: 16, gap: 16 }}>
                                         {/* Search Input */}
