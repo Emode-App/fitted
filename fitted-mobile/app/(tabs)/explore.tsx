@@ -13,6 +13,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { ExploreHeader, FeaturedStylists, TrendingGrid, SearchResults } from '@/components/ExploreComponents';
 import ProductDetailModal from '@/components/ProductDetailModal';
 import { computeTrendingBrands, TrendingBrand } from '@/constants/brands';
+import type { BrandHit } from '@/components/ExploreComponents';
 
 const { width } = Dimensions.get('window');
 const GRID_SIZE = width / 3;
@@ -30,7 +31,8 @@ export default function ExploreScreen() {
     // Search State
     const [searching, setSearching] = useState(false);
     const [userResults, setUserResults] = useState<User[]>([]);
-    const [brandResults, setBrandResults] = useState<User[]>([]);
+    const [brandResults, setBrandResults] = useState<BrandHit[]>([]);
+    const [shopResults, setShopResults] = useState<User[]>([]);
     const [productResults, setProductResults] = useState<Product[]>([]);
 
     // Product Modal State
@@ -88,6 +90,7 @@ export default function ExploreScreen() {
         if (query.trim().length < 2) {
             setUserResults([]);
             setBrandResults([]);
+            setShopResults([]);
             setProductResults([]);
             setSearching(false);
             return;
@@ -95,8 +98,8 @@ export default function ExploreScreen() {
 
         setSearching(true);
 
-        // Parallel search for Accounts, Brands, and Products
-        const [accountsRes, brandsRes, products] = await Promise.all([
+        // Parallel search for Accounts, Shops, Brands, and Products
+        const [accountsRes, shopsRes, directoryRes, products] = await Promise.all([
             // Accounts
             supabase
                 .from('users')
@@ -105,7 +108,7 @@ export default function ExploreScreen() {
                 .eq('is_business_account', false) // Exclude business/brands
                 .limit(10),
 
-            // Brands (Business Accounts)
+            // Shops — business accounts that sell on Emode.
             supabase
                 .from('users')
                 .select('*')
@@ -113,12 +116,26 @@ export default function ExploreScreen() {
                 .eq('is_business_account', true)
                 .limit(5),
 
+            // Labels from the brand directory.
+            //
+            // "Brands" used to mean business accounts and nothing else, so the
+            // header promised brands while searching a table of ~2 users:
+            // typing "loewe" found nothing even with 700 Loewe pieces in the
+            // catalogue. Ordered so brands people here actually wear come first.
+            supabase
+                .from('brands')
+                .select('slug, name, post_count')
+                .ilike('name', `%${query}%`)
+                .order('post_count', { ascending: false })
+                .limit(8),
+
             // Products
             searchProducts(query)
         ]);
 
         if (accountsRes.data) setUserResults(accountsRes.data);
-        if (brandsRes.data) setBrandResults(brandsRes.data);
+        if (shopsRes.data) setShopResults(shopsRes.data);
+        if (directoryRes.data) setBrandResults(directoryRes.data as BrandHit[]);
         setProductResults(products);
 
         setSearching(false);
@@ -142,6 +159,12 @@ export default function ExploreScreen() {
             pathname: '/trend/[id]',
             params: { id: brand.name, name: brand.name, logo: brand.logoUrl ?? '' }
         });
+    };
+
+    // The brand page keys off the display name, not the slug — it matches
+    // brand_items.brand_name — so pass the name through as the route id.
+    const handleViewBrandPage = (brand: BrandHit) => {
+        router.push({ pathname: '/brand/[id]', params: { id: brand.name } });
     };
 
     const handleOpenPost = (post: Post) => {
@@ -204,6 +227,8 @@ export default function ExploreScreen() {
                         query={searchQuery}
                         results={userResults}
                         brandResults={brandResults}
+                        shopResults={shopResults}
+                        onViewBrandPage={handleViewBrandPage}
                         productResults={productResults}
                         loading={searching}
                         onViewProfile={handleViewProfile}

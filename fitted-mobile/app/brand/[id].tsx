@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, ScrollView, Pressable, Dimensions, ActivityIndicator } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, Pressable, Dimensions, ActivityIndicator, Alert, Linking } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
@@ -12,19 +12,35 @@ const COLUMN_COUNT = 2;
 const GAP = 12;
 const ITEM_WIDTH = (width - 32 - GAP) / COLUMN_COUNT; // 32 for container padding
 
+/** A listing carries whether somebody here actually wore it, which is worth filtering on. */
+interface BrandItem extends ClothingItem {
+    isTagged: boolean;
+}
+
+type SortMode = 'featured' | 'worn' | 'price-asc' | 'price-desc';
+
+const SORTS: { id: SortMode; label: string }[] = [
+    { id: 'featured', label: 'Featured' },
+    { id: 'worn', label: 'Worn on Emode' },
+    { id: 'price-asc', label: 'Price: low to high' },
+    { id: 'price-desc', label: 'Price: high to low' },
+];
+
 export default function BrandDetailScreen() {
     const { id } = useLocalSearchParams<{ id: string }>(); // id is the brand name here
     const router = useRouter();
     const { colors, isDark } = useTheme();
-    const [items, setItems] = useState<ClothingItem[]>([]);
+    const [items, setItems] = useState<BrandItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [sort, setSort] = useState<SortMode>('featured');
+    const [showSort, setShowSort] = useState(false);
 
     // Normalize brand name
     const brandName = id || 'Brand';
 
     useEffect(() => {
         fetchBrandItems();
-    }, [id]);
+    }, [id, sort]);
 
     // What people actually wore and tagged, not a live catalogue lookup.
     //
@@ -36,20 +52,37 @@ export default function BrandDetailScreen() {
         try {
             setLoading(true);
 
-            const { data, error } = await supabase
+            // Sorting happens in the query, not on the result.
+            //
+            // A brand can have hundreds of listings against a page that loads 60,
+            // so re-ordering what already arrived would sort 60 of 328 and label
+            // it "price: low to high" -- the cheapest of an arbitrary slice, not
+            // the cheapest Loewe pieces.
+            let query = supabase
                 .from('brand_items')
                 .select('brand_name, name, image_url, product_url, price, is_tagged')
+                .ilike('brand_name', brandName);
+
+            if (sort === 'worn') {
+                query = query.eq('is_tagged', true).order('sort_at', { ascending: false });
+            } else if (sort === 'price-asc') {
+                query = query.order('price', { ascending: true, nullsFirst: false });
+            } else if (sort === 'price-desc') {
+                query = query.order('price', { ascending: false, nullsFirst: false });
+            } else {
                 // Pieces somebody here actually wore rank above catalogue listings.
-                .ilike('brand_name', brandName)
-                .order('is_tagged', { ascending: false })
-                .order('sort_at', { ascending: false })
-                .limit(60);
+                query = query
+                    .order('is_tagged', { ascending: false })
+                    .order('sort_at', { ascending: false });
+            }
+
+            const { data, error } = await query.limit(60);
 
             if (error) throw error;
 
             // The same piece can appear in several posts; show it once.
             const seen = new Set<string>();
-            const mapped: ClothingItem[] = [];
+            const mapped: BrandItem[] = [];
 
             for (const row of data ?? []) {
                 const key = (row.name ?? '').toLowerCase();
@@ -63,6 +96,7 @@ export default function BrandDetailScreen() {
                     price: Number(row.price) || 0,
                     image_url: row.image_url || '',
                     purchase_link: row.product_url || '',
+                    isTagged: !!row.is_tagged,
                 });
             }
 
@@ -91,6 +125,26 @@ export default function BrandDetailScreen() {
         }
     };
 
+    /** Open the listing on the retailer it came from. */
+    const handleOpenItem = async (item: BrandItem) => {
+        // Catalogue rows always carry their own link. A piece tagged on a post
+        // only has one if whoever tagged it typed one, so fall back to a search
+        // rather than leaving the card dead.
+        const link = item.purchase_link
+            || `https://www.google.com/search?q=${encodeURIComponent([item.brand, item.name].filter(Boolean).join(' '))}`;
+
+        try {
+            if (await Linking.canOpenURL(link)) {
+                await Linking.openURL(link);
+            } else {
+                Alert.alert('Cannot Open Link', 'Unable to open this URL on your device.');
+            }
+        } catch (error) {
+            console.error('[brand] could not open listing:', error);
+            Alert.alert('Error', 'Failed to open the link.');
+        }
+    };
+
     const renderHeader = () => (
         <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
             <Pressable onPress={() => router.back()} style={styles.iconButton}>
@@ -99,8 +153,12 @@ export default function BrandDetailScreen() {
             <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
                 {brandName}
             </Text>
-            <Pressable style={styles.iconButton}>
-                <Feather name="filter" size={24} color={colors.textSecondary} />
+            <Pressable style={styles.iconButton} onPress={() => setShowSort((open) => !open)}>
+                <Feather
+                    name="filter"
+                    size={24}
+                    color={sort === 'featured' ? colors.textSecondary : colors.text}
+                />
             </Pressable>
         </View>
     );
@@ -109,6 +167,23 @@ export default function BrandDetailScreen() {
         <View style={[styles.container, { backgroundColor: colors.background }]}>
             <Stack.Screen options={{ headerShown: false }} />
             {renderHeader()}
+
+            {showSort && (
+                <View style={[styles.sortSheet, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
+                    {SORTS.map((option) => (
+                        <Pressable
+                            key={option.id}
+                            style={styles.sortRow}
+                            onPress={() => { setSort(option.id); setShowSort(false); }}
+                        >
+                            <Text style={[styles.sortLabel, { color: sort === option.id ? colors.text : colors.textSecondary }]}>
+                                {option.label}
+                            </Text>
+                            {sort === option.id && <Feather name="check" size={16} color={colors.text} />}
+                        </Pressable>
+                    ))}
+                </View>
+            )}
 
             <ScrollView showsVerticalScrollIndicator={false}>
                 {/* Hero Section */}
@@ -132,7 +207,11 @@ export default function BrandDetailScreen() {
                     ) : items.length > 0 ? (
                         <View style={styles.grid}>
                             {items.map((item) => (
-                                <Pressable key={item.id} style={styles.card}>
+                                <Pressable
+                                    key={item.id}
+                                    style={({ pressed }) => [styles.card, pressed && { opacity: 0.6 }]}
+                                    onPress={() => handleOpenItem(item)}
+                                >
                                     <View style={[styles.imageContainer, { backgroundColor: colors.backgroundSecondary }]}>
                                         <Image
                                             source={{ uri: item.image_url }}
@@ -143,14 +222,18 @@ export default function BrandDetailScreen() {
                                     <View style={styles.cardInfo}>
                                         <Text style={[styles.cardBrand, { color: colors.textTertiary }]}>{brandName}</Text>
                                         <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
-                                        <Text style={[styles.cardPrice, { color: colors.textSecondary }]}>${item.price}</Text>
+                                        <Text style={[styles.cardPrice, { color: colors.textSecondary }]}>
+                                            {item.price > 0 ? `$${item.price}` : 'View item'}
+                                        </Text>
                                     </View>
                                 </Pressable>
                             ))}
                         </View>
                     ) : (
                         <Text style={{ color: colors.textSecondary, textAlign: 'center', paddingVertical: 40 }}>
-                            Nobody has tagged a {brandName} piece yet.
+                            {sort === 'worn'
+                                ? `Nobody has tagged a ${brandName} piece yet.`
+                                : `No ${brandName} items yet — check back shortly.`}
                         </Text>
                     )}
                 </View>
@@ -164,6 +247,21 @@ export default function BrandDetailScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+    },
+    sortSheet: {
+        borderBottomWidth: 1,
+        paddingVertical: 4,
+    },
+    sortRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+    },
+    sortLabel: {
+        fontSize: 15,
+        fontWeight: '500',
     },
     header: {
         flexDirection: 'row',

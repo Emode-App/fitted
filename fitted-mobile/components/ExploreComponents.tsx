@@ -5,7 +5,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '@/hooks/useTheme';
 import { User, Product } from '@/types';
-import { TrendingBrand } from '@/constants/brands';
+import { TrendingBrand, getBrandLogoUrl } from '@/constants/brands';
 import ProductCard from '@/components/ProductCard';
 
 // Constants
@@ -29,14 +29,25 @@ interface TrendingGridProps {
     onViewBrand: (brand: TrendingBrand) => void;
 }
 
+/** A label from the brand directory, as opposed to an account on Emode. */
+export interface BrandHit {
+    slug: string;
+    name: string;
+    post_count: number | null;
+}
+
 interface SearchResultsProps {
     query: string;
     results: User[];
-    brandResults?: User[];
+    /** Labels from the directory — Loewe, Supreme — not accounts. */
+    brandResults?: BrandHit[];
+    /** Business accounts that sell here. Brands in a different sense. */
+    shopResults?: User[];
     productResults?: Product[];
     loading: boolean;
     onViewProfile: (userId: string) => void;
     onViewProduct?: (product: Product) => void;
+    onViewBrandPage?: (brand: BrandHit) => void;
 }
 
 // --- Components ---
@@ -197,7 +208,7 @@ export const TrendingGrid = ({ brands, onViewBrand }: TrendingGridProps) => {
 };
 
 // 4. Search Results
-export const SearchResults = ({ results, brandResults = [], productResults = [], loading, onViewProfile, onViewProduct }: SearchResultsProps) => {
+export const SearchResults = ({ results, brandResults = [], shopResults = [], productResults = [], loading, onViewProfile, onViewProduct, onViewBrandPage }: SearchResultsProps) => {
     const { colors } = useTheme();
 
     if (loading) {
@@ -232,29 +243,76 @@ export const SearchResults = ({ results, brandResults = [], productResults = [],
                     </View>
                 )}
 
-                {/* Brands Section */}
-                {brandResults.length > 0 && (
+                {/* Brands Section — labels from the directory */}
+                {brandResults.length > 0 && onViewBrandPage && (
                     <View style={{ marginBottom: 16 }}>
                         <Text style={[styles.resultsHeader, { color: colors.textSecondary }]}>BRANDS</Text>
-                        {brandResults.map(user => (
+                        {brandResults.map(brand => (
+                            <BrandResultRow key={brand.slug} brand={brand} onPress={() => onViewBrandPage(brand)} />
+                        ))}
+                    </View>
+                )}
+
+                {/* Shops Section — business accounts */}
+                {shopResults.length > 0 && (
+                    <View style={{ marginBottom: 16 }}>
+                        <Text style={[styles.resultsHeader, { color: colors.textSecondary }]}>SHOPS</Text>
+                        {shopResults.map(user => (
                             <UserResultRow key={user.id} user={user} onViewProfile={onViewProfile} />
                         ))}
                     </View>
                 )}
 
-                {/* Accounts Section */}
-                <View>
-                    <Text style={[styles.resultsHeader, { color: colors.textSecondary }]}>ACCOUNTS</Text>
-                    {results.length === 0 && brandResults.length === 0 && productResults.length === 0 ? (
-                        <Text style={{ fontSize: 14, color: colors.textSecondary, paddingLeft: 8 }}>No results found.</Text>
-                    ) : (
-                        results.map(user => (
+                {/* Accounts Section. Hidden when another section matched but this
+                    one did not, rather than leaving a header over empty space. */}
+                {results.length > 0 && (
+                    <View>
+                        <Text style={[styles.resultsHeader, { color: colors.textSecondary }]}>ACCOUNTS</Text>
+                        {results.map(user => (
                             <UserResultRow key={user.id} user={user} onViewProfile={onViewProfile} />
-                        ))
-                    )}
-                </View>
+                        ))}
+                    </View>
+                )}
+
+                {results.length === 0 && brandResults.length === 0 && shopResults.length === 0 && productResults.length === 0 && (
+                    <Text style={{ fontSize: 14, color: colors.textSecondary, paddingLeft: 8 }}>No results found.</Text>
+                )}
             </View>
         </ScrollView>
+    );
+};
+
+/**
+ * A brand from the directory.
+ *
+ * Deliberately not a UserResultRow: these are labels, not accounts. There is no
+ * profile to open and no handle to show -- tapping goes to the brand's catalogue
+ * page, and the subtitle says how present the brand is on Emode.
+ */
+const BrandResultRow = ({ brand, onPress }: { brand: BrandHit; onPress: () => void }) => {
+    const { colors, isDark } = useTheme();
+    const logo = getBrandLogoUrl(brand.name);
+    const worn = brand.post_count ?? 0;
+
+    return (
+        <Pressable
+            style={[styles.userRow, { backgroundColor: isDark ? '#18181b' : '#ffffff' }]}
+            onPress={onPress}
+        >
+            <View style={[styles.userAvatarContainer, { backgroundColor: isDark ? '#27272a' : '#e5e7eb' }]}>
+                {logo ? (
+                    <Image source={{ uri: logo }} style={styles.userAvatar} contentFit="contain" />
+                ) : (
+                    <Feather name="tag" size={16} color={colors.textSecondary} />
+                )}
+            </View>
+            <View>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>{brand.name}</Text>
+                <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                    {worn > 0 ? `Worn in ${worn} ${worn === 1 ? 'fit' : 'fits'}` : 'Brand'}
+                </Text>
+            </View>
+        </Pressable>
     );
 };
 

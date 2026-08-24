@@ -31,6 +31,12 @@ create index if not exists brand_catalog_brand_name_trgm
 create index if not exists brand_catalog_name_trgm
     on public.brand_catalog using gin (name gin_trgm_ops);
 
+-- Explore searches the directory by name on every keystroke. That became a
+-- sequential scan over all 12,504 brands (~15ms each) the moment the directory
+-- stopped being 553 rows. 15ms -> 0.2ms.
+create index if not exists brands_name_trgm
+    on public.brands using gin (name gin_trgm_ops);
+
 -- Deliberately NOT indexing brands.canonical_slug here. brands_canonical_idx
 -- already covers it, and adding a second partial index changed the planner's
 -- estimate enough to turn the alias branch of brand_items into a merge join that
