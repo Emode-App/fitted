@@ -316,9 +316,8 @@ serve(async (req: Request) => {
                 'Rules:',
                 '- name is the specific product, without the brand repeated inside it.',
                 '- productUrl must be a real product page you found.',
-                '- Strongly prefer stockx.com, goat.com, grailed.com, lyst.com, nike.com',
-                '  or the brand site itself. Avoid farfetch.com, ssense.com and mrporter.com:',
-                '  their pages cannot be read, so those results get discarded.',
+                '- Prefer stockx.com, goat.com, grailed.com, lyst.com, nike.com or the',
+                '  brand site itself, whose photos come out best. Other retailers are fine.',
                 '- Never return a google.com, vertexaisearch or redirect URL. Omit the item instead.',
                 '- price is the current retail or market price in USD, or null if unsure.',
                 '  Do not guess a number to fill the field.',
@@ -482,17 +481,37 @@ serve(async (req: Request) => {
                 }
             };
 
+            // Last line of defence, and the one the original version used.
+            //
+            // Every other route can fail for reasons outside our control: the
+            // retailer blocks scripted requests, the slug does not reconstruct,
+            // the model invents a CDN hostname. This one is a direct image
+            // endpoint keyed on text, so it always answers -- which is why the
+            // December build showed dozens of results where this was showing
+            // none. The picture is a search thumbnail rather than the retailer's
+            // own shot, so it is only reached once the better routes have failed,
+            // and the item sheet carries a report control for when it is wrong.
+            const searchThumbnail = (brand: string, name: string): string => {
+                const q = encodeURIComponent(`${brand} ${name}`.trim().slice(0, 120));
+                return `https://tse1.mm.bing.net/th?q=${q}&w=600&h=600&c=7&rs=1&p=0`;
+            };
+
             const withImages = await Promise.all(usable.map(async (item: any) => {
                 const isStockx = /(^|\.)stockx\.com/i.test(new URL(item.productUrl).hostname);
-                const imageUrl = isStockx
+                const brand = typeof item.brand === 'string' ? item.brand.trim() : '';
+                const name = String(item.name).trim();
+
+                const resolved = isStockx
                     ? (await stockxImage(item.productUrl)) ?? await verifiedImage(item.imageUrl)
                     : (await ogImage(item.productUrl))
                         ?? (await stockxImage(item.productUrl))
                         ?? await verifiedImage(item.imageUrl);
 
+                const imageUrl = resolved ?? searchThumbnail(brand, name);
+
                 return {
-                    name: String(item.name).trim().slice(0, 200),
-                    brand: typeof item.brand === 'string' ? item.brand.trim().slice(0, 80) : '',
+                    name: name.slice(0, 200),
+                    brand: brand.slice(0, 80),
                     price: Number.isFinite(Number(item.price)) && Number(item.price) > 0 ? Number(item.price) : null,
                     productUrl: item.productUrl,
                     imageUrl,
