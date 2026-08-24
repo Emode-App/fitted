@@ -10,6 +10,7 @@ import { deleteSecureItem, getSecureItem, setSecureItem } from '../services/secu
 import { claimLocalCache, clearLocalUserData } from '../services/localUserData';
 import { restoreWardrobeFromStorage } from '../services/wardrobeRestore';
 import { syncWardrobe, startWardrobeSync, stopWardrobeSync } from '../services/wardrobeSync';
+import { useSavedItemsStore } from './savedItemsStore';
 
 const SESSION_KEY = 'current_login_session_id';
 
@@ -67,6 +68,9 @@ async function hydrateWardrobe(userId: string): Promise<void> {
     startWardrobeSync(userId);
     await restoreWardrobeFromStorage(userId);
     await syncWardrobe(userId);
+    // Which pieces this account has hearted, so the hearts are already right on
+    // the first screen rather than filling in a beat later.
+    useSavedItemsStore.getState().hydrate(userId).catch(() => {});
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -205,6 +209,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         // device. Without this the next account to sign in on this phone inherits
         // them, including the previous user's uploaded clothing photos.
         stopWardrobeSync();
+        useSavedItemsStore.getState().reset();
         await clearLocalUserData();
         await supabase.auth.signOut();
         set({ user: null, session: null, isAuthenticated: false });
@@ -227,6 +232,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
         await logOutPurchases();
         stopWardrobeSync();
+        useSavedItemsStore.getState().reset();
         await clearLocalUserData();
         await supabase.auth.signOut();
         set({ user: null, session: null, isAuthenticated: false });

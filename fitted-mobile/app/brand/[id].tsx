@@ -6,6 +6,7 @@ import { Feather } from '@expo/vector-icons';
 import { useTheme } from '@/hooks/useTheme';
 import { supabase } from '@/services/supabase';
 import { ClothingItem } from '@/types';
+import SaveItemButton from '@/components/SaveItemButton';
 
 const { width } = Dimensions.get('window');
 const COLUMN_COUNT = 2;
@@ -19,6 +20,8 @@ const PAGE_SIZE = 40;
 /** A listing carries whether somebody here actually wore it, which is worth filtering on. */
 interface BrandItem extends ClothingItem {
     isTagged: boolean;
+    brandSlug: string | null;
+    category: string | null;
 }
 
 type SortMode = 'featured' | 'worn' | 'price-asc' | 'price-desc';
@@ -95,7 +98,7 @@ export default function BrandDetailScreen() {
             // the cheapest Loewe pieces.
             let query = supabase
                 .from('brand_items')
-                .select('brand_name, name, image_url, product_url, price, is_tagged')
+                .select('brand_slug, brand_name, name, image_url, product_url, price, is_tagged, category')
                 .ilike('brand_name', brandName);
 
             if (category) query = query.eq('category', category);
@@ -145,6 +148,8 @@ export default function BrandDetailScreen() {
                     image_url: row.image_url || '',
                     purchase_link: row.product_url || '',
                     isTagged: !!row.is_tagged,
+                    brandSlug: (row as any).brand_slug ?? null,
+                    category: (row as any).category ?? null,
                 });
             }
 
@@ -320,6 +325,17 @@ export default function BrandDetailScreen() {
                                 source={{ uri: item.image_url }}
                                 style={styles.image}
                                 contentFit="cover"
+                            />
+                            <SaveItemButton
+                                item={{
+                                    brandSlug: item.brandSlug,
+                                    brandName: item.brand,
+                                    name: item.name,
+                                    imageUrl: item.image_url,
+                                    productUrl: item.purchase_link || null,
+                                    price: item.price || null,
+                                    category: item.category,
+                                }}
                             />
                         </View>
                         <View style={styles.cardInfo}>

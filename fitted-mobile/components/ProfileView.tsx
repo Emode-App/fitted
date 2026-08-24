@@ -28,6 +28,9 @@ import * as Haptics from 'expo-haptics';
 import { useTheme } from '@/hooks/useTheme';
 import { User, Post, Product } from '@/types';
 import { shareCaption } from '@/constants/share';
+import { fetchSavedItems, type SavedItem } from '@/services/savedItems';
+import { useSavedItemsStore } from '@/stores/savedItemsStore';
+import SaveItemButton from '@/components/SaveItemButton';
 import StylistModal from '@/components/StylistModal';
 import { useMarketplaceStore } from '@/stores/marketplaceStore';
 import { usePostsStore } from '@/stores/postsStore';
@@ -111,6 +114,12 @@ export default function ProfileView({
 }: ProfileViewProps) {
     const { colors, isDark } = useTheme();
     const [activeTab, setActiveTab] = useState<'posts' | 'saved' | 'shop'>('posts');
+    // Saved splits in two: whole fits, and the individual pieces inside them.
+    const [savedTab, setSavedTab] = useState<'posts' | 'items'>('posts');
+    const [savedItems, setSavedItems] = useState<SavedItem[]>([]);
+    // Re-read when a heart is toggled anywhere, so unsaving from this screen
+    // removes the tile instead of leaving a stale one behind.
+    const savedKeys = useSavedItemsStore((state) => state.keys);
     const [showStylistModal, setShowStylistModal] = useState(false);
     const [showUploadModal, setShowUploadModal] = useState(false);
 
@@ -179,7 +188,20 @@ export default function ProfileView({
         }
     }, [user.is_business_account]);
 
-    const displayData = activeTab === 'posts' ? localPosts : activeTab === 'saved' ? savedPosts : products;
+    useEffect(() => {
+        if (activeTab !== 'saved' || savedTab !== 'items' || !isOwnProfile || !user.id) return;
+        let cancelled = false;
+        fetchSavedItems(user.id).then((rows) => { if (!cancelled) setSavedItems(rows); });
+        return () => { cancelled = true; };
+    }, [activeTab, savedTab, isOwnProfile, user.id, savedKeys]);
+
+    const showingSavedItems = activeTab === 'saved' && savedTab === 'items';
+
+    const displayData: any[] = activeTab === 'posts'
+        ? localPosts
+        : activeTab === 'saved'
+            ? (savedTab === 'items' ? savedItems : savedPosts)
+            : products;
 
     const handleOpenLink = async (link: string) => {
         if (!link) return;
@@ -224,7 +246,47 @@ export default function ProfileView({
         }
     };
 
-    const renderItem = ({ item }: { item: Post | Product }) => {
+    const renderItem = ({ item }: { item: any }) => {
+        if (showingSavedItems) {
+            const saved = item as SavedItem;
+            return (
+                <Pressable
+                    style={styles.savedItemCard}
+                    onPress={() => {
+                        // A saved piece links out when it has a link, and falls
+                        // back to a search when it was tagged by hand without one.
+                        const query = [saved.brandName, saved.name].filter(Boolean).join(' ');
+                        handleOpenLink(saved.productUrl || `https://www.google.com/search?q=${encodeURIComponent(query)}`);
+                    }}
+                >
+                    <View style={[styles.savedItemImageWrap, { backgroundColor: colors.backgroundSecondary }]}>
+                        <Image source={{ uri: saved.imageUrl }} style={styles.savedItemImage} contentFit="cover" />
+                        <SaveItemButton
+                            item={{
+                                brandSlug: saved.brandSlug,
+                                brandName: saved.brandName,
+                                name: saved.name,
+                                imageUrl: saved.imageUrl,
+                                productUrl: saved.productUrl,
+                                price: saved.price,
+                                category: saved.category,
+                            }}
+                            size={16}
+                        />
+                    </View>
+                    <Text style={{ fontSize: 11, color: colors.textTertiary }} numberOfLines={1}>
+                        {saved.brandName || 'Item'}
+                    </Text>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }} numberOfLines={1}>
+                        {saved.name}
+                    </Text>
+                    {!!saved.price && (
+                        <Text style={{ fontSize: 12, color: colors.textSecondary }}>${saved.price}</Text>
+                    )}
+                </Pressable>
+            );
+        }
+
         if (activeTab === 'shop') {
             // It's a product - use flex size for proper 2-column grid like DressingRoomPreview
             const product = item as Product;
@@ -535,6 +597,37 @@ export default function ProfileView({
                     </View>
                 )}
 
+                {/* Saved splits into fits and pieces. Posts keeps the existing
+                    behaviour; Items is the new one. */}
+                {activeTab === 'saved' && isOwnProfile && (
+                    <View style={styles.savedSwitch}>
+                        {(['posts', 'items'] as const).map((option) => {
+                            const active = savedTab === option;
+                            return (
+                                <Pressable
+                                    key={option}
+                                    onPress={() => setSavedTab(option)}
+                                    style={[
+                                        styles.savedSwitchButton,
+                                        {
+                                            backgroundColor: active ? colors.primary : 'transparent',
+                                            borderColor: active ? colors.primary : colors.border,
+                                        },
+                                    ]}
+                                >
+                                    <Text style={{
+                                        fontSize: 13,
+                                        fontWeight: '600',
+                                        color: active ? colors.primaryForeground : colors.textSecondary,
+                                    }}>
+                                        {option === 'posts' ? 'Fits' : 'Items'}
+                                    </Text>
+                                </Pressable>
+                            );
+                        })}
+                    </View>
+                )}
+
                 {/* Shop Tab Sub-header for Product Stats/Add Button */}
                 {activeTab === 'shop' && (
                     <View style={[styles.shopHeader, { paddingTop: 16, paddingHorizontal: 4 }]}>
@@ -559,8 +652,10 @@ export default function ProfileView({
                 <FlatList
                     data={displayData}
                     keyExtractor={(item) => item.id}
-                    numColumns={activeTab === 'shop' ? 2 : 3}
-                    key={activeTab} // Force re-render when changing numColumns
+                    numColumns={activeTab === 'shop' || showingSavedItems ? 2 : 3}
+                    // FlatList cannot change numColumns in place, so the key has to
+                    // move when the Saved sub-tab does, not just the tab.
+                    key={`${activeTab}:${activeTab === 'saved' ? savedTab : ''}`}
                     renderItem={renderItem}
                     refreshControl={
                         <RefreshControl
@@ -664,7 +759,37 @@ export default function ProfileView({
     );
 }
 
+const SAVED_ITEM_WIDTH = (width - 24) / 2;
+
 const styles = StyleSheet.create({
+    savedSwitch: {
+        flexDirection: 'row',
+        gap: 8,
+        paddingTop: 14,
+        paddingHorizontal: 4,
+    },
+    savedSwitchButton: {
+        paddingHorizontal: 16,
+        paddingVertical: 7,
+        borderRadius: 999,
+        borderWidth: 1,
+    },
+    savedItemCard: {
+        width: SAVED_ITEM_WIDTH,
+        margin: 4,
+        gap: 2,
+    },
+    savedItemImageWrap: {
+        width: SAVED_ITEM_WIDTH,
+        height: SAVED_ITEM_WIDTH,
+        borderRadius: 12,
+        overflow: 'hidden',
+        marginBottom: 6,
+    },
+    savedItemImage: {
+        width: '100%',
+        height: '100%',
+    },
     container: {
         flex: 1,
     },

@@ -22,6 +22,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { supabase } from '@/services/supabase';
 import { searchProducts } from '@/services/aiService';
 import { shareCaption } from '@/constants/share';
+import SaveItemButton from '@/components/SaveItemButton';
 import { Post, ClothingItem } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 import { usePostsStore } from '@/stores/postsStore';
@@ -455,6 +456,16 @@ export default function PostDetailScreen() {
                                                         style={styles.itemImage}
                                                         contentFit="cover"
                                                     />
+                                                    <SaveItemButton
+                                                        item={{
+                                                            brandName: item.brand,
+                                                            name: item.name,
+                                                            imageUrl: item.image_url,
+                                                            productUrl: item.purchase_link || null,
+                                                            price: item.price || null,
+                                                        }}
+                                                        size={16}
+                                                    />
                                                 </View>
                                                 <Text style={[styles.itemBrand, { color: colors.textTertiary }]} numberOfLines={1}>
                                                     {item.brand}
@@ -507,9 +518,25 @@ export default function PostDetailScreen() {
                                 <Text style={[styles.modalName, { color: colors.text }]} numberOfLines={2}>
                                     {selectedItem.name}
                                 </Text>
-                                <Text style={[styles.modalPrice, { color: colors.primary }]}>
-                                    ${selectedItem.price}
-                                </Text>
+                                <View style={styles.modalPriceRow}>
+                                    <Text style={[styles.modalPrice, { color: colors.primary }]}>
+                                        ${selectedItem.price}
+                                    </Text>
+                                    {/* Works for a piece the poster never linked: the save is keyed
+                                        on brand and name when there is no URL to key on. */}
+                                    <SaveItemButton
+                                        item={{
+                                            brandName: selectedItem.brand,
+                                            name: selectedItem.name,
+                                            imageUrl: selectedItem.image_url,
+                                            productUrl: selectedItem.purchase_link || null,
+                                            price: selectedItem.price || null,
+                                            sourcePostId: typeof id === 'string' ? id : null,
+                                        }}
+                                        variant="inline"
+                                        size={24}
+                                    />
+                                </View>
 
                                 <View style={styles.linksRow}>
                                     {/* The catalogue carries the retailer's own product URL, so go
@@ -634,6 +661,12 @@ const styles = StyleSheet.create({
     },
     itemsScroll: {
         paddingRight: 16,
+    },
+    modalPriceRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
     },
     itemCard: {
         width: 140,
