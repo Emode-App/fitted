@@ -25,17 +25,44 @@ async function paymentIntentIdFromCharge(charge: any): Promise<string | null> {
 serve(async (req: Request) => {
     if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
     const signature = req.headers.get('stripe-signature');
-    if (!signature) return new Response('Missing signature', { status: 400 });
+    if (!signature) {
+        console.error('stripe-webhook rejected a delivery with no stripe-signature header');
+        return new Response('Missing signature', { status: 400 });
+    }
     const rawBody = await req.text();
 
+    // Say why a rejection happened.
+    //
+    // Every event Stripe sent during Connect onboarding came back 400 and left
+    // no trace at all: both failure paths returned before anything was logged,
+    // so the edge log showed four rejections and the function log showed
+    // nothing. There was no way to tell a missing header from a mismatched
+    // signing secret without changing the code first.
+    //
+    // Stripe's own message is recorded, never the secrets -- one is enough to
+    // forge events, and a webhook log is a poor place to keep one.
+    const secrets = [
+        ['platform', platformSecret],
+        ['connect', connectSecret],
+    ].filter(([, value]) => !!value) as [string, string][];
+
     let event: any = null;
-    for (const secret of [platformSecret, connectSecret].filter(Boolean)) {
+    const refusals: string[] = [];
+    for (const [label, secret] of secrets) {
         try {
-            event = await stripe.webhooks.constructEventAsync(rawBody, signature, secret!);
+            event = await stripe.webhooks.constructEventAsync(rawBody, signature, secret);
             break;
-        } catch { /* Try the other endpoint secret. */ }
+        } catch (error: any) {
+            refusals.push(`${label}: ${error?.message ?? 'rejected'}`);
+        }
     }
-    if (!event) return new Response('Invalid signature', { status: 400 });
+    if (!event) {
+        console.error(
+            `stripe-webhook rejected a delivery. Tried ${secrets.length} secret(s) [` +
+            secrets.map(([label]) => label).join(', ') + ']. ' + refusals.join(' | '),
+        );
+        return new Response('Invalid signature', { status: 400 });
+    }
 
     const now = new Date().toISOString();
     const { error: claimError } = await admin.from('stripe_events').insert({
