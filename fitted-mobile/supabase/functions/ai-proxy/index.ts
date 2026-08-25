@@ -458,6 +458,42 @@ serve(async (req: Request) => {
                 return null;
             };
 
+            // A search results page is not a product.
+            //
+            // "Rick Owens Mainline Leather Ramones" came back pointing at
+            // ebay.com/sch/i.html?_nkw=Mainline+Rick+Owens&_udlo=400 -- an eBay
+            // search with a price range on it. That one URL explains a whole
+            // screen: a results page has no price to read, so the tile says
+            // "See price"; it has no product image, so the picture falls
+            // through to a guess; and the same page answers many queries, so it
+            // comes back as several identical tiles. Worse, it was being
+            // written to the catalogue, where it would have stayed.
+            const PRODUCT_PATH = /\/(products?|itm|item|listings?|dp|pd|prod)\//i;
+            const INDEX_PATH = /\/(sch|search|browse|category|categories|collections|designers?|tag|tags)(\/|$)/i;
+            const SEARCH_QUERY = /[?&](_nkw|q|query|keyword|keywords|search|searchterm|term)=/i;
+            const CATEGORY_LEAF = /^(shoes|sneakers|trainers|boots|footwear|clothing|clothes|apparel|bags|accessories|men|women|mens|womens|man|woman|kids|sale|new|new-arrivals|all|shop|store|home|index)$/i;
+
+            const isProductPage = (url: string): boolean => {
+                try {
+                    const parsed = new URL(url);
+                    const path = parsed.pathname;
+                    // An explicit product path settles it -- Shopify sites put
+                    // /products/ under /collections/ and those are real pages.
+                    if (PRODUCT_PATH.test(path)) return true;
+                    if (INDEX_PATH.test(path)) return false;
+                    // A brand's own listing page ends in the department:
+                    // rickowens.eu/en/US/men/shoes. A product slug ends in
+                    // something that identifies one piece, never in a bare
+                    // word for a whole department.
+                    const leaf = path.replace(/\/+$/, '').split('/').pop() ?? '';
+                    if (CATEGORY_LEAF.test(leaf)) return false;
+                    if (SEARCH_QUERY.test(parsed.search)) return false;
+                    return true;
+                } catch {
+                    return false;
+                }
+            };
+
             // Resolve a few at a time, not all thirty at once.
             //
             // Promise.all fires every redirect simultaneously, and Google
@@ -494,8 +530,10 @@ serve(async (req: Request) => {
                 if (/vertexaisearch|google\.com|googleusercontent/i.test(url)) {
                     const direct = await resolveRedirect(url);
                     if (!direct) return null;
+                    if (!isProductPage(direct)) return null;
                     return { ...item, productUrl: direct };
                 }
+                if (!isProductPage(url)) return null;
                 return item;
             }) as (item: any) => Promise<any>);
 
@@ -629,7 +667,10 @@ serve(async (req: Request) => {
             // extreme close-ups of laces came from; width alone returns the
             // picture at its own proportions.
             const searchThumbnail = (brand: string, name: string): string => {
-                const q = encodeURIComponent(`${brand} ${name}`.trim().slice(0, 120));
+                // "Rick Owens" + "Rick Owens Mainline Leather Ramones" searched
+                // the brand twice and matched worse for it.
+                const alreadyNamed = brand && name.toLowerCase().startsWith(brand.toLowerCase());
+                const q = encodeURIComponent((alreadyNamed ? name : `${brand} ${name}`).trim().slice(0, 120));
                 return `https://tse1.mm.bing.net/th?q=${q}&w=600`;
             };
 
@@ -746,9 +787,17 @@ serve(async (req: Request) => {
             // rerolling: the next search for these words answers from the
             // indexed table straight away, and the web pass behind it adds
             // whatever it finds that is new.
-            if (withPictures.length) {
+            // Only what was actually verified goes in the catalogue.
+            //
+            // A thumbnail-search picture is a reasonable thing to show right now
+            // and a poor thing to keep: it is a guess about which photograph
+            // belongs to this product, and writing it down makes the guess
+            // permanent and reuses it for everyone. Rows are recorded with the
+            // retailer's own image or not at all.
+            const verified = withPictures.filter((item) => !/bing\.net/i.test(String(item.imageUrl)));
+            if (verified.length) {
                 const { data: written, error: writeError } = await admin
-                    .rpc('record_web_products', { items: withPictures });
+                    .rpc('record_web_products', { items: verified });
                 if (writeError) {
                     // A search that found results is still a good search. This
                     // is a cache, so failing to fill it must not fail the reply.
