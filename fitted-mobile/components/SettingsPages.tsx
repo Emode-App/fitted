@@ -1730,6 +1730,19 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
     const [updatingId, setUpdatingId] = useState<string | null>(null);
     const [showPayoutSetup, setShowPayoutSetup] = useState(false);
     const [payoutReady, setPayoutReady] = useState<boolean | null>(null);
+    const [sessions, setSessions] = useState<any[]>([]);
+
+    // What this page is called depends on what the account is. "Sales" is right
+    // for a shop and wrong for a stylist, who has bookings rather than orders,
+    // and somebody who is both needs a word that covers the two.
+    const sellsGoods = !!user?.is_business_account;
+    const sellsStyling = !!user?.is_verified_stylist;
+    const pageTitle = sellsGoods && sellsStyling ? 'Earnings' : sellsStyling ? 'Sessions' : 'Sales';
+
+    // The filter only appears when there is something to filter. One role means
+    // one list, and a segmented control over a single option is furniture.
+    const [tab, setTab] = useState<'orders' | 'sessions'>(sellsGoods ? 'orders' : 'sessions');
+    const showBothLists = sellsGoods && sellsStyling;
 
     useEffect(() => {
         (async () => {
@@ -1749,6 +1762,21 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
             setLoading(false);
         })();
     }, [user?.id]);
+
+    // Styling sessions belong here too. They were the one kind of income the
+    // app could earn that this page never mentioned.
+    useEffect(() => {
+        if (!user?.id || !sellsStyling) return;
+        (async () => {
+            const { data, error } = await supabase
+                .from('styling_sessions')
+                .select('*, client:users!styling_sessions_client_id_fkey(id, handle, username, avatar_url)')
+                .eq('stylist_id', user.id)
+                .order('created_at', { ascending: false });
+            if (error) { console.error('Error loading sessions:', error.message); return; }
+            setSessions(data ?? []);
+        })();
+    }, [user?.id, sellsStyling]);
 
     useEffect(() => {
         if (!user?.id) return;
@@ -1793,7 +1821,7 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
     if (loading) {
         return (
             <>
-                <Header title="Sales" onBack={onBack} />
+                <Header title={pageTitle} onBack={onBack} />
                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                     <ActivityIndicator color={colors.text} />
                 </View>
@@ -1801,15 +1829,19 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
         );
     }
 
-    if (sales.length === 0) {
+    // A stylist with no shop orders used to hit "No sales yet" and never reach
+    // their own bookings, which were sitting right there unrendered.
+    if (sales.length === 0 && sessions.length === 0) {
         return (
             <>
-                <Header title="Sales" onBack={onBack} />
+                <Header title={pageTitle} onBack={onBack} />
                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 }}>
                     <Feather name="shopping-bag" size={48} color={colors.textTertiary} />
-                    <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text, marginTop: 16 }}>No sales yet</Text>
+                    <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text, marginTop: 16 }}>{sellsStyling && !sellsGoods ? 'No sessions yet' : 'No sales yet'}</Text>
                     <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center' }}>
-                        When someone buys your items, their orders show up here to fulfill.
+                        {sellsStyling && !sellsGoods
+                            ? 'When a client books you, the session shows up here.'
+                            : 'When someone buys your items, their orders show up here to fulfill.'}
                     </Text>
                     {/* Until the check comes back, payoutReady is null and
                         saying "Set Up Seller Payouts" is a guess -- the wrong
@@ -1846,7 +1878,7 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
 
     return (
         <>
-            <Header title="Sales" onBack={onBack} />
+            <Header title={pageTitle} onBack={onBack} />
             <ScrollView style={styles.scrollContent} contentContainerStyle={{ paddingBottom: 40 }}>
                 <Pressable
                     style={[styles.card, { borderColor: colors.border, backgroundColor: colors.background, padding: 14, marginBottom: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
@@ -1860,7 +1892,90 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
                     </View>
                     <Feather name="chevron-right" size={20} color={colors.textTertiary} />
                 </Pressable>
-                {sales.map((order) => {
+                {/* Only when both kinds of income exist. Somebody who just
+                    sells clothes, or just styles, has one list and needs no
+                    control over it. */}
+                {showBothLists && (
+                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                        {(['orders', 'sessions'] as const).map((option) => (
+                            <Pressable
+                                key={option}
+                                onPress={() => setTab(option)}
+                                style={{
+                                    flex: 1,
+                                    paddingVertical: 10,
+                                    borderRadius: 10,
+                                    alignItems: 'center',
+                                    backgroundColor: tab === option ? colors.primary : colors.backgroundSecondary,
+                                }}
+                            >
+                                <Text style={{
+                                    fontWeight: '700',
+                                    fontSize: 13,
+                                    color: tab === option ? colors.primaryForeground : colors.textSecondary,
+                                }}>
+                                    {option === 'orders' ? `Orders (${sales.length})` : `Sessions (${sessions.length})`}
+                                </Text>
+                            </Pressable>
+                        ))}
+                    </View>
+                )}
+
+                {(!showBothLists || tab === 'sessions') && sellsStyling && sessions.map((session) => {
+                    const paid = session.status === 'delivered' || session.status === 'completed';
+                    const live = session.status === 'active';
+                    const dead = session.status === 'cancelled' || session.status === 'expired';
+                    const badge = dead
+                        ? { label: 'Cancelled', color: '#b91c1c', bg: 'rgba(185,28,28,0.12)' }
+                        : live
+                            ? { label: 'Live', color: '#4f46e5', bg: 'rgba(99,102,241,0.12)' }
+                            : paid
+                                ? { label: 'Delivered', color: '#15803d', bg: 'rgba(21,128,61,0.12)' }
+                                : { label: 'Booked', color: '#b45309', bg: 'rgba(180,83,9,0.12)' };
+
+                    // stylist_amount is what actually lands after the platform
+                    // takes its cut; amount is what the client paid. Showing the
+                    // client's figure as earnings would overstate every line.
+                    const earned = Number(session.stylist_amount ?? 0);
+
+                    return (
+                        <View
+                            key={session.id}
+                            style={[styles.card, { backgroundColor: colors.background, borderColor: isDark ? '#27272a' : '#f3f4f6', padding: 14, marginBottom: 14 }]}
+                        >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                                    {session.client?.avatar_url
+                                        ? <Image source={{ uri: session.client.avatar_url }} style={{ width: 28, height: 28, borderRadius: 14 }} />
+                                        : <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: isDark ? '#27272a' : '#f3f4f6' }} />}
+                                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }} numberOfLines={1}>
+                                        {session.client?.handle || session.client?.username || 'Client'}
+                                    </Text>
+                                </View>
+                                <View style={{ backgroundColor: badge.bg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
+                                    <Text style={{ fontSize: 11, fontWeight: '700', color: badge.color }}>{badge.label}</Text>
+                                </View>
+                            </View>
+
+                            {session.description ? (
+                                <Text style={{ fontSize: 13, color: colors.textSecondary }} numberOfLines={2}>{session.description}</Text>
+                            ) : null}
+
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: isDark ? '#27272a' : '#f3f4f6' }}>
+                                <View>
+                                    <Text style={{ fontSize: 12, color: colors.textTertiary }}>
+                                        {fmtDate(session.created_at)}{session.duration_minutes ? ` · ${session.duration_minutes} min` : ''}
+                                    </Text>
+                                    <Text style={{ fontSize: 13, fontWeight: '700', color: paid ? '#15803d' : colors.textSecondary, marginTop: 2 }}>
+                                        {paid ? `You earned $${earned.toFixed(2)}` : `$${earned.toFixed(2)} pending`}
+                                    </Text>
+                                </View>
+                            </View>
+                        </View>
+                    );
+                })}
+
+                {(!showBothLists || tab === 'orders') && sales.map((order) => {
                     const st = ORDER_STATUS[order.status] || ORDER_STATUS.paid;
                     const payout = (order.subtotal_amount - order.platform_fee_amount) / 100;
                     return (

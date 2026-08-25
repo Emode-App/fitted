@@ -216,7 +216,14 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
                         {(user?.is_business_account || user?.is_verified_stylist) && (
                             <MenuItem
                                 icon="trending-up"
-                                label="Sales"
+                                // "Sales" reads wrong to a stylist, who takes
+                                // bookings rather than orders. Someone who does
+                                // both needs a word that covers the two.
+                                label={
+                                    user?.is_business_account && user?.is_verified_stylist
+                                        ? 'Earnings'
+                                        : user?.is_verified_stylist ? 'Sessions' : 'Sales'
+                                }
                                 onPress={() => setCurrentView('sales')}
                                 colors={colors}
                                 isDark={isDark}
