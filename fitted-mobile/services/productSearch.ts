@@ -41,23 +41,11 @@ export async function searchWebProducts(query: string, exclude: Product[] = []):
     const fromWeb = await searchWeb(query);
     if (!fromWeb.length) return [];
 
-    // Identity is the link, not the wording.
-    //
-    // Verified web results are now written to the catalogue, so the two halves
-    // of this search overlap on purpose -- the same piece arrives from both.
-    // Matching on brand and name would miss those, because the catalogue
-    // returns a tidied name (clean_item_name strips style codes) while the web
-    // returns whatever the page said, and one product would show up twice
-    // under two spellings. The URL is what the database itself treats as
-    // unique, so it is what deduplicates here.
-    const identity = (p: Product) =>
-        (p.purchaseLink || `${p.brand}|${p.name}`).toLowerCase();
-
-    const seen = new Set(exclude.map(identity));
+    const seen = new Set(exclude.map((p) => `${p.brand}|${p.name}`.toLowerCase()));
     const fresh: Product[] = [];
 
     for (const item of fromWeb) {
-        const key = identity(item);
+        const key = `${item.brand}|${item.name}`.toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
         fresh.push(item);
