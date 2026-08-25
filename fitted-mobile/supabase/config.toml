@@ -26,6 +26,9 @@ verify_jwt = true
 [functions.create-connect-login-link]
 verify_jwt = true
 
+[functions.portfolio-decision]
+verify_jwt = true
+
 [functions.sync-entitlement]
 verify_jwt = true
 

@@ -1785,9 +1785,35 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
     const askForPortfolio = async (session: any) => {
         if (!user?.id) return;
         try {
+            // The delivery message holds the private-media paths for this
+            // look. Reading them straight off the message means the approval
+            // copies the real pictures rather than nothing -- the row is stored
+            // with paths, never with the signed URLs the chat renders, since
+            // those expire within the hour.
+            let generatedPath: string | null = null;
+            let boardPath: string | null = null;
+
+            if (session.delivery_message_id) {
+                const { data: message } = await supabase
+                    .from('messages')
+                    .select('styling_delivery')
+                    .eq('id', session.delivery_message_id)
+                    .maybeSingle();
+                const delivery = (message as any)?.styling_delivery;
+                generatedPath = delivery?.generated_image_url ?? null;
+                boardPath = delivery?.board_image_url ?? null;
+            }
+
+            if (!generatedPath && !boardPath) {
+                Alert.alert('Portfolio', 'That session has no delivered look to show yet.');
+                return;
+            }
+
             await requestPortfolioItem({
                 sessionId: session.id,
                 clientId: session.client_id,
+                generatedPath,
+                boardPath,
                 title: session.description ?? null,
             });
             await refreshPortfolio(user.id);

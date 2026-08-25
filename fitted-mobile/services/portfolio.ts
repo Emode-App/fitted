@@ -8,8 +8,10 @@ export interface PortfolioItem {
     stylist_id: string;
     client_id: string;
     session_id: string | null;
-    generated_image_url: string | null;
+    generated_image_url: string | null;   // public copy, only once approved
     board_image_url: string | null;
+    source_generated_path?: string | null;
+    source_board_path?: string | null;
     title: string | null;
     status: PortfolioStatus;
     display_order: number;
@@ -30,8 +32,10 @@ export interface PortfolioItem {
 export async function requestPortfolioItem(params: {
     sessionId: string;
     clientId: string;
-    generatedImageUrl?: string | null;
-    boardImageUrl?: string | null;
+    // The private-media object paths of the delivery, not signed URLs. A
+    // signed URL expires; the path is what the approval copies from.
+    generatedPath?: string | null;
+    boardPath?: string | null;
     title?: string;
 }): Promise<PortfolioItem> {
     const { data: auth } = await supabase.auth.getUser();
@@ -44,8 +48,8 @@ export async function requestPortfolioItem(params: {
             stylist_id: stylistId,
             client_id: params.clientId,
             session_id: params.sessionId,
-            generated_image_url: params.generatedImageUrl ?? null,
-            board_image_url: params.boardImageUrl ?? null,
+            source_generated_path: params.generatedPath ?? null,
+            source_board_path: params.boardPath ?? null,
             title: params.title ?? null,
             status: 'pending',
         })
@@ -85,15 +89,20 @@ export async function respondToPortfolioRequest(
     itemId: string,
     decision: 'approved' | 'revoked',
 ): Promise<void> {
-    const { error } = await supabase
-        .from('portfolio_items')
-        .update({ status: decision })
-        .eq('id', itemId);
+    // Through the function rather than a direct update, because the answer has
+    // consequences in storage: approving copies the look out of private-media
+    // into the public bucket, and revoking deletes that copy. A plain status
+    // change would leave a revoked look still fetchable by anyone holding the
+    // URL, which is consent withdrawn in appearance only.
+    const { data, error } = await supabase.functions.invoke('portfolio-decision', {
+        body: { item_id: itemId, decision },
+    });
 
     if (error) {
         captureException(error, { feature: 'portfolio-respond' });
         throw new Error(error.message || 'Could not save your answer');
     }
+    if ((data as any)?.error) throw new Error((data as any).error);
 }
 
 /** What a visitor sees on a stylist's profile: approved looks, in the stylist's order. */
