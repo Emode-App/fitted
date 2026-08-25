@@ -14,6 +14,7 @@ import {
     LayoutAnimation,
     Platform,
     UIManager,
+    ScrollView,
 } from 'react-native';
 
 if (Platform.OS === 'android') {
@@ -26,6 +27,8 @@ import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 
 import { useTheme } from '@/hooks/useTheme';
+import { getStylistPortfolio, PortfolioItem } from '@/services/portfolio';
+import ZoomableImageViewer from '@/components/ZoomableImageViewer';
 import { User, Post, Product } from '@/types';
 import { shareCaption } from '@/constants/share';
 import { fetchSavedItems, type SavedItem } from '@/services/savedItems';
@@ -335,6 +338,14 @@ export default function ProfileView({
         );
     };
 
+    const [portfolio, setPortfolio] = useState<PortfolioItem[]>([]);
+    const [portfolioZoom, setPortfolioZoom] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!user?.id || !user.is_verified_stylist) { setPortfolio([]); return; }
+        getStylistPortfolio(user.id).then(setPortfolio);
+    }, [user?.id, user?.is_verified_stylist]);
+
     const ListHeader = () => (
         <>
             {/* Banner */}
@@ -572,6 +583,41 @@ export default function ProfileView({
                     </Pressable>
                 )}
 
+                {/* Portfolio, above the grid.
+                    Only approved looks reach here -- the query asks for
+                    status 'approved' and the row-level policy would refuse the
+                    rest anyway, so a pending request cannot appear on a public
+                    profile by accident. */}
+                {user.is_verified_stylist && portfolio.length > 0 && (
+                    <View style={styles.portfolioSection}>
+                        <Text style={[styles.portfolioTitle, { color: colors.textSecondary }]}>PORTFOLIO</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.portfolioRow}>
+                            {portfolio.map((item) => (
+                                <Pressable
+                                    key={item.id}
+                                    style={styles.portfolioItem}
+                                    onPress={() => item.generated_image_url && setPortfolioZoom(item.generated_image_url)}
+                                >
+                                    <View style={[styles.portfolioRing, { borderColor: colors.primary }]}>
+                                        {item.generated_image_url ? (
+                                            <Image
+                                                source={{ uri: item.generated_image_url }}
+                                                style={styles.portfolioCover}
+                                                contentFit="cover"
+                                            />
+                                        ) : (
+                                            <View style={[styles.portfolioCover, { backgroundColor: colors.backgroundSecondary }]} />
+                                        )}
+                                    </View>
+                                    <Text style={[styles.portfolioLabel, { color: colors.textSecondary }]} numberOfLines={1}>
+                                        {item.client?.handle || item.client?.username || 'Look'}
+                                    </Text>
+                                </Pressable>
+                            ))}
+                        </ScrollView>
+                    </View>
+                )}
+
                 {/* Tabs (Own Profile) or Grid Header (Other Users) */}
                 {isOwnProfile || user.is_business_account ? (
                     <View style={[styles.tabsRow, { borderBottomColor: colors.border }]}>
@@ -735,6 +781,13 @@ export default function ProfileView({
                 visible={!!selectedProduct}
                 product={selectedProduct}
                 onClose={() => setSelectedProduct(null)}
+            />
+
+            {/* Tapping a portfolio cover opens it properly, zoomable. */}
+            <ZoomableImageViewer
+                visible={!!portfolioZoom}
+                uri={portfolioZoom}
+                onClose={() => setPortfolioZoom(null)}
             />
 
             {/* Post Long-Press Action Sheet */}
@@ -1214,5 +1267,42 @@ const styles = StyleSheet.create({
         fontWeight: '500',
         textAlign: 'center',
         flex: 1,
+    },
+    portfolioSection: {
+        paddingTop: 4,
+        paddingBottom: 14,
+    },
+    portfolioTitle: {
+        fontSize: 11,
+        fontWeight: '700',
+        letterSpacing: 1,
+        paddingHorizontal: 16,
+        marginBottom: 10,
+    },
+    portfolioRow: {
+        paddingHorizontal: 16,
+        gap: 14,
+    },
+    portfolioItem: {
+        alignItems: 'center',
+        width: 72,
+    },
+    portfolioRing: {
+        width: 68,
+        height: 68,
+        borderRadius: 34,
+        borderWidth: 2,
+        padding: 2,
+        overflow: 'hidden',
+    },
+    portfolioCover: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 32,
+    },
+    portfolioLabel: {
+        fontSize: 11,
+        marginTop: 5,
+        maxWidth: 72,
     },
 });

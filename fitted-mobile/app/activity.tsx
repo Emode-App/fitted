@@ -1,4 +1,4 @@
-﻿import { StyleSheet, Pressable, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
+﻿import { StyleSheet, Pressable, FlatList, RefreshControl, ActivityIndicator, Alert } from 'react-native';
 import { useState, useCallback } from 'react';
 import { router } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
@@ -10,6 +10,7 @@ import { useNotificationsStore, FollowingActivityItem } from '@/stores/notificat
 import { useAuthStore } from '@/stores/authStore';
 import { Notification } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
+import { getPendingPortfolioRequests, respondToPortfolioRequest, PortfolioItem } from '@/services/portfolio';
 
 interface NotificationWithDetails {
     id: string;
@@ -33,6 +34,19 @@ interface NotificationWithDetails {
 }
 
 export default function ActivityScreen() {
+    const [portfolioRequests, setPortfolioRequests] = useState<PortfolioItem[]>([]);
+
+    const answerPortfolio = async (itemId: string, decision: 'approved' | 'revoked') => {
+        // Off the list straight away. Waiting on the round trip to remove a
+        // question somebody has already answered feels like it did not register.
+        setPortfolioRequests((current) => current.filter((item) => item.id !== itemId));
+        try {
+            await respondToPortfolioRequest(itemId, decision);
+        } catch (error: any) {
+            Alert.alert('Portfolio', error?.message || 'Could not save your answer.');
+        }
+    };
+
     const { colors } = useTheme();
     const [refreshing, setRefreshing] = useState(false);
     const [tab, setTab] = useState<'you' | 'following'>('you');
@@ -54,6 +68,10 @@ export default function ActivityScreen() {
                     markAllAsRead(user.id);
                 });
                 fetchFollowingActivity(user.id);
+                // Marking notifications read must not bury an unanswered
+                // question, so the requests are read from their own table
+                // rather than inferred from the notification list.
+                getPendingPortfolioRequests(user.id).then(setPortfolioRequests);
             }
         }, [user])
     );
@@ -291,6 +309,41 @@ export default function ActivityScreen() {
                 </Pressable>
             </View>
 
+            {/* Somebody has asked to show this person's face in their
+                portfolio. That is a decision worth putting in front of them
+                rather than one line in a list of likes, so it sits above the
+                feed until they answer it. */}
+            {tab === 'you' && portfolioRequests.map((request) => (
+                <View
+                    key={request.id}
+                    style={[styles.portfolioRequest, { backgroundColor: colors.backgroundSecondary, borderColor: colors.border }]}
+                >
+                    <Text style={[styles.portfolioRequestText, { color: colors.text }]}>
+                        <Text style={{ fontWeight: '700' }}>
+                            {request.stylist?.handle || request.stylist?.username || 'A stylist'}
+                        </Text>
+                        {' '}wants to show the look they made for you in their portfolio.
+                    </Text>
+                    <Text style={[styles.portfolioRequestSub, { color: colors.textSecondary }]}>
+                        It stays private unless you agree, and you can remove it later.
+                    </Text>
+                    <View style={styles.portfolioRequestActions}>
+                        <Pressable
+                            style={[styles.portfolioRequestButton, { backgroundColor: colors.primary }]}
+                            onPress={() => answerPortfolio(request.id, 'approved')}
+                        >
+                            <Text style={{ color: colors.primaryForeground, fontWeight: '700', fontSize: 13 }}>Allow</Text>
+                        </Pressable>
+                        <Pressable
+                            style={[styles.portfolioRequestButton, { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.border }]}
+                            onPress={() => answerPortfolio(request.id, 'revoked')}
+                        >
+                            <Text style={{ color: colors.textSecondary, fontWeight: '700', fontSize: 13 }}>No thanks</Text>
+                        </Pressable>
+                    </View>
+                </View>
+            ))}
+
             {showInitialLoader ? (
                 <View style={styles.loadingContainer}>
                     <ActivityIndicator color={colors.text} size="large" />
@@ -454,5 +507,31 @@ const styles = StyleSheet.create({
         fontSize: 14,
         textAlign: 'center',
         marginTop: 8,
+    },
+    portfolioRequest: {
+        marginHorizontal: 16,
+        marginTop: 12,
+        padding: 14,
+        borderRadius: 14,
+        borderWidth: 1,
+    },
+    portfolioRequestText: {
+        fontSize: 14,
+        lineHeight: 20,
+    },
+    portfolioRequestSub: {
+        fontSize: 12,
+        marginTop: 6,
+    },
+    portfolioRequestActions: {
+        flexDirection: 'row',
+        gap: 8,
+        marginTop: 12,
+    },
+    portfolioRequestButton: {
+        flex: 1,
+        paddingVertical: 10,
+        borderRadius: 10,
+        alignItems: 'center',
     },
 });

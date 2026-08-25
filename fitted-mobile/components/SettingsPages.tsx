@@ -17,6 +17,7 @@ import { submitSupportRequest } from '@/services/supportService';
 import { useStripeCheckout } from '@/hooks/useStripeCheckout';
 import StripeConnectOnboarding from '@/components/StripeConnectOnboarding';
 import { checkConnectStatus, getConnectLoginUrl } from '@/services/stripeService';
+import { getOwnPortfolio, requestPortfolioItem } from '@/services/portfolio';
 
 interface LoginSession {
     id: string;
@@ -1765,6 +1766,40 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
 
     // Styling sessions belong here too. They were the one kind of income the
     // app could earn that this page never mentioned.
+    const [portfolioBySession, setPortfolioBySession] = useState<Record<string, string>>({});
+
+    const refreshPortfolio = async (stylistId: string) => {
+        const items = await getOwnPortfolio(stylistId);
+        const bySession: Record<string, string> = {};
+        for (const item of items) {
+            if (item.session_id) bySession[item.session_id] = item.status;
+        }
+        setPortfolioBySession(bySession);
+    };
+
+    useEffect(() => {
+        if (!user?.id || !sellsStyling) return;
+        refreshPortfolio(user.id);
+    }, [user?.id, sellsStyling]);
+
+    const askForPortfolio = async (session: any) => {
+        if (!user?.id) return;
+        try {
+            await requestPortfolioItem({
+                sessionId: session.id,
+                clientId: session.client_id,
+                title: session.description ?? null,
+            });
+            await refreshPortfolio(user.id);
+            Alert.alert(
+                'Request sent',
+                `${session.client?.handle || 'Your client'} decides whether this look appears in your portfolio. Nobody else can see it until they say yes.`,
+            );
+        } catch (error: any) {
+            Alert.alert('Portfolio', error?.message || 'Could not send that request.');
+        }
+    };
+
     useEffect(() => {
         if (!user?.id || !sellsStyling) return;
         (async () => {
@@ -1960,6 +1995,31 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
                             {session.description ? (
                                 <Text style={{ fontSize: 13, color: colors.textSecondary }} numberOfLines={2}>{session.description}</Text>
                             ) : null}
+
+                            {/* Only a delivered look can be shown, and only if
+                                the client agrees. The button asks; it does not
+                                publish. */}
+                            {paid && (
+                                portfolioBySession[session.id] === 'approved' ? (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 }}>
+                                        <Feather name="check-circle" size={13} color="#15803d" />
+                                        <Text style={{ fontSize: 12, color: '#15803d', fontWeight: '600' }}>In your portfolio</Text>
+                                    </View>
+                                ) : portfolioBySession[session.id] === 'pending' ? (
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 }}>
+                                        <Feather name="clock" size={13} color={colors.textTertiary} />
+                                        <Text style={{ fontSize: 12, color: colors.textSecondary }}>Waiting on your client</Text>
+                                    </View>
+                                ) : (
+                                    <Pressable
+                                        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 }}
+                                        onPress={() => askForPortfolio(session)}
+                                    >
+                                        <Feather name="plus-circle" size={13} color={colors.primary} />
+                                        <Text style={{ fontSize: 12, color: colors.primary, fontWeight: '600' }}>Ask to show in portfolio</Text>
+                                    </Pressable>
+                                )
+                            )}
 
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: isDark ? '#27272a' : '#f3f4f6' }}>
                                 <View>
