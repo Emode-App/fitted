@@ -353,70 +353,102 @@ serve(async (req: Request) => {
                 '  releases unless the search explicitly asks for them.',
             ].join(String.fromCharCode(10));
 
-            const resp = await fetch(GEMINI_BASE + '/' + searchModel + ':generateContent?key=' + GEMINI_API_KEY, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                    tools: [{ googleSearch: {} }],
-                    generationConfig: {
-                        temperature: 0.2,
-                        // Room for 24 objects, and no thinking. This model thinks
-                        // by default and those tokens come out of the same budget,
-                        // which truncated the array after a single object -- the
-                        // logs read "model 1" on search after search.
-                        maxOutputTokens: 8192,
-                        thinkingConfig: { thinkingBudget: 0 },
-                    },
-                }),
-            });
-
-            if (!resp.ok) {
-                console.error('search-products upstream', resp.status, (await resp.text()).slice(0, 300));
-                return json({ products: [] });
-            }
-
-            const data = await resp.json();
-            const text = data?.candidates?.[0]?.content?.parts?.find((p: any) => typeof p?.text === 'string')?.text ?? '';
-
-            // Salvage whole objects rather than demanding a whole array.
+            // One ask is one roll of the dice.
             //
-            // The response is a stream that can stop mid-array, and asking for
-            // 24 items makes that likely. Requiring a closing bracket threw away
-            // everything on a truncated reply -- a real search for Rick Owens
-            // Ramones came back with the right product and was discarded because
-            // the array never closed. Each complete {...} is parsed on its own
-            // and a half-written trailing one is simply dropped.
-            const items: any[] = [];
-            const raw = text.replace(/```(?:json)?/g, '');
-            let depth = 0;
-            let start = -1;
-            let inString = false;
-            let escaped = false;
+            // "lightning jordan 4" came back with a single object while the same
+            // code answered "rick owens ramones" with thirty. Nothing filtered
+            // it -- the model simply returned one, and a grounded model does
+            // that sometimes. A single thin reply should not empty the screen,
+            // so a poor first answer is asked again and the two are merged.
+            const askModel = async (): Promise<any[]> => {
+                const resp = await fetch(GEMINI_BASE + '/' + searchModel + ':generateContent?key=' + GEMINI_API_KEY, {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                        tools: [{ googleSearch: {} }],
+                        generationConfig: {
+                            // Thirty objects plus the preamble grounding likes to
+                            // write. This model thinks by default and those tokens
+                            // come out of the same budget, which truncated the
+                            // array after a single object -- the logs read
+                            // "model 1" on search after search.
+                            temperature: 0.4,
+                            maxOutputTokens: 16384,
+                            thinkingConfig: { thinkingBudget: 0 },
+                        },
+                    }),
+                });
 
-            for (let i = 0; i < raw.length; i++) {
-                const ch = raw[i];
-
-                if (inString) {
-                    if (escaped) escaped = false;
-                    else if (ch === '\\') escaped = true;
-                    else if (ch === '"') inString = false;
-                    continue;
+                if (!resp.ok) {
+                    console.error('search-products upstream', resp.status, (await resp.text()).slice(0, 300));
+                    return [];
                 }
 
-                if (ch === '"') { inString = true; continue; }
-                if (ch === '{') { if (depth === 0) start = i; depth++; continue; }
-                if (ch === '}') {
-                    depth--;
-                    if (depth === 0 && start >= 0) {
-                        try {
-                            items.push(JSON.parse(raw.slice(start, i + 1)));
-                        } catch {
-                            // One malformed object is not a reason to lose the rest.
+                const data = await resp.json();
+                const text = data?.candidates?.[0]?.content?.parts?.find((p: any) => typeof p?.text === 'string')?.text ?? '';
+                const finish = data?.candidates?.[0]?.finishReason ?? '';
+
+                // Salvage whole objects rather than demanding a whole array.
+                //
+                // The response is a stream that can stop mid-array, and asking
+                // for thirty items makes that likely. Requiring a closing
+                // bracket threw away everything on a truncated reply -- a real
+                // search for Rick Owens Ramones came back with the right product
+                // and was discarded because the array never closed. Each
+                // complete {...} is parsed on its own and a half-written
+                // trailing one is simply dropped.
+                const found: any[] = [];
+                const raw = text.replace(/```(?:json)?/g, '');
+                let depth = 0;
+                let start = -1;
+                let inString = false;
+                let escaped = false;
+
+                for (let i = 0; i < raw.length; i++) {
+                    const ch = raw[i];
+
+                    if (inString) {
+                        if (escaped) escaped = false;
+                        else if (ch === '\\') escaped = true;
+                        else if (ch === '"') inString = false;
+                        continue;
+                    }
+
+                    if (ch === '"') { inString = true; continue; }
+                    if (ch === '{') { if (depth === 0) start = i; depth++; continue; }
+                    if (ch === '}') {
+                        depth--;
+                        if (depth === 0 && start >= 0) {
+                            try {
+                                found.push(JSON.parse(raw.slice(start, i + 1)));
+                            } catch {
+                                // One malformed object is not a reason to lose the rest.
+                            }
+                            start = -1;
                         }
-                        start = -1;
                     }
                 }
+
+                // When the yield is thin, say why it was thin. "model 1" on its
+                // own gave no way to tell a short answer from a cut-off one.
+                if (found.length < 8) {
+                    console.log(`[search-products] thin reply: ${found.length} objects, ${raw.length} chars, finish ${finish}`);
+                }
+                return found;
+            };
+
+            let items = await askModel();
+
+            if (items.length < 8) {
+                const second = await askModel();
+                const byUrl = new Map<string, any>();
+                for (const item of [...items, ...second]) {
+                    const key = String(item?.productUrl ?? '').trim();
+                    if (key && !byUrl.has(key)) byUrl.set(key, item);
+                }
+                console.log(`[search-products] retried: ${items.length} + ${second.length} -> ${byUrl.size}`);
+                items = [...byUrl.values()];
             }
 
             if (!items.length) {
