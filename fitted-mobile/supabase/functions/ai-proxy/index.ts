@@ -569,6 +569,42 @@ serve(async (req: Request) => {
             };
 
             const withImages = await Promise.all(usable.map(async (item: any) => {
+            // Style codes are for a warehouse, not a person. Names arrive as
+            // "Air Jordan 4 Retro Lightning CT8527-700" or "LW1234 Puzzle Bag",
+            // and the code reads as noise next to every clean name beside it.
+            // clean_item_name() already strips the leading form for catalogue
+            // rows; this is the same idea for what the web returns, in both
+            // positions.
+            //
+            // A retro year is not a style code. "[2021]" is exactly the
+            // disambiguation the prompt asks for, so the shapes below all
+            // require either a letter prefix or a dashed serial -- four bare
+            // digits never match, and neither do model numbers like 9060,
+            // Boost 350 or Air Max 97.
+            const STYLE_CODE = /^(?:[A-Z]{1,3}[0-9]{3,}(?:[-\/][0-9A-Z]{2,4})?|[0-9]{5,6}-[0-9]{2,3})$/;
+            const isCode = (word: string) => STYLE_CODE.test(word.replace(/[.,]+$/, '').toUpperCase());
+            const wordy = (words: string[]) => words.filter((w) => /[A-Za-z]{3,}/.test(w)).length;
+
+            const stripStyleCode = (raw: string): string => {
+                // Bracketed only when the brackets hold a code -- (CT8527-700)
+                // goes, [2021] stays.
+                const unbracketed = raw.replace(
+                    /[(\[{]\s*([^)\]}]{2,24})\s*[)\]}]/g,
+                    (match, inner) => (isCode(String(inner).trim()) ? ' ' : match),
+                );
+
+                const words = unbracketed.split(/\s+/).filter(Boolean);
+                // Never strip down to a bare brand: the remainder has to stand
+                // on its own as a name, which means two words and at least one
+                // real one. "Samba OG IE3438" loses the code; "Jordan CT8527"
+                // keeps it, because "Jordan" alone says less than both did.
+                const trimmable = (rest: string[]) => rest.length >= 2 && wordy(rest) >= 1;
+                while (words.length > 1 && isCode(words[words.length - 1]) && trimmable(words.slice(0, -1))) words.pop();
+                while (words.length > 1 && isCode(words[0]) && trimmable(words.slice(1))) words.shift();
+
+                return words.join(' ').trim() || raw;
+            };
+
                 const isStockx = /(^|\.)stockx\.com/i.test(new URL(item.productUrl).hostname);
                 const brand = typeof item.brand === 'string' ? item.brand.trim() : '';
                 const name = String(item.name).trim();
@@ -582,7 +618,7 @@ serve(async (req: Request) => {
                 const imageUrl = resolved ?? searchThumbnail(brand, name);
 
                 return {
-                    name: name.slice(0, 200),
+                    name: stripStyleCode(name).slice(0, 200),
                     brand: brand.slice(0, 80),
                     price: Number.isFinite(Number(item.price)) && Number(item.price) > 0 ? Number(item.price) : null,
                     productUrl: item.productUrl,
