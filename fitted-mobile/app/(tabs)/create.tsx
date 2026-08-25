@@ -61,11 +61,20 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CANVAS_WIDTH = SCREEN_WIDTH; // Full width, edge-to-edge
 const ITEM_WIDTH = (SCREEN_WIDTH - 48) / 2; // 2 columns with padding (same as modal)
 
-/**
- * Get product image URL using Bing Image Search (same as modal)
- */
 function getProductImageUrl(product: Product): string {
     return product.imageUrl || '';
+}
+
+// A picture the server could fetch is not necessarily one the phone can.
+//
+// search-products checks every image with a HEAD request before sending it, so
+// by its own count each result "has an image" -- and tiles still come through
+// blank, because a retailer that answers a Deno function from a data centre
+// will refuse a phone with no referer. The check cannot see that from where it
+// runs, so the tile carries its own second option.
+function searchThumbnailFor(product: Product): string {
+    const q = encodeURIComponent(`${product.brand ?? ''} ${product.name ?? ''}`.trim().slice(0, 120));
+    return `https://tse1.mm.bing.net/th?q=${q}&w=600&h=600&c=7&rs=1&p=0`;
 }
 
 const CANVAS_TUTORIAL_STEPS: TutorialStep[] = [
@@ -418,6 +427,10 @@ export default function CreateScreen() {
     const [searchResults, setSearchResults] = useState<Product[]>([]);
     /** Guards against an earlier, slower search landing after a later one. */
     const searchRunRef = useRef(0);
+    const inFlightQueryRef = useRef<string | null>(null);
+    // Tiles whose picture refused to load, mapped to the stand-in shown
+    // instead. Keyed by id so one failure cannot restart another tile.
+    const [failedImages, setFailedImages] = useState<Record<string, string>>({});
     /** Web pass still running behind results that are already showing. */
     const [searchExpanding, setSearchExpanding] = useState(false);
     const [searchLoading, setSearchLoading] = useState(false);
@@ -1026,9 +1039,25 @@ export default function CreateScreen() {
             setHasSearched(false);
             return;
         }
+        // Typing then pressing the button fires the same search twice, and the
+        // run tag below keeps whichever started last -- which is a good rule
+        // for two different queries and a bad one for two of the same. Both
+        // runs asked for "rick owens ramones"; one came back with sixteen
+        // results and one with a single result, and the guard picked by
+        // arrival order rather than by which was worth showing.
+        //
+        // So a query already in flight is not started again. The keystroke run
+        // is already fetching exactly what the button would ask for.
+        const key = query.trim().toLowerCase();
+        if (inFlightQueryRef.current === key) {
+            if (options?.remember) await saveRecentSearch(query);
+            return;
+        }
+
         // Tag each run so a slow one cannot overwrite the results of a faster
         // one typed after it.
         const run = ++searchRunRef.current;
+        inFlightQueryRef.current = key;
         setSearchLoading(true);
         setHasSearched(true);
         try {
@@ -1054,6 +1083,7 @@ export default function CreateScreen() {
             console.error('Search error:', error);
             if (run === searchRunRef.current) setSearchResults([]);
         } finally {
+            if (inFlightQueryRef.current === key) inFlightQueryRef.current = null;
             if (run === searchRunRef.current) {
                 setSearchLoading(false);
                 setSearchExpanding(false);
@@ -1890,9 +1920,14 @@ export default function CreateScreen() {
                                                         <View style={[styles.productCardInner, { backgroundColor: colors.backgroundSecondary }]}>
                                                             <View style={[styles.imageContainer, { backgroundColor: '#fff' }]}>
                                                                 <Image
-                                                                    source={{ uri: getProductImageUrl(item) }}
+                                                                    source={{ uri: failedImages[item.id] ?? getProductImageUrl(item) }}
                                                                     style={styles.productImage}
                                                                     contentFit="contain"
+                                                                    onError={() => setFailedImages((current) => (
+                                                                        current[item.id]
+                                                                            ? current
+                                                                            : { ...current, [item.id]: searchThumbnailFor(item) }
+                                                                    ))}
                                                                 />
                                                             </View>
                                                             <View style={styles.productInfo}>

@@ -418,17 +418,38 @@ serve(async (req: Request) => {
             // logged "model 24, usable 0" while the identical query four minutes
             // earlier had returned 16 real listings. The stub resolves to the
             // real URL, so follow it rather than throwing the result away.
-            const resolveRedirect = async (url: string): Promise<string | null> => {
+            // Every stub resolves at once through Promise.all, so a slow moment
+            // at Google times them out together: one run of "rick owens ramones"
+            // lost 10 of 11 results this way while the next lost 2 of 18. Same
+            // query, same code -- the only difference was how fast the hops
+            // came back, which is not a thing a result should depend on.
+            //
+            // HEAD is enough to learn where a redirect lands and avoids pulling
+            // the whole page down, and a slow hop now gets a second chance on
+            // GET rather than being read as a dead link.
+            const hopTo = async (url: string, method: string, ms: number): Promise<string> => {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), ms);
                 try {
-                    const controller = new AbortController();
-                    const timer = setTimeout(() => controller.abort(), 3000);
-                    const hop = await fetch(url, { redirect: 'follow', signal: controller.signal });
+                    const hop = await fetch(url, { method, redirect: 'follow', signal: controller.signal });
+                    return hop.url || '';
+                } finally {
                     clearTimeout(timer);
-                    const final = hop.url || '';
-                    return /vertexaisearch|google\.com|googleusercontent/i.test(final) ? null : final;
-                } catch {
-                    return null;
                 }
+            };
+
+            const isStub = (url: string) => /vertexaisearch|google\.com|googleusercontent/i.test(url);
+
+            const resolveRedirect = async (url: string): Promise<string | null> => {
+                for (const [method, ms] of [['HEAD', 6000], ['GET', 9000]] as const) {
+                    try {
+                        const final = await hopTo(url, method, ms);
+                        if (final && !isStub(final)) return final;
+                    } catch {
+                        // Try the next shape before calling it dead.
+                    }
+                }
+                return null;
             };
 
             const resolved = await Promise.all(items.map(async (item: any) => {
@@ -607,7 +628,16 @@ serve(async (req: Request) => {
 
                 const isStockx = /(^|\.)stockx\.com/i.test(new URL(item.productUrl).hostname);
                 const brand = typeof item.brand === 'string' ? item.brand.trim() : '';
-                const name = String(item.name).trim();
+                // StockX files this shoe as brand "Jordan", name "4 Retro
+                // Lightning", and a name beginning with a bare model number
+                // reads as a mistake once the brand sits in its own line above
+                // it. Putting the brand back makes the name stand on its own,
+                // which is how every product page writes it.
+                const bare = String(item.name).trim();
+                const startsWithNumber = /^[0-9]/.test(bare);
+                const namesBrand = brand.length > 0 &&
+                    bare.toLowerCase().includes(brand.toLowerCase().split(/\s+/)[0]);
+                const name = startsWithNumber && brand && !namesBrand ? `${brand} ${bare}` : bare;
 
                 const resolved = isStockx
                     ? (await stockxImage(item.productUrl)) ?? await verifiedImage(item.imageUrl)
@@ -648,6 +678,14 @@ serve(async (req: Request) => {
                         .slice(0, 5)
                         .join(' | '),
                 );
+            }
+            // A tile can arrive with a URL and still show blank, because the
+            // host serves this function happily and refuses the phone. Without
+            // the host in the log there is no way to tell which one did it.
+            const hostsOf = (list: any[]) => Array.from(new Set(list
+                .map((i: any) => { try { return new URL(String(i.imageUrl)).hostname; } catch { return '?'; } })));
+            if (withPictures.length) {
+                console.log('[search-products] image hosts:', hostsOf(withPictures).join(', '));
             }
             if (!withPictures.length && usable.length) {
                 console.log('[search-products] all dropped at image stage:', usable.map((i: any) => i.productUrl).slice(0, 5).join(' | '));
