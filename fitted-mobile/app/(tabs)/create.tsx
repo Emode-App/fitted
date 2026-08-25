@@ -1176,7 +1176,21 @@ export default function CreateScreen() {
             // person. It stays in the private bucket and is signed on read, the
             // same way DM images and face shares are.
             if (generatedImageUri) {
-                const filename = `conversations/${forConversation}/deliveries/generated_${Date.now()}.jpg`;
+                // Under messages/, not conversations/.
+                //
+                // private-media grants INSERT on exactly three prefixes --
+                // messages/<conversation>, faces/<user> and generated/<user> --
+                // so a delivery filed under conversations/ matched no policy at
+                // all and came back "new row violates row-level security
+                // policy". The messages/ rule is also the right rule here: it
+                // admits the participants of that conversation and nobody else.
+                //
+                // It matters for two more things. Reading uses the matching
+                // SELECT policy, so a delivery outside this prefix could not be
+                // signed either. And delete-account clears storage by the
+                // messages/<conversation> prefix, so anything filed elsewhere
+                // would have survived someone deleting their account.
+                const filename = `messages/${forConversation}/deliveries/generated_${Date.now()}.jpg`;
                 let base64 = '';
                 if (generatedImageUri.startsWith('data:')) {
                     base64 = generatedImageUri.split(',')[1];
@@ -1187,7 +1201,7 @@ export default function CreateScreen() {
             }
 
             if (capturedBoardUri) {
-                const filename = `conversations/${forConversation}/deliveries/board_${Date.now()}.jpg`;
+                const filename = `messages/${forConversation}/deliveries/board_${Date.now()}.jpg`;
                 const base64 = await FileSystem.readAsStringAsync(capturedBoardUri, { encoding: FileSystem.EncodingType.Base64 });
                 publicBoardUrl = await uploadImage('posts', filename, base64, 'private');
             }
