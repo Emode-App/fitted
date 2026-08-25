@@ -96,6 +96,7 @@ interface CanvasItem {
     purchaseLink?: string; // StockX or custom link
     itemName?: string; // Product name (full name)
     brand?: string; // Brand name (separate for proper multi-word brands)
+    price?: number; // What search read off the product page, so the tag can prefill
     scale: number;
     rotation: number;
 }
@@ -375,6 +376,7 @@ function StepIndicator({ currentStep, colors }: { currentStep: number; colors: a
 import { decode } from 'base64-arraybuffer';
 import { usePostsStore } from '@/stores/postsStore';
 import { PRIVATE_BUCKET } from '@/services/privateMedia';
+import ZoomableImageViewer from '@/components/ZoomableImageViewer';
 import { deliverSession } from '@/services/stylingSessions';
 import { captureException } from '@/services/monitoring';
 
@@ -446,6 +448,7 @@ export default function CreateScreen() {
     // AI Generation state
     const [isGenerating, setIsGenerating] = useState(false);
     const [generatedImageUri, setGeneratedImageUri] = useState<string | null>(null);
+    const [zoomUri, setZoomUri] = useState<string | null>(null);
     const [capturedBoardUri, setCapturedBoardUri] = useState<string | null>(null);
 
     // Preview carousel state
@@ -935,6 +938,59 @@ export default function CreateScreen() {
         setCropItem(null);
     };
 
+    // Keep a styling session's work without being asked.
+    //
+    // Leaving the screen mid-styling threw the canvas away, so a stylist who
+    // checked the conversation for what the client wanted came back to an empty
+    // board and started again. A session is paid and timed; losing the work to
+    // a tab change is the worst moment for it.
+    //
+    // Only while styling for someone. Autosaving everybody's private
+    // experiments into their drafts list is a different feature and not one
+    // anybody asked for.
+    useEffect(() => {
+        if (!user || !isStylingFor || canvasItems.length === 0) return;
+
+        const timer = setTimeout(async () => {
+            const draftData = {
+                currentStep,
+                canvasItems,
+                caption,
+                facePhotoUri,
+                sceneDescription,
+                uploadMode,
+                bottomTab,
+                keepFrames,
+                itemLinks,
+                generatedImageUri,
+                capturedBoardUri,
+                selectedBackground,
+                // What makes it findable again from the conversation.
+                forConversation,
+            };
+
+            try {
+                if (currentDraftId) {
+                    await supabase.from('drafts')
+                        .update({ data: draftData, updated_at: new Date().toISOString() })
+                        .eq('id', currentDraftId);
+                } else {
+                    const { data } = await supabase.from('drafts')
+                        .insert({ user_id: user.id, type: 'styling', data: draftData })
+                        .select('id')
+                        .single();
+                    if (data?.id) setCurrentDraftId(data.id);
+                }
+            } catch (error) {
+                // A failed autosave must never interrupt styling -- the manual
+                // save button is still there and still reports for itself.
+                console.warn('Styling autosave failed:', error);
+            }
+        }, 1200);
+
+        return () => clearTimeout(timer);
+    }, [user, isStylingFor, canvasItems, itemLinks, caption, currentStep, generatedImageUri, currentDraftId, forConversation]);
+
     // Add product from search to canvas + save to wardrobe
     const handleProductSelect = (product: Product) => {
         // Use Bing Image Search for product images as fallback if needed, but product.imageUrl should be preferred if good
@@ -954,6 +1010,10 @@ export default function CreateScreen() {
             purchaseLink: product.purchaseLink,
             itemName: product.name, // Just the product name
             brand: product.brand, // Store brand separately for multi-word brands
+            // Search went to the trouble of reading a price off the product
+            // page; dropping it here meant every tag opened at $0.00 and the
+            // stylist retyped a number the app already knew.
+            price: Number(product.price) > 0 ? Number(product.price) : undefined,
             scale: 1,
             rotation: 0,
         };
@@ -2135,11 +2195,24 @@ export default function CreateScreen() {
                                                     />
                                                 )}
                                                 {item.type === 'generated' && item.image ? (
-                                                    <Image
-                                                        source={{ uri: item.image }}
+                                                    /* Tap to open it big enough to actually
+                                                       inspect. Bruce's complaint was that the
+                                                       one picture worth studying -- yourself in
+                                                       the fit -- was the one you could not get
+                                                       closer to. */
+                                                    <Pressable
+                                                        onPress={() => setZoomUri(item.image!)}
                                                         style={{ width: '100%', height: '100%' }}
-                                                        contentFit="cover"
-                                                    />
+                                                    >
+                                                        <Image
+                                                            source={{ uri: item.image }}
+                                                            style={{ width: '100%', height: '100%' }}
+                                                            contentFit="cover"
+                                                        />
+                                                        <View style={styles.previewExpandBadge}>
+                                                            <Feather name="maximize-2" size={14} color="rgba(255,255,255,0.95)" />
+                                                        </View>
+                                                    </Pressable>
                                                 ) : (
                                                     canvasItems.map((canvasItem) => (
                                                         <View key={canvasItem.id} style={[
@@ -2226,7 +2299,7 @@ export default function CreateScreen() {
                                                     style={[styles.linkInput, styles.linkInputSmall, { borderColor: colors.border, color: colors.text }]}
                                                     placeholder="$ 0.00"
                                                     placeholderTextColor={colors.placeholder}
-                                                    value={itemLinks[item.id]?.price || ''}
+                                                    value={itemLinks[item.id]?.price ?? (item.price ? String(item.price) : '')}
                                                     onChangeText={(v) => updateItemLink(item.id, 'price', v)}
                                                     keyboardType="numeric"
                                                 />
@@ -2327,15 +2400,22 @@ export default function CreateScreen() {
                                 {isStylingFor ? (
                                     /* Send to Client button — when styling for someone */
                                     <Pressable
-                                        style={[styles.actionButton, uploading && styles.actionButtonDisabled]}
+                                        style={[styles.actionButton, styles.actionButtonGradientHost, uploading && styles.actionButtonDisabled]}
                                         onPress={handleSendToClient}
                                         disabled={uploading}
                                     >
+                                        {/* The gradient is the button, rather than
+                                            something floating inside it. It used to
+                                            sit within the Pressable's own vertical
+                                            padding with a wider corner radius than
+                                            its parent, so it drew as a squashed pill
+                                            adrift in a larger box while "Back to
+                                            Edit" beside it filled its own. */}
                                         <LinearGradient
                                             colors={['#6366f1', '#4f46e5']}
                                             start={{ x: 0, y: 0 }}
                                             end={{ x: 1, y: 0 }}
-                                            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 14, gap: 8 }}
+                                            style={styles.actionButtonGradient}
                                         >
                                             {uploading ? (
                                                 <ActivityIndicator color="#fff" size="small" />
@@ -2485,6 +2565,11 @@ export default function CreateScreen() {
                 onDismiss={dismissCanvasTutorial}
                 title="The Canvas"
                 steps={CANVAS_TUTORIAL_STEPS}
+            />
+            <ZoomableImageViewer
+                visible={!!zoomUri}
+                uri={zoomUri}
+                onClose={() => setZoomUri(null)}
             />
         </GestureHandlerRootView >
     );
@@ -3443,6 +3528,32 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    previewExpandBadge: {
+        position: 'absolute',
+        top: 10,
+        right: 10,
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(0,0,0,0.4)',
+    },
+    actionButtonGradientHost: {
+        // Height comes from the gradient's own padding, so the fill reaches
+        // every edge and the radius clips it cleanly.
+        paddingVertical: 0,
+        overflow: 'hidden',
+    },
+    actionButtonGradient: {
+        width: '100%',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 16,
+        borderRadius: 12,
     },
     actionButtonSecondary: {
         backgroundColor: '#F1F1F1',

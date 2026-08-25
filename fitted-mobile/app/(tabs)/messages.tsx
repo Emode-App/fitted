@@ -250,6 +250,34 @@ export default function MessagesScreen() {
 
     // Navigate stylist to create screen with client context. Only reachable
     // inside a live window, which is what makes this a real-time service.
+    // Is there a board already in progress for this conversation?
+    //
+    // The action said "Create Outfit" whether or not work existed, so leaving
+    // the screen and coming back looked like starting over -- and pressing it
+    // did start over.
+    const [stylingDraftId, setStylingDraftId] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!user || !activeConversation) { setStylingDraftId(null); return; }
+        let cancelled = false;
+
+        (async () => {
+            const { data } = await supabase
+                .from('drafts')
+                .select('id')
+                .eq('user_id', user.id)
+                .eq('type', 'styling')
+                .eq('data->>forConversation', activeConversation.id)
+                .order('updated_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            if (!cancelled) setStylingDraftId(data?.id ?? null);
+        })();
+
+        return () => { cancelled = true; };
+    }, [user, activeConversation?.id, messages.length]);
+
     const handleCreateOutfit = () => {
         if (!activeConversation || !session) return;
         const clientId = activeConversation.otherUser?.id;
@@ -268,6 +296,10 @@ export default function MessagesScreen() {
                 forClientName: clientName,
                 forClientFaceUrl: clientFaceUrl,
                 forSessionId: session.id,
+                // Carries the stylist back into the board they had going rather
+                // than a blank one. The styling context still comes from these
+                // params; the draft only restores the canvas.
+                ...(stylingDraftId ? { draftId: stylingDraftId } : {}),
             }
         });
     };
@@ -614,7 +646,7 @@ export default function MessagesScreen() {
                                         style={styles.sessionAction}
                                     >
                                         <MaterialCommunityIcons name="palette" size={15} color="#fff" />
-                                        <Text style={styles.sessionActionText}>Create Outfit</Text>
+                                        <Text style={styles.sessionActionText}>{stylingDraftId ? 'Continue Outfit' : 'Create Outfit'}</Text>
                                     </LinearGradient>
                                 </Pressable>
                             ) : (

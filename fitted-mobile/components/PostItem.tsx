@@ -5,6 +5,7 @@ import { Image as ExpoImage } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 
 import MentionText from '@/components/MentionText';
+import ZoomableImageViewer from '@/components/ZoomableImageViewer';
 import { Post, ClothingItem } from '@/types';
 import SaveItemButton from '@/components/SaveItemButton';
 import { useTheme } from '@/hooks/useTheme';
@@ -198,6 +199,8 @@ export default function PostItem({ post, onLike, onComment, onShare, onSave, onU
     };
 
     // Handle single tap (show tags) and double tap (like)
+    const [zoomUri, setZoomUri] = useState<string | null>(null);
+
     const handleImageTap = () => {
         const now = Date.now();
         const DOUBLE_TAP_DELAY = 300;
@@ -241,7 +244,17 @@ export default function PostItem({ post, onLike, onComment, onShare, onSave, onU
         : [{ type: 'outfit', image: post.generated_image }];
 
     const renderSlide = ({ item, index }: { item: { type: string; image: string | undefined }; index: number }) => (
-        <Pressable onPress={handleImageTap}>
+        // Long press to zoom. Tap already toggles the tags and double tap
+        // likes, so those are spoken for -- and taking the double tap away to
+        // make room for zoom would cost the gesture people use most.
+        <Pressable
+            onPress={handleImageTap}
+            onLongPress={() => {
+                const current = slides[currentSlide]?.image;
+                if (current) setZoomUri(current);
+            }}
+            delayLongPress={350}
+        >
             <RNView style={[styles.imageContainer, { backgroundColor: colors.backgroundSecondary }]}>
                 <ExpoImage
                     source={{ uri: item.image }}
@@ -460,6 +473,12 @@ export default function PostItem({ post, onLike, onComment, onShare, onSave, onU
                 item={selectedItem}
                 onClose={() => setModalVisible(false)}
                 postId={post.id}
+            />
+
+            <ZoomableImageViewer
+                visible={!!zoomUri}
+                uri={zoomUri}
+                onClose={() => setZoomUri(null)}
             />
         </RNView>
     );

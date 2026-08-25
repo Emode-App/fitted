@@ -14,6 +14,7 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useTheme } from '@/hooks/useTheme';
 import { StylingDelivery, ClothingItem } from '@/types';
+import ZoomableImageViewer from '@/components/ZoomableImageViewer';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -28,6 +29,13 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
     const { colors, isDark } = useTheme();
     const [showFullscreen, setShowFullscreen] = useState(false);
     const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
+    const [pagerWidth, setPagerWidth] = useState(0);
+    const [page, setPage] = useState(0);
+
+    const pages = [
+        { uri: delivery.generated_image_url, label: '' },
+        ...(delivery.board_image_url ? [{ uri: delivery.board_image_url, label: 'Moodboard' }] : []),
+    ].filter((image) => !!image.uri);
 
     const formatTime = (ts: string): string => {
         const date = new Date(ts);
@@ -79,37 +87,64 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                         </View>
                     </View>
 
-                    {/* Generated Outfit Image */}
-                    <Pressable onPress={() => openFullscreen(delivery.generated_image_url)}>
-                        <View style={styles.outfitImageContainer}>
-                            <Image
-                                source={{ uri: delivery.generated_image_url }}
-                                style={styles.outfitImage}
-                                contentFit="cover"
-                                transition={300}
-                            />
-                            {/* Tap to expand overlay */}
-                            <View style={styles.expandOverlay}>
-                                <Feather name="maximize-2" size={16} color="rgba(255,255,255,0.9)" />
-                            </View>
-                        </View>
-                    </Pressable>
+                    {/* Two pictures, side by side rather than piled up.
+                        Stacking a full-width look on top of the moodboard made
+                        the card grow past the height of the screen -- the
+                        message ran off the bottom and hid every message sent
+                        after it. Swiping keeps the card one image tall however
+                        many pictures a delivery carries. */}
+                    <View
+                        style={styles.pagerFrame}
+                        onLayout={(event) => setPagerWidth(event.nativeEvent.layout.width)}
+                    >
+                        <ScrollView
+                            horizontal
+                            pagingEnabled
+                            showsHorizontalScrollIndicator={false}
+                            onMomentumScrollEnd={(event) => {
+                                if (!pagerWidth) return;
+                                setPage(Math.round(event.nativeEvent.contentOffset.x / pagerWidth));
+                            }}
+                        >
+                            {pages.map((image) => (
+                                <Pressable
+                                    key={image.uri}
+                                    onPress={() => openFullscreen(image.uri)}
+                                    style={{ width: pagerWidth || undefined }}
+                                >
+                                    <View style={styles.pageImageContainer}>
+                                        <Image
+                                            source={{ uri: image.uri }}
+                                            style={styles.pageImage}
+                                            contentFit="cover"
+                                            transition={300}
+                                        />
+                                        {image.label ? (
+                                            <View style={styles.boardLabel}>
+                                                <Text style={styles.boardLabelText}>{image.label}</Text>
+                                            </View>
+                                        ) : null}
+                                        <View style={styles.expandOverlay}>
+                                            <Feather name="maximize-2" size={16} color="rgba(255,255,255,0.9)" />
+                                        </View>
+                                    </View>
+                                </Pressable>
+                            ))}
+                        </ScrollView>
+                    </View>
 
-                    {/* Board Image (if available) */}
-                    {delivery.board_image_url && (
-                        <Pressable onPress={() => openFullscreen(delivery.board_image_url!)} style={{ marginTop: 8 }}>
-                            <View style={styles.boardImageContainer}>
-                                <Image
-                                    source={{ uri: delivery.board_image_url }}
-                                    style={styles.boardImage}
-                                    contentFit="cover"
-                                    transition={300}
+                    {pages.length > 1 && (
+                        <View style={styles.dots}>
+                            {pages.map((image, index) => (
+                                <View
+                                    key={image.uri}
+                                    style={[
+                                        styles.dot,
+                                        { backgroundColor: index === page ? '#6366f1' : colors.border },
+                                    ]}
                                 />
-                                <View style={styles.boardLabel}>
-                                    <Text style={styles.boardLabelText}>Moodboard</Text>
-                                </View>
-                            </View>
-                        </Pressable>
+                            ))}
+                        </View>
                     )}
 
                     {/* Caption */}
@@ -185,27 +220,14 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                 </View>
             </View>
 
-            {/* Fullscreen Image Modal */}
-            <Modal
+            {/* Pinch to zoom. The old viewer opened at one fixed size, so
+                the obvious thing to do with a picture of yourself in a fit --
+                get closer and look at the shoes -- was not possible. */}
+            <ZoomableImageViewer
                 visible={showFullscreen}
-                transparent
-                animationType="fade"
-                onRequestClose={() => setShowFullscreen(false)}
-            >
-                <Pressable style={styles.fullscreenOverlay} onPress={() => setShowFullscreen(false)}>
-                    <BlurView intensity={40} style={StyleSheet.absoluteFill} tint="dark" />
-                    <Pressable style={styles.fullscreenClose} onPress={() => setShowFullscreen(false)}>
-                        <Feather name="x" size={24} color="#fff" />
-                    </Pressable>
-                    {fullscreenImage && (
-                        <Image
-                            source={{ uri: fullscreenImage }}
-                            style={styles.fullscreenImage}
-                            contentFit="contain"
-                        />
-                    )}
-                </Pressable>
-            </Modal>
+                uri={fullscreenImage}
+                onClose={() => setShowFullscreen(false)}
+            />
         </>
     );
 }
@@ -262,6 +284,30 @@ const styles = StyleSheet.create({
         fontFamily: 'Inter_700Bold',
     },
     // Outfit Image
+    pagerFrame: {
+        borderRadius: 14,
+        overflow: 'hidden',
+    },
+    pageImageContainer: {
+        width: '100%',
+        aspectRatio: 1,
+        position: 'relative',
+    },
+    pageImage: {
+        width: '100%',
+        height: '100%',
+    },
+    dots: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: 6,
+        marginTop: 8,
+    },
+    dot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+    },
     outfitImageContainer: {
         borderRadius: 14,
         overflow: 'hidden',
