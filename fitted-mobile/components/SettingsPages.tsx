@@ -16,7 +16,7 @@ import { revokeAiFaceConsent } from '@/services/privacyService';
 import { submitSupportRequest } from '@/services/supportService';
 import { useStripeCheckout } from '@/hooks/useStripeCheckout';
 import StripeConnectOnboarding from '@/components/StripeConnectOnboarding';
-import { checkConnectStatus } from '@/services/stripeService';
+import { checkConnectStatus, getConnectLoginUrl } from '@/services/stripeService';
 
 interface LoginSession {
     id: string;
@@ -1757,6 +1757,15 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
             .catch(() => setPayoutReady(false));
     }, [user?.id, showPayoutSetup]);
 
+    const openPayoutDashboard = async () => {
+        try {
+            const { url } = await getConnectLoginUrl();
+            await Linking.openURL(url);
+        } catch (error: any) {
+            Alert.alert('Payout Account', error?.message || 'Could not open your payout account.');
+        }
+    };
+
     const markShipped = (order: SaleRow) => {
         Alert.alert('Mark as Shipped', "Confirm you've shipped this order to the buyer?", [
             { text: 'Cancel', style: 'cancel' },
@@ -1802,12 +1811,31 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
                     <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center' }}>
                         When someone buys your items, their orders show up here to fulfill.
                     </Text>
+                    {/* Until the check comes back, payoutReady is null and
+                        saying "Set Up Seller Payouts" is a guess -- the wrong
+                        one for anybody already set up, which is why the label
+                        flickered and changed under the thumb. Wait instead.
+
+                        And a ready account opens the Stripe dashboard rather
+                        than the setup flow: the label changed here but the
+                        handler never did, so "Review" reopened onboarding
+                        somebody had just finished. */}
                     <Pressable
-                        style={[styles.button, { backgroundColor: colors.primary, marginTop: 20, paddingHorizontal: 18 }]}
-                        onPress={() => setShowPayoutSetup(true)}
+                        style={[styles.button, {
+                            backgroundColor: payoutReady === null ? colors.backgroundSecondary : colors.primary,
+                            marginTop: 20,
+                            paddingHorizontal: 18,
+                        }]}
+                        disabled={payoutReady === null}
+                        onPress={payoutReady ? openPayoutDashboard : () => setShowPayoutSetup(true)}
                     >
-                        <Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>
-                            {payoutReady ? 'Review Payout Account' : 'Set Up Seller Payouts'}
+                        <Text style={{
+                            color: payoutReady === null ? colors.textSecondary : colors.primaryForeground,
+                            fontWeight: '700',
+                        }}>
+                            {payoutReady === null
+                                ? 'Checking payout account…'
+                                : payoutReady ? 'Review Payout Account' : 'Set Up Seller Payouts'}
                         </Text>
                     </Pressable>
                 </View>

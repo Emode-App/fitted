@@ -83,6 +83,19 @@ export async function getConnectOnboardingUrl(): Promise<{ url: string }> {
 }
 
 /**
+ * One-time link to the Stripe-hosted dashboard for an account that has already
+ * finished onboarding. This is what "Review Payout Account" should open --
+ * reviewing an account and creating one are different things, and the button
+ * used to do the second for both.
+ */
+export async function getConnectLoginUrl(): Promise<{ url: string }> {
+    const { data, error } = await supabase.functions.invoke('create-connect-login-link', { body: {} });
+    if (error) throw new Error(error.message || 'Could not open your payout account');
+    if ((data as any)?.error) throw new Error((data as any).error);
+    return data as { url: string };
+}
+
+/**
  * Check if the current user has completed Stripe Connect onboarding.
  * Reads from the private_users table (only the owner can read their own row).
  */
