@@ -68,14 +68,14 @@ function getProductImageUrl(product: Product): string {
 // A picture the server could fetch is not necessarily one the phone can.
 //
 // search-products checks every image with a HEAD request before sending it, so
-// by its own count each result "has an image" -- and tiles still come through
-// blank, because a retailer that answers a Deno function from a data centre
-// will refuse a phone with no referer. The check cannot see that from where it
-// runs, so the tile carries its own second option.
-function searchThumbnailFor(product: Product): string {
-    const q = encodeURIComponent(`${product.brand ?? ''} ${product.name ?? ''}`.trim().slice(0, 120));
-    return `https://tse1.mm.bing.net/th?q=${q}&w=600&h=600&c=7&rs=1&p=0`;
-}
+// by its own count each result has one -- and tiles still arrive blank, because
+// a retailer that answers a Deno function from a data centre will refuse a
+// phone with no referer. The check cannot see that from where it runs.
+//
+// The stand-in is deliberately not another photograph. Filling the gap from an
+// image search is what put resale pictures and cropped close-ups back in the
+// grid after the resale rule had removed them; a plain mark reads as a missing
+// picture, which is true, rather than as the wrong shoe, which is not.
 
 const CANVAS_TUTORIAL_STEPS: TutorialStep[] = [
     {
@@ -430,7 +430,7 @@ export default function CreateScreen() {
     const inFlightQueryRef = useRef<string | null>(null);
     // Tiles whose picture refused to load, mapped to the stand-in shown
     // instead. Keyed by id so one failure cannot restart another tile.
-    const [failedImages, setFailedImages] = useState<Record<string, string>>({});
+    const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
     /** Web pass still running behind results that are already showing. */
     const [searchExpanding, setSearchExpanding] = useState(false);
     const [searchLoading, setSearchLoading] = useState(false);
@@ -1919,20 +1919,24 @@ export default function CreateScreen() {
                                                     >
                                                         <View style={[styles.productCardInner, { backgroundColor: colors.backgroundSecondary }]}>
                                                             <View style={[styles.imageContainer, { backgroundColor: '#fff' }]}>
-                                                                <Image
-                                                                    source={{ uri: failedImages[item.id] ?? getProductImageUrl(item) }}
-                                                                    style={styles.productImage}
-                                                                    contentFit="contain"
-                                                                    onError={() => setFailedImages((current) => (
-                                                                        current[item.id]
-                                                                            ? current
-                                                                            : { ...current, [item.id]: searchThumbnailFor(item) }
-                                                                    ))}
-                                                                />
+                                                                {failedImages[item.id] ? (
+                                                                    <View style={styles.productImageMissing}>
+                                                                        <Feather name="image" size={22} color={colors.textTertiary} />
+                                                                    </View>
+                                                                ) : (
+                                                                    <Image
+                                                                        source={{ uri: getProductImageUrl(item) }}
+                                                                        style={styles.productImage}
+                                                                        contentFit="contain"
+                                                                        onError={() => setFailedImages((current) => (
+                                                                            current[item.id] ? current : { ...current, [item.id]: true }
+                                                                        ))}
+                                                                    />
+                                                                )}
                                                             </View>
                                                             <View style={styles.productInfo}>
                                                                 <Text style={[styles.productBrand, { color: colors.textSecondary }]}>{item.brand}</Text>
-                                                                <Text style={[styles.productName, { color: colors.text }]} numberOfLines={2}>{item.name}</Text>
+                                                                <Text style={[styles.productName, { color: colors.text }]} numberOfLines={3}>{item.name}</Text>
                                                                 {/* A blank where the price should be reads as a
                                                                     broken tile. The number is left out only when it
                                                                     is genuinely unknown -- inventing one is how the
@@ -3355,6 +3359,12 @@ const styles = StyleSheet.create({
     productImage: {
         width: '100%',
         height: '100%',
+    },
+    productImageMissing: {
+        width: '100%',
+        height: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     productInfo: {
         padding: 10,

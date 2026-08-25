@@ -310,31 +310,37 @@ serve(async (req: Request) => {
 
             const prompt = [
                 'Find real clothing or footwear products matching: "' + query + '".',
-                'Reply with a raw JSON array of up to 24 objects, no markdown fence, each exactly:',
+                'Reply with a raw JSON array of up to 30 objects, no markdown fence, each exactly:',
                 '{"name": string, "brand": string, "price": number|null, "productUrl": string, "imageUrl": string|null}',
                 '',
                 'Rules:',
-                '- Return the PRODUCT, not somebody selling one. A resale listing --',
+                '- Find as many as you can. More is better: somebody is picking one',
+                '  piece out of a grid, and a short list gives them nothing to choose',
+                '  between. Do not stop at a handful.',
+                '- What to leave out is one person selling their own pair --',
                 '  "Lightning Jordan Retro 4s Size 10.5 New Never Worn", "size 6.5y" --',
-                '  is one person offering one pair, with their own photo and their own',
-                '  asking price. Give the product as the brand names it.',
-                '- name is the official product name, without the brand repeated inside it',
-                '  and without size, condition or seller wording.',
-                '- Several entries for one release are fine and useful, since each comes',
-                '  with a different photograph. Name the retro year when releases differ:',
-                '  an Air Jordan 4 Lightning from 2006 and from 2021 are not the same shoe.',
+                '  photographed at home and titled with their size and condition.',
+                '- A shop is not that. Retailer and marketplace product pages are exactly',
+                '  what you want, StockX and Grailed included: they carry proper',
+                '  photography and they publish a price.',
+                '- Strongly prefer a page that shows a price over one that does not. A',
+                '  result with no price is close to useless here, so if the brand site',
+                '  hides it and a stockist shows it, return the stockist.',
+                '- price is that number in USD, read off the page you actually found.',
+                '  You are searching live, so do not recall one from memory. null only',
+                '  when the page genuinely shows none.',
+                '- name is the full product name as the page writes it, including the',
+                '  model line, so it reads properly on its own: "Air Jordan 4 Retro',
+                '  Lightning", not "4 Retro Lightning". No size, condition or seller',
+                '  wording, and no style or SKU code.',
+                '- Several entries for one release are wanted, not avoided -- each brings',
+                '  a different photograph and that is the point. Name the retro year when',
+                '  releases differ: a 2006 Lightning and a 2021 Lightning are not the',
+                '  same shoe.',
                 '- productUrl must be a real product page you found.',
-                '- Prefer stockx.com, goat.com, grailed.com, lyst.com, nike.com or the',
-                '  brand site itself, whose photos come out best. Other retailers are fine.',
                 '- Never return a google.com, vertexaisearch or redirect URL. Omit the item instead.',
-                '- price is the asking price in USD on the page you found, as a number.',
-                '  You are searching live, so read it off the listing rather than recalling',
-                '  it. Use null only when that page genuinely shows no price -- but do not',
-                '  substitute a remembered or retail figure for one you can actually see.',
                 '- Adult sizing only. No toddler, infant, baby, preschool, kids or GS',
                 '  releases unless the search explicitly asks for them.',
-                '- Every entry must be a different product. Colourways of the same model',
-                '  are fine, duplicates of one colourway are not.',
             ].join(String.fromCharCode(10));
 
             const resp = await fetch(GEMINI_BASE + '/' + searchModel + ':generateContent?key=' + GEMINI_API_KEY, {
@@ -502,7 +508,7 @@ serve(async (req: Request) => {
             const usable = (clean.length > 0 ? clean : found)
                 // A listing with a price came from a product page. Those first.
                 .sort((a, b) => (Number(b?.price) > 0 ? 1 : 0) - (Number(a?.price) > 0 ? 1 : 0))
-                .slice(0, 24);
+                .slice(0, 30);
 
 
             // Resolve a real photo for each result.
@@ -584,10 +590,18 @@ serve(async (req: Request) => {
             // none. The picture is a search thumbnail rather than the retailer's
             // own shot, so it is only reached once the better routes have failed,
             // and the item sheet carries a report control for when it is wrong.
-            const searchThumbnail = (brand: string, name: string): string => {
-                const q = encodeURIComponent(`${brand} ${name}`.trim().slice(0, 120));
-                return `https://tse1.mm.bing.net/th?q=${q}&w=600&h=600&c=7&rs=1&p=0`;
-            };
+            // There used to be a Bing image-search fallback here, and it was
+            // undoing the filter three functions down. A thumbnail search
+            // returns whatever the open web holds for those words -- which for
+            // a Rick Owens Ramones is mostly resale photographs on somebody's
+            // kitchen floor, exactly the pictures the resale rule exists to
+            // keep out. It also forced every result to a square: asking that
+            // endpoint for a width and a height crops to fill rather than
+            // fitting, which is where the extreme close-ups of laces came from.
+            //
+            // A picture that is not this product is worse than no tile at all,
+            // so a result whose own retailer will not give up an image is
+            // dropped below instead of being dressed in a guess.
 
             const withImages = await Promise.all(usable.map(async (item: any) => {
             // Style codes are for a warehouse, not a person. Names arrive as
@@ -645,7 +659,7 @@ serve(async (req: Request) => {
                         ?? (await stockxImage(item.productUrl))
                         ?? await verifiedImage(item.imageUrl);
 
-                const imageUrl = resolved ?? searchThumbnail(brand, name);
+                const imageUrl = resolved ?? '';
 
                 return {
                     name: stripStyleCode(name).slice(0, 200),
