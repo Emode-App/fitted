@@ -458,7 +458,32 @@ serve(async (req: Request) => {
                 return null;
             };
 
-            const resolved = await Promise.all(items.map(async (item: any) => {
+            // Resolve a few at a time, not all thirty at once.
+            //
+            // Promise.all fires every redirect simultaneously, and Google
+            // answers a burst like that by making most of them wait: one run
+            // lost 10 of 21 results, the next 5 of 19, all of them stubs that
+            // simply ran out of time. Nothing was wrong with those products --
+            // they were dropped for arriving late to a queue we created.
+            //
+            // Six at a time is slower per batch and finishes with far more of
+            // them intact, which is the trade that matters when every loss is
+            // a shoe missing from the grid.
+            const mapWithLimit = async <T, R>(list: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> => {
+                const out = new Array<R>(list.length);
+                let next = 0;
+                const worker = async () => {
+                    while (true) {
+                        const index = next++;
+                        if (index >= list.length) return;
+                        out[index] = await fn(list[index]);
+                    }
+                };
+                await Promise.all(Array.from({ length: Math.min(limit, list.length) }, worker));
+                return out;
+            };
+
+            const resolved = await mapWithLimit(items, 6, (async (item: any) => {
                 const url = typeof item?.productUrl === 'string' ? item.productUrl : '';
                 if (!/^https?:\/\//i.test(url)) return null;
                 if (typeof item?.name !== 'string' || item.name.trim().length < 2) return null;
@@ -472,7 +497,7 @@ serve(async (req: Request) => {
                     return { ...item, productUrl: direct };
                 }
                 return item;
-            }));
+            }) as (item: any) => Promise<any>);
 
             // A resale listing is one person selling one pair: their photo, their
             // asking price, their sizing in the title. Those are what made the
