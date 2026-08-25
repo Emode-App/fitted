@@ -20,16 +20,22 @@ serve(async (req: Request) => {
         if (!user) return json({ error: error || 'Unauthorized' }, 401);
         const { data } = await admin.from('private_users').select('stripe_account_id').eq('id', user.id).single();
         if (!data?.stripe_account_id) return json({ error: 'Create a seller payout account first' }, 409);
+        // Stripe rejects a custom scheme here -- it needs an address it can put
+        // in a browser -- so these point at a function that redirects on to
+        // emode://. Sending 'emode://stripe-return' directly is what produced
+        // "create-connect-link failed StripeInvalidRequestError" and left the
+        // stylist with an account but no way to finish onboarding.
+        const bridge = Deno.env.get('SUPABASE_URL') + '/functions/v1/stripe-connect-redirect';
         const link = await stripe.accountLinks.create({
             account: data.stripe_account_id,
-            refresh_url: 'emode://stripe-refresh',
-            return_url: 'emode://stripe-return',
+            refresh_url: bridge + '?to=refresh',
+            return_url: bridge + '?to=return',
             type: 'account_onboarding',
             collection_options: { fields: 'eventually_due' },
         });
         return json({ url: link.url });
     } catch (error: any) {
-        console.error('create-connect-link failed', error?.type || error?.message);
+        console.error('create-connect-link failed', error?.type, error?.message, error?.param ?? '');
         return json({ error: 'Could not start Stripe onboarding' }, 500);
     }
 });

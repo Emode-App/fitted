@@ -15,6 +15,11 @@ verify_jwt = true
 [functions.create-connect-account]
 verify_jwt = true
 
+# Stripe sends the browser here after onboarding, with no Authorization header
+# of its own, so this one has to answer an anonymous request.
+[functions.stripe-connect-redirect]
+verify_jwt = false
+
 [functions.create-connect-link]
 verify_jwt = true
 
