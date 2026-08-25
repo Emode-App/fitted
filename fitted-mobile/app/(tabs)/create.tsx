@@ -70,12 +70,17 @@ function getProductImageUrl(product: Product): string {
 // search-products checks every image with a HEAD request before sending it, so
 // by its own count each result has one -- and tiles still arrive blank, because
 // a retailer that answers a Deno function from a data centre will refuse a
-// phone with no referer. The check cannot see that from where it runs.
+// phone with no referer. The check cannot see that from where it runs, so the
+// tile carries its own second option.
 //
-// The stand-in is deliberately not another photograph. Filling the gap from an
-// image search is what put resale pictures and cropped close-ups back in the
-// grid after the resale rule had removed them; a plain mark reads as a missing
-// picture, which is true, rather than as the wrong shoe, which is not.
+// That option is a thumbnail search, which is right far more often than not:
+// it indexes the same retailers, so what comes back is usually the same pack
+// shot the product page would have given. Width only -- asking that endpoint
+// for a width and a height crops to fill instead of fitting.
+function searchThumbnailFor(product: Product): string {
+    const q = encodeURIComponent(`${product.brand ?? ''} ${product.name ?? ''}`.trim().slice(0, 120));
+    return `https://tse1.mm.bing.net/th?q=${q}&w=600`;
+}
 
 const CANVAS_TUTORIAL_STEPS: TutorialStep[] = [
     {
@@ -430,7 +435,7 @@ export default function CreateScreen() {
     const inFlightQueryRef = useRef<string | null>(null);
     // Tiles whose picture refused to load, mapped to the stand-in shown
     // instead. Keyed by id so one failure cannot restart another tile.
-    const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
+    const [failedImages, setFailedImages] = useState<Record<string, 'stand-in' | 'gone'>>({});
     /** Web pass still running behind results that are already showing. */
     const [searchExpanding, setSearchExpanding] = useState(false);
     const [searchLoading, setSearchLoading] = useState(false);
@@ -1919,18 +1924,23 @@ export default function CreateScreen() {
                                                     >
                                                         <View style={[styles.productCardInner, { backgroundColor: colors.backgroundSecondary }]}>
                                                             <View style={[styles.imageContainer, { backgroundColor: '#fff' }]}>
-                                                                {failedImages[item.id] ? (
+                                                                {failedImages[item.id] === 'gone' ? (
                                                                     <View style={styles.productImageMissing}>
                                                                         <Feather name="image" size={22} color={colors.textTertiary} />
                                                                     </View>
                                                                 ) : (
                                                                     <Image
-                                                                        source={{ uri: getProductImageUrl(item) }}
+                                                                        source={{
+                                                                            uri: failedImages[item.id] === 'stand-in'
+                                                                                ? searchThumbnailFor(item)
+                                                                                : getProductImageUrl(item),
+                                                                        }}
                                                                         style={styles.productImage}
                                                                         contentFit="contain"
-                                                                        onError={() => setFailedImages((current) => (
-                                                                            current[item.id] ? current : { ...current, [item.id]: true }
-                                                                        ))}
+                                                                        onError={() => setFailedImages((current) => ({
+                                                                            ...current,
+                                                                            [item.id]: current[item.id] === 'stand-in' ? 'gone' : 'stand-in',
+                                                                        }))}
                                                                     />
                                                                 )}
                                                             </View>

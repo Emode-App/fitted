@@ -590,18 +590,23 @@ serve(async (req: Request) => {
             // none. The picture is a search thumbnail rather than the retailer's
             // own shot, so it is only reached once the better routes have failed,
             // and the item sheet carries a report control for when it is wrong.
-            // There used to be a Bing image-search fallback here, and it was
-            // undoing the filter three functions down. A thumbnail search
-            // returns whatever the open web holds for those words -- which for
-            // a Rick Owens Ramones is mostly resale photographs on somebody's
-            // kitchen floor, exactly the pictures the resale rule exists to
-            // keep out. It also forced every result to a square: asking that
-            // endpoint for a width and a height crops to fill rather than
-            // fitting, which is where the extreme close-ups of laces came from.
+            // Last resort when the retailer will not hand over a picture.
             //
-            // A picture that is not this product is worse than no tile at all,
-            // so a result whose own retailer will not give up an image is
-            // dropped below instead of being dressed in a guess.
+            // This was removed once on the theory that it was the source of the
+            // scruffy photographs in the grid. It was not: those came from the
+            // boutiques' own og:images -- small shops photograph stock on a
+            // floor -- and a thumbnail search mostly returns the clean pack
+            // shot, because it indexes the same retailers. Taking it out left
+            // three tiles in four empty. It stays.
+            //
+            // No height parameter, though. Asking this endpoint for a width and
+            // a height crops to fill rather than fitting, which is where the
+            // extreme close-ups of laces came from; width alone returns the
+            // picture at its own proportions.
+            const searchThumbnail = (brand: string, name: string): string => {
+                const q = encodeURIComponent(`${brand} ${name}`.trim().slice(0, 120));
+                return `https://tse1.mm.bing.net/th?q=${q}&w=600`;
+            };
 
             const withImages = await Promise.all(usable.map(async (item: any) => {
             // Style codes are for a warehouse, not a person. Names arrive as
@@ -659,7 +664,7 @@ serve(async (req: Request) => {
                         ?? (await stockxImage(item.productUrl))
                         ?? await verifiedImage(item.imageUrl);
 
-                const imageUrl = resolved ?? '';
+                const imageUrl = resolved ?? searchThumbnail(brand, name);
 
                 return {
                     name: stripStyleCode(name).slice(0, 200),
