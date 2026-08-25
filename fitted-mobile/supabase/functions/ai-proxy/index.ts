@@ -709,6 +709,30 @@ serve(async (req: Request) => {
             if (!withPictures.length && usable.length) {
                 console.log('[search-products] all dropped at image stage:', usable.map((i: any) => i.productUrl).slice(0, 5).join(' | '));
             }
+            // Keep what this search verified.
+            //
+            // Every search asked the model from scratch, and a grounded model
+            // does not answer the same way twice -- "Leather Ramones Sneakers,
+            // $548" appeared in one search and was missing from the next. There
+            // was nothing wrong with the entry; it had never been written down,
+            // so there was nowhere for it to come back from.
+            //
+            // Recording them makes the catalogue accumulate instead of
+            // rerolling: the next search for these words answers from the
+            // indexed table straight away, and the web pass behind it adds
+            // whatever it finds that is new.
+            if (withPictures.length) {
+                const { data: written, error: writeError } = await admin
+                    .rpc('record_web_products', { items: withPictures });
+                if (writeError) {
+                    // A search that found results is still a good search. This
+                    // is a cache, so failing to fill it must not fail the reply.
+                    console.warn('[search-products] could not record results:', writeError.message);
+                } else {
+                    console.log(`[search-products] recorded ${written} to catalogue`);
+                }
+            }
+
             return json({ products: withPictures });
         }
 
