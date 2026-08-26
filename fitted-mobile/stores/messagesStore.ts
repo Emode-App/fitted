@@ -51,6 +51,8 @@ interface MessagesState {
     conversations: ConversationWithDetails[];
     activeConversation: ConversationWithDetails | null;
     messages: MessageWithUser[];
+    /** Every unread message across every thread, for the tab and icon badges. */
+    unreadTotal: number;
     isLoading: boolean;
 
     // Actions
@@ -68,6 +70,8 @@ interface MessagesState {
     /** Unsend: removes the message for both people. Resolves to an error string, or null on success. */
     deleteMessage: (messageId: string) => Promise<string | null>;
     createConversation: (userId: string, otherUserId: string) => Promise<string | null>;
+    /** Mark everything the other person sent in this thread as read. */
+    markConversationRead: (conversationId: string, userId: string) => Promise<void>;
     setActiveConversation: (conversation: ConversationWithDetails | null) => void;
 }
 
@@ -97,10 +101,15 @@ const byRecentActivity = (a: ConversationWithDetails, b: ConversationWithDetails
     return bt - at;
 };
 
+/** One number for the tab bar and the app icon, from the per-thread counts. */
+const totalUnread = (conversations: ConversationWithDetails[]) =>
+    conversations.reduce((sum, c) => sum + (c.unreadCount ?? 0), 0);
+
 export const useMessagesStore = create<MessagesState>((set, get) => ({
     conversations: [],
     activeConversation: null,
     messages: [],
+    unreadTotal: 0,
     isLoading: false,
 
     fetchConversations: async (userId: string) => {
@@ -138,15 +147,31 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
                         .order('created_at', { ascending: false })
                         .limit(1);
 
+                    // Unread means: they sent it, and we have not opened the
+                    // thread since. head + exact asks Postgres for the number
+                    // and not the rows, so this stays one small round trip even
+                    // on a thread with thousands of messages in it.
+                    const { count: unreadCount } = await supabase
+                        .from('messages')
+                        .select('id', { count: 'exact', head: true })
+                        .eq('conversation_id', convo.id)
+                        .neq('sender_id', userId)
+                        .eq('is_read', false);
+
                     return {
                         ...convo,
                         otherUser: otherUser || {},
                         lastMessage: lastMessages?.[0],
+                        unreadCount: unreadCount ?? 0,
                     };
                 })
             );
 
-            set({ conversations: conversationsWithDetails.sort(byRecentActivity), isLoading: false });
+            set({
+                conversations: conversationsWithDetails.sort(byRecentActivity),
+                unreadTotal: totalUnread(conversationsWithDetails),
+                isLoading: false,
+            });
         } catch (error) {
             console.error('Error fetching conversations:', error);
             set({ isLoading: false });
@@ -385,4 +410,31 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
     },
 
     setActiveConversation: (conversation) => set({ activeConversation: conversation }),
+
+    markConversationRead: async (conversationId: string, userId: string) => {
+        // Only the other person's messages. Marking your own read is
+        // meaningless, and since the migration the client may write is_read and
+        // nothing else on this table, so a wider update would be refused rather
+        // than quietly doing something surprising.
+        const { error } = await supabase
+            .from('messages')
+            .update({ is_read: true })
+            .eq('conversation_id', conversationId)
+            .neq('sender_id', userId)
+            .eq('is_read', false);
+
+        if (error) {
+            // The thread still opens and still reads correctly; only the count
+            // is stale, and the next fetch settles it.
+            console.warn('Could not mark conversation read:', error.message);
+            return;
+        }
+
+        set((state) => {
+            const conversations = state.conversations.map((c) =>
+                c.id === conversationId ? { ...c, unreadCount: 0 } : c
+            );
+            return { conversations, unreadTotal: totalUnread(conversations) };
+        });
+    },
 }));

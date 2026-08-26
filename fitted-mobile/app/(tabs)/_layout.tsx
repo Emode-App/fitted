@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
+import { AppState } from 'react-native';
 import { Tabs } from 'expo-router';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useTheme } from '@/hooks/useTheme';
 import { useNotificationsStore } from '@/stores/notificationsStore';
+import { useMessagesStore } from '@/stores/messagesStore';
+import { setAppIconBadge } from '@/services/pushNotifications';
 import { useAuthStore } from '@/stores/authStore';
 import SettingsDrawer from '@/components/SettingsDrawer';
 
@@ -12,15 +15,39 @@ export default function TabLayout() {
     const { colors, isDark } = useTheme();
     const unreadCount = useNotificationsStore((state) => state.unreadCount);
     const fetchNotifications = useNotificationsStore((state) => state.fetchNotifications);
+    const messagesUnread = useMessagesStore((state) => state.unreadTotal);
+    const fetchConversations = useMessagesStore((state) => state.fetchConversations);
     const { user } = useAuthStore();
     const [showSettings, setShowSettings] = useState(false);
 
-    // Initial fetch for red dot
+    // Both counts, for the bell and for the messages tab. The messages screen
+    // refetches its own conversations when it takes focus, but the badge has to
+    // be right before anyone goes there, so the count is fetched here too.
+    const refreshCounts = React.useCallback(() => {
+        if (!user?.id) return;
+        fetchNotifications(user.id);
+        fetchConversations(user.id);
+    }, [user?.id, fetchNotifications, fetchConversations]);
+
+    React.useEffect(refreshCounts, [refreshCounts]);
+
+    // Coming back from the background is the moment the counts are most likely
+    // to be wrong: messages arrived as pushes while the app was not running, and
+    // nothing in the tree refetched. Without this the badge stays at whatever it
+    // was when the app was last put down.
     React.useEffect(() => {
-        if (user?.id) {
-            fetchNotifications(user.id);
-        }
-    }, [user?.id]);
+        const sub = AppState.addEventListener('change', (next) => {
+            if (next === 'active') refreshCounts();
+        });
+        return () => sub.remove();
+    }, [refreshCounts]);
+
+    // One number on the icon for both kinds of unread, because iOS only gives
+    // us the one. Signed out it goes to zero rather than keeping a stale count
+    // from whoever was signed in before.
+    React.useEffect(() => {
+        setAppIconBadge(user?.id ? unreadCount + messagesUnread : 0);
+    }, [user?.id, unreadCount, messagesUnread]);
 
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -90,6 +117,10 @@ export default function TabLayout() {
                     name="messages"
                     options={{
                         title: 'Messages',
+                        // Capped the same way the bell is, so a long-neglected
+                        // inbox cannot widen the tab and shove the icons along.
+                        tabBarBadge: messagesUnread > 0 ? (messagesUnread > 9 ? '9+' : messagesUnread) : undefined,
+                        tabBarBadgeStyle: styles.tabBadge,
                         tabBarIcon: ({ color }) => (
                             <Feather name="message-circle" size={28} color={color} />
                         ),
@@ -139,6 +170,15 @@ const styles = StyleSheet.create({
         textShadowColor: 'rgba(0, 0, 0, 0.25)',
         textShadowOffset: { width: 0, height: 1 },
         textShadowRadius: 2,
+    },
+    // The tab bar draws and positions its own badge, so this only has to agree
+    // with the bell's on colour and weight -- the same red, so two unread
+    // counts on one screen do not look like two different kinds of alert.
+    tabBadge: {
+        backgroundColor: '#ff3b5c',
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: '700',
     },
     badge: {
         position: 'absolute',

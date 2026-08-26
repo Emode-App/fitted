@@ -187,6 +187,13 @@ export default function ActivityScreen() {
 
     // Direct messages have their own tab, with their own unread badge.
     //
+    // That second clause was untrue for as long as this comment has existed:
+    // the messages tab had no badge, and saying it did is most of why nobody
+    // noticed. It has one now, counting messages the other person sent that
+    // you have not opened the thread since -- which is not the same thing as
+    // the message-type notification rows filtered out below, and does not
+    // depend on them.
+    //
     // notify_on_message writes a notification per message so a push can go out,
     // and those rows were landing here too: seven messages in one conversation
     // became seven rows in Activity. They rendered as bare avatars with a

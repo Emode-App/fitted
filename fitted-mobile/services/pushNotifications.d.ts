@@ -5,3 +5,4 @@ export function addNotificationResponseListener(
     handler: (data: Record<string, any>) => void,
 ): () => void;
 export function unregisterPush(): Promise<void>;
+export function setAppIconBadge(count: number): Promise<void>;

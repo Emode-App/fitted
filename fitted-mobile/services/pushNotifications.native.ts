@@ -118,6 +118,27 @@ async function currentDeviceToken(): Promise<string | null> {
  *
  * Silent by design: it does nothing unless notifications were already allowed.
  */
+/**
+ * The number on the app icon.
+ *
+ * Driven by our own counts rather than by the push payload, which is why the
+ * handler above leaves shouldSetBadge false. A payload carries whatever the
+ * sender put in it at send time, and that is wrong the moment the person reads
+ * something on another device. This is called with unread notifications plus
+ * unread messages whenever either changes, so the icon agrees with the app.
+ *
+ * Android has no icon badge of this kind. setBadgeCountAsync is a no-op there
+ * rather than an error, so there is nothing to branch on.
+ */
+export async function setAppIconBadge(count: number): Promise<void> {
+    try {
+        await Notifications.setBadgeCountAsync(Math.max(0, count));
+    } catch (error) {
+        // A badge that will not set is not worth interrupting anything over.
+        console.warn('Could not set the app icon badge:', error);
+    }
+}
+
 export async function syncPushToken(userId: string): Promise<void> {
     const token = await currentDeviceToken();
     if (!token) return;

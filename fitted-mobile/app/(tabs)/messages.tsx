@@ -53,6 +53,7 @@ export default function MessagesScreen() {
     const sendImage = useMessagesStore((state) => state.sendImage);
     const setActiveConversation = useMessagesStore((state) => state.setActiveConversation);
     const createConversation = useMessagesStore((state) => state.createConversation);
+    const markConversationRead = useMessagesStore((state) => state.markConversationRead);
 
     const [newMessage, setNewMessage] = useState('');
     const [showNewMessageModal, setShowNewMessageModal] = useState(false);
@@ -103,6 +104,10 @@ export default function MessagesScreen() {
                 filter: `conversation_id=eq.${activeConversation.id}`,
             }, () => {
                 fetchMessages(activeConversation.id);
+                // It landed while the thread was open in front of them, so it
+                // was read on arrival. Without this the badge would count a
+                // message they are looking at.
+                if (user?.id) markConversationRead(activeConversation.id, user.id);
             })
             .subscribe();
 
@@ -110,7 +115,7 @@ export default function MessagesScreen() {
             cancelled = true;
             supabase.removeChannel(channel);
         };
-    }, [activeConversation?.id, fetchMessages]);
+    }, [activeConversation?.id, fetchMessages, markConversationRead, user?.id]);
 
     // Tick the visible countdown while a window is open.
     useEffect(() => {
@@ -145,10 +150,13 @@ export default function MessagesScreen() {
     );
 
     useEffect(() => {
-        if (activeConversation) {
-            fetchMessages(activeConversation.id);
-        }
-    }, [activeConversation]);
+        if (!activeConversation) return;
+        fetchMessages(activeConversation.id);
+        // Opening the thread is what reading it means. Done here rather than
+        // inside fetchMessages, because that runs again on every realtime
+        // insert and on every send, and only some of those are someone reading.
+        if (user?.id) markConversationRead(activeConversation.id, user.id);
+    }, [activeConversation, user?.id, fetchMessages, markConversationRead]);
 
     const handleSend = async () => {
         if (!newMessage.trim() || !user || !activeConversation) return;
