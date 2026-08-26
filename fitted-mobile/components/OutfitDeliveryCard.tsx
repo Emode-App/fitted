@@ -17,6 +17,7 @@ import { StylingDelivery, ClothingItem } from '@/types';
 import ZoomableImageViewer from '@/components/ZoomableImageViewer';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const CARD_PADDING = 14;
 
 interface OutfitDeliveryCardProps {
     delivery: StylingDelivery;
@@ -29,8 +30,17 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
     const { colors, isDark } = useTheme();
     const [showFullscreen, setShowFullscreen] = useState(false);
     const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
-    const [pagerWidth, setPagerWidth] = useState(0);
     const [page, setPage] = useState(0);
+
+    // Worked out, not measured.
+    //
+    // Measuring meant the card rendered short on the first pass and grew once
+    // onLayout came back, and the chat scrolls to the end on content-size
+    // change -- so it scrolled against the short height and stopped there,
+    // leaving the next message below the fold. The card is 90% of the screen
+    // (styles.container) less its own padding, which is known before any
+    // layout happens, so the height is right on the first render.
+    const PAGE_SIZE = Math.round(SCREEN_WIDTH * 0.9) - CARD_PADDING * 2;
 
     const pages = [
         { uri: delivery.generated_image_url, label: '' },
@@ -93,10 +103,7 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                         message ran off the bottom and hid every message sent
                         after it. Swiping keeps the card one image tall however
                         many pictures a delivery carries. */}
-                    <View
-                        style={[styles.pagerFrame, { height: pagerWidth || undefined }]}
-                        onLayout={(event) => setPagerWidth(Math.round(event.nativeEvent.layout.width))}
-                    >
+                    <View style={[styles.pagerFrame, { height: PAGE_SIZE }]}>
                         {/* Every size here is a measured number, never a
                             percentage.
 
@@ -104,28 +111,25 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                             width of '100%' resolves against a container with no
                             bound -- and aspectRatio then matched the height to
                             that runaway width. The card grew past the bottom of
-                            the screen and swallowed the messages under it. On
-                            the first pass pagerWidth is 0, so nothing is drawn
-                            until the frame has been measured. */}
-                        {pagerWidth > 0 && (
-                            <ScrollView
+                            the screen and swallowed the messages under it. */}
+                        <ScrollView
                                 horizontal
                                 pagingEnabled
                                 showsHorizontalScrollIndicator={false}
-                                style={{ width: pagerWidth, height: pagerWidth }}
+                                style={{ width: PAGE_SIZE, height: PAGE_SIZE }}
                                 onMomentumScrollEnd={(event) => {
-                                    setPage(Math.round(event.nativeEvent.contentOffset.x / pagerWidth));
+                                    setPage(Math.round(event.nativeEvent.contentOffset.x / PAGE_SIZE));
                                 }}
                             >
                                 {pages.map((image) => (
                                     <Pressable
                                         key={image.uri}
                                         onPress={() => openFullscreen(image.uri)}
-                                        style={{ width: pagerWidth, height: pagerWidth }}
+                                        style={{ width: PAGE_SIZE, height: PAGE_SIZE }}
                                     >
                                         <Image
                                             source={{ uri: image.uri }}
-                                            style={{ width: pagerWidth, height: pagerWidth }}
+                                            style={{ width: PAGE_SIZE, height: PAGE_SIZE }}
                                             contentFit="cover"
                                             transition={300}
                                         />
@@ -139,8 +143,7 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                                         </View>
                                     </Pressable>
                                 ))}
-                            </ScrollView>
-                        )}
+                        </ScrollView>
                     </View>
 
                     {pages.length > 1 && (
@@ -250,7 +253,7 @@ const styles = StyleSheet.create({
     card: {
         borderRadius: 20,
         borderWidth: 1,
-        padding: 14,
+        padding: CARD_PADDING,
         elevation: 4,
     },
     // Header
@@ -294,11 +297,11 @@ const styles = StyleSheet.create({
         fontFamily: 'Inter_700Bold',
     },
     // Outfit Image
-    // The pages themselves are sized inline from a measured pagerWidth. There
-    // were styles here doing it with width:'100%' and aspectRatio, and inside a
-    // horizontal ScrollView that is exactly what made the card grow past the
-    // bottom of the screen. Deleted rather than left lying around, because they
-    // read as correct until you notice which axis they are in.
+    // The pages are sized inline from PAGE_SIZE. There were styles here doing
+    // it with width:'100%' and aspectRatio, and inside a horizontal ScrollView
+    // that is exactly what made the card grow past the bottom of the screen.
+    // Deleted rather than left lying around, because they read as correct until
+    // you notice which axis they are in.
     pagerFrame: {
         width: '100%',
         borderRadius: 14,
