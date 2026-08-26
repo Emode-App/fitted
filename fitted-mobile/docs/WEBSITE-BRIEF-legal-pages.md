@@ -25,6 +25,7 @@ Three new static pages, same layout and styling as the existing legal pages:
 | `/app/terms` | emode Terms of Use | `app-terms-of-use.md` |
 | `/app/privacy` | emode Privacy Policy | `app-privacy-policy.md` |
 | `/support` | emode Support | see below |
+| `/app/delete-account` | Delete your emode account | see below |
 
 The two markdown files are attached alongside this brief. Publish their content
 verbatim — the wording is what App Review will be shown, and it has been written
@@ -34,6 +35,19 @@ reporting, stylist sessions, marketplace orders, subscriptions).
 `/support` currently 404s and is needed for the App Store Connect Support URL
 field, which is mandatory. It only needs: what emode is in a sentence, a contact
 address of `support@emode.style`, and a link to `/app/privacy`.
+
+`/app/delete-account` is the last one outstanding. Settings has an "Account
+Deletion Help" link pointing at it, and deletion itself already happens inside
+the app, so this page is for somebody who cannot sign in. It needs a short
+explanation and a form taking an email address and an optional note, posting to:
+
+    POST https://scvvbjheyfnxlsiiozta.supabase.co/functions/v1/legal/delete-account
+    content-type: application/x-www-form-urlencoded
+    fields: email, note
+
+That endpoint already exists and handles the request; only the page around it is
+missing. Post to the absolute URL above rather than a relative path, since the
+form will no longer be served from the same origin as the handler.
 
 ### Requirements for all three
 
@@ -60,7 +74,12 @@ the paywall sees a screenful of raw markup.
 and stops the app linking at a `supabase.co` URL, which looks wrong to anyone who
 reads it.
 
+## Status
+
+`/app/terms`, `/app/privacy` and `/support` are live and serving text/html, and
+the app now points at them. `/app/delete-account` is the only one left; until it
+exists that link still opens the Supabase function, which renders as plain text.
+
 ## What happens after
 
-Once the three pages are live, the app's `constants/legal.ts` gets pointed at
-them and a new build goes to TestFlight. Nothing else in the app changes.
+A new build goes to TestFlight. Nothing else in the app changes.
