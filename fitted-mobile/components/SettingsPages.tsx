@@ -1630,10 +1630,23 @@ interface OrderRow {
     tracking_number?: string | null;
     refunded_amount?: number | null;
     dispute_status?: string | null;
+    card_brand?: string | null;
+    card_last4?: string | null;
 }
 
 // Shared by both order screens. It lived inside SalesPage, so the buyer's page
 // could not format the address it had already fetched.
+// Stripe reports the brand lower case ("visa", "mastercard"). Nobody writes it
+// that way on a receipt.
+const cardBrandLabel = (brand?: string | null) => {
+    if (!brand) return 'Card';
+    const known: Record<string, string> = {
+        visa: 'Visa', mastercard: 'Mastercard', amex: 'Amex',
+        discover: 'Discover', diners: 'Diners', jcb: 'JCB', unionpay: 'UnionPay',
+    };
+    return known[brand] ?? brand.charAt(0).toUpperCase() + brand.slice(1);
+};
+
 const fmtAddress = (a: {
     name?: string; line1?: string; line2?: string;
     city?: string; state?: string; postal_code?: string; country?: string;
@@ -1665,6 +1678,7 @@ export const OrdersPage = ({ onBack }: { onBack: () => void }) => {
                 .select(`
                     id, status, subtotal_amount, created_at, shipping,
                     tracking_carrier, tracking_number, refunded_amount, dispute_status,
+                    card_brand, card_last4,
                     seller:users!orders_seller_id_fkey(id, username, handle, avatar_url),
                     items:order_items(id, name, price_amount, size, image_url)
                 `)
@@ -1825,9 +1839,21 @@ export const OrdersPage = ({ onBack }: { onBack: () => void }) => {
                                 )
                             ) : null}
 
-                            {/* Date + total */}
+                            {/* Date, card, total */}
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: isDark ? '#27272a' : '#f3f4f6' }}>
-                                <Text style={{ fontSize: 12, color: colors.textTertiary }}>{fmtDate(order.created_at)}</Text>
+                                <View>
+                                    <Text style={{ fontSize: 12, color: colors.textTertiary }}>{fmtDate(order.created_at)}</Text>
+                                    {/* Enough to recognise which card paid, which
+                                        is all a receipt needs to say. Absent on
+                                        orders placed before the webhook started
+                                        recording it, so it is only rendered when
+                                        it is actually there. */}
+                                    {order.card_last4 ? (
+                                        <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 2 }}>
+                                            {cardBrandLabel(order.card_brand)} ···· {order.card_last4}
+                                        </Text>
+                                    ) : null}
+                                </View>
                                 <Text style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>${(order.subtotal_amount / 100).toFixed(2)}</Text>
                             </View>
                         </View>

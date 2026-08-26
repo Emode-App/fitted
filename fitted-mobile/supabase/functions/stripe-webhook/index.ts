@@ -98,6 +98,46 @@ serve(async (req: Request) => {
                             throw new Error('Order could not be finalized');
                         }
                     }
+
+                    // What the receipt says about the card.
+                    //
+                    // Brand and last four only -- what every receipt prints, and
+                    // enough for a buyer to recognise which card they used.
+                    // Nothing here can be used to charge anything, and the rest
+                    // stays with Stripe where it belongs.
+                    //
+                    // Read off the charge rather than accepted from the app: a
+                    // client that could name its own payment method could name
+                    // somebody else's. And recorded after the order is
+                    // finalized, deliberately -- a receipt detail must never be
+                    // the reason a paid order fails to complete.
+                    // On this API version a PaymentIntent no longer carries
+                    // `charges`, and `latest_charge` is an id rather than the
+                    // charge itself -- so the details have to be fetched. Both
+                    // shapes are handled because which one arrives depends on
+                    // the version the event was created under, and old events
+                    // get replayed.
+                    let card: any = intent.charges?.data?.[0]?.payment_method_details?.card ?? null;
+
+                    if (!card && intent.latest_charge) {
+                        if (typeof intent.latest_charge === 'object') {
+                            card = intent.latest_charge.payment_method_details?.card ?? null;
+                        } else {
+                            try {
+                                const charge: any = await stripe.charges.retrieve(intent.latest_charge);
+                                card = charge?.payment_method_details?.card ?? null;
+                            } catch (error: any) {
+                                console.warn('Could not read the charge for a card summary:', error?.message);
+                            }
+                        }
+                    }
+
+                    if (card?.last4) {
+                        const { error: cardError } = await admin.from('orders')
+                            .update({ card_brand: card.brand ?? null, card_last4: card.last4 })
+                            .eq('id', orderId);
+                        if (cardError) console.warn('Could not record card summary:', cardError.message);
+                    }
                 }
                 break;
             }
