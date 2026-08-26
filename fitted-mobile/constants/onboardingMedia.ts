@@ -22,13 +22,14 @@ export const ONBOARDING_MEDIA: Record<OnboardingSlot, ImageSourcePropType | null
     /** Outfit Preview with a generated fit and its shoppable pieces. */
     tryOn: require('@/assets/onboarding/try-on.jpg'),
     /**
-     * A styling session in progress.
+     * A delivered styling session: the look, the pieces that make it up, and
+     * the client it was sent to.
      *
-     * No screenshot exists yet -- the flow has not been run end to end. The
-     * slide stands on its copy until there is a real session to capture, which
-     * is exactly what the null fallback is for.
+     * This was null while the flow had never been run end to end. It has now --
+     * a real booking, a real session, a real delivery -- so the slide has the
+     * screenshot it was waiting for rather than the emoji fallback.
      */
-    styling: null,
+    styling: require('@/assets/onboarding/styling.jpg'),
     /** A profile shop with live listings. */
     shop: require('@/assets/onboarding/shop.jpg'),
     /** The feed. */
