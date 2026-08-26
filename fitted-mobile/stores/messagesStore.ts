@@ -81,6 +81,22 @@ interface MessageWithUser extends Message {
     sender: User;
 }
 
+// Newest activity first.
+//
+// The query orders by conversations.created_at, which is when the thread was
+// started -- so a conversation you messaged a minute ago stayed wherever it was
+// first created, and the person you talk to most sank to the bottom. What
+// matters is when something last happened in it.
+//
+// An empty conversation has no last message, so it falls back to when it was
+// created. That keeps a thread you have just opened at the top, where you left
+// it, rather than at the bottom until somebody says something.
+const byRecentActivity = (a: ConversationWithDetails, b: ConversationWithDetails) => {
+    const at = new Date(a.lastMessage?.created_at ?? a.created_at).getTime();
+    const bt = new Date(b.lastMessage?.created_at ?? b.created_at).getTime();
+    return bt - at;
+};
+
 export const useMessagesStore = create<MessagesState>((set, get) => ({
     conversations: [],
     activeConversation: null,
@@ -130,7 +146,7 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
                 })
             );
 
-            set({ conversations: conversationsWithDetails, isLoading: false });
+            set({ conversations: conversationsWithDetails.sort(byRecentActivity), isLoading: false });
         } catch (error) {
             console.error('Error fetching conversations:', error);
             set({ isLoading: false });
@@ -204,9 +220,12 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
                 // rather than refetched: the row was just written, so what it
                 // says is already known.
                 set({
-                    conversations: get().conversations.map((c) => (
-                        c.id === conversationId ? { ...c, lastMessage: data as Message } : c
-                    )),
+                    conversations: get().conversations
+                        .map((c) => (c.id === conversationId ? { ...c, lastMessage: data as Message } : c))
+                        // Re-sorted with the same comparator, so the thread you
+                        // just replied to jumps to the top straight away rather
+                        // than waiting for the next fetch to notice.
+                        .sort(byRecentActivity),
                 });
             }
         } catch (error) {
