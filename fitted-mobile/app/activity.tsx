@@ -1,14 +1,14 @@
 ﻿import { StyleSheet, Pressable, FlatList, RefreshControl, ActivityIndicator, Alert } from 'react-native';
 import { useState, useCallback } from 'react';
 import { router } from 'expo-router';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
 
 import { Text, View } from '@/components/Themed';
 import { useNotificationsStore, FollowingActivityItem } from '@/stores/notificationsStore';
 import { useAuthStore } from '@/stores/authStore';
-import { Notification } from '@/types';
+import { Notification, NotificationType } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
 import { getPendingPortfolioRequests, respondToPortfolioRequest, PortfolioItem } from '@/services/portfolio';
 
@@ -16,7 +16,10 @@ interface NotificationWithDetails {
     id: string;
     user_id: string;
     actor_id: string;
-    type: 'like' | 'comment' | 'follow' | 'order_sold' | 'order_shipped';
+    // The shared union, not a second copy of it. This screen kept its own
+    // list, so widening NotificationType elsewhere left this one behind and
+    // the new kinds still looked impossible here.
+    type: NotificationType;
     post_id?: string;
     comment_id?: string;
     is_read: boolean;
@@ -143,6 +146,14 @@ export default function ActivityScreen() {
                 return notification.content ? `bought from you · $${notification.content}` : 'bought from you';
             case 'order_shipped':
                 return notification.content ? `shipped your order · $${notification.content}` : 'shipped your order';
+            case 'session_booked':
+                return notification.content
+                    ? `booked a ${notification.content} min styling session`
+                    : 'booked a styling session';
+            case 'session_delivered':
+                return 'delivered your styling session';
+            case 'portfolio_request':
+                return 'asked to show your look in their portfolio';
             default:
                 return '';
         }
@@ -160,10 +171,31 @@ export default function ActivityScreen() {
                 return <Feather name="shopping-bag" size={16} color="#15803d" />;
             case 'order_shipped':
                 return <Feather name="truck" size={16} color="#2563eb" />;
+            case 'session_booked':
+            case 'session_delivered':
+                return <MaterialCommunityIcons name="palette" size={16} color="#6366f1" />;
+            case 'portfolio_request':
+                return <Feather name="image" size={16} color="#6366f1" />;
             default:
                 return null;
         }
     };
+
+    // Direct messages have their own tab, with their own unread badge.
+    //
+    // notify_on_message writes a notification per message so a push can go out,
+    // and those rows were landing here too: seven messages in one conversation
+    // became seven rows in Activity. They rendered as bare avatars with a
+    // timestamp and no sentence, because there was no wording for the type and
+    // the switch fell through to an empty string.
+    //
+    // Anything else with no wording is dropped rather than drawn blank. A row
+    // that says nothing is worse than no row, and it is how this went unnoticed.
+    const activityFeed = notifications.filter((n) => {
+        if (n.type === 'message') return false;
+        return getNotificationText(n) !== '';
+    });
+
 
     const handleFollowingItemPress = (item: FollowingActivityItem) => {
         if (item.type === 'follow' && item.target_user) {
@@ -350,7 +382,7 @@ export default function ActivityScreen() {
                 </View>
             ) : tab === 'you' ? (
                 <FlatList
-                    data={notifications}
+                    data={activityFeed}
                     keyExtractor={(item) => item.id}
                     renderItem={renderNotification}
                     refreshControl={

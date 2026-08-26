@@ -182,7 +182,21 @@ export interface Folder {
     is_default?: boolean;
 }
 
-export type NotificationType = 'like' | 'comment' | 'follow' | 'order_sold' | 'order_shipped';
+// Kept in step with the notifications_type_check constraint in the database.
+// This union used to stop at order_shipped while the table already accepted
+// message and the session types, so those rows arrived in the app as a type
+// TypeScript said could not exist -- which is how they ended up rendering as
+// blank rows nobody had written any wording for.
+export type NotificationType =
+    | 'like'
+    | 'comment'
+    | 'follow'
+    | 'order_sold'
+    | 'order_shipped'
+    | 'message'
+    | 'session_booked'
+    | 'session_delivered'
+    | 'portfolio_request';
 
 export interface Notification {
     id: string;

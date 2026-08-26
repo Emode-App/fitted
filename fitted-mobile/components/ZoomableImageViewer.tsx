@@ -115,7 +115,15 @@ export default function ZoomableImageViewer({ visible, uri, onClose }: ZoomableI
                 <GestureDetector gesture={composed}>
                     <Animated.View style={styles.stage}>
                         {uri ? (
-                            <Animated.View style={[styles.stage, imageStyle]}>
+                            // Sized explicitly, not with flex.
+                            //
+                            // The stage centres its children, which makes a
+                            // flex:1 child shrink to its content on the cross
+                            // axis -- so the image inside asked for 100% of a
+                            // width that was zero and drew nothing at all. The
+                            // modal opened, the close button appeared, and the
+                            // picture was simply not there.
+                            <Animated.View style={[styles.imageWrap, imageStyle]}>
                                 <Image source={{ uri }} style={styles.image} contentFit="contain" />
                             </Animated.View>
                         ) : null}
@@ -145,6 +153,10 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    imageWrap: {
+        width: '100%',
+        height: '100%',
     },
     image: {
         width: '100%',
