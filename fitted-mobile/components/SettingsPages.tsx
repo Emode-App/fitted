@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, TextInput, Pressable, Alert, ActivityIndicator, Platform, Linking, Modal } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -1109,6 +1109,27 @@ export const DraftsPage = ({ onBack, onCloseDrawer }: DraftsPageProps) => {
 };
 
 const styles = StyleSheet.create({
+    earningsRow: {
+        flexDirection: 'row',
+        gap: 8,
+        marginBottom: 14,
+    },
+    earningsTile: {
+        flex: 1,
+        borderRadius: 12,
+        paddingVertical: 12,
+        paddingHorizontal: 10,
+    },
+    earningsLabel: {
+        fontSize: 9,
+        fontWeight: '700',
+        letterSpacing: 0.6,
+    },
+    earningsValue: {
+        fontSize: 17,
+        fontWeight: '700',
+        marginTop: 4,
+    },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -1853,6 +1874,50 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
             .catch(() => setPayoutReady(false));
     }, [user?.id, showPayoutSetup]);
 
+    // What any of this adds up to.
+    //
+    // The page listed every order and session with its own figure and never
+    // totalled them, so somebody earning through the app had no way to see what
+    // they had made without adding it up by hand. Derived from what is already
+    // loaded rather than fetched again.
+    //
+    // Earned counts money that is actually theirs: an order that has been paid,
+    // and a session that has been delivered. A booked session is authorised,
+    // not captured, so it sits under pending until the look is sent.
+    const earnings = useMemo(() => {
+        const orderPayout = (order: SaleRow) =>
+            (order.subtotal_amount - order.platform_fee_amount) / 100;
+
+        const startOfMonth = new Date();
+        startOfMonth.setDate(1);
+        startOfMonth.setHours(0, 0, 0, 0);
+
+        let earned = 0;
+        let pending = 0;
+        let thisMonth = 0;
+
+        for (const order of sales) {
+            const amount = orderPayout(order);
+            earned += amount;
+            if (new Date(order.created_at) >= startOfMonth) thisMonth += amount;
+        }
+
+        for (const session of sessions) {
+            const amount = Number(session.stylist_amount ?? 0);
+            const settled = session.status === 'delivered' || session.status === 'completed';
+            const dead = session.status === 'cancelled' || session.status === 'expired';
+
+            if (settled) {
+                earned += amount;
+                if (new Date(session.created_at) >= startOfMonth) thisMonth += amount;
+            } else if (!dead) {
+                pending += amount;
+            }
+        }
+
+        return { earned, pending, thisMonth };
+    }, [sales, sessions]);
+
     const openPayoutDashboard = async () => {
         try {
             const { url } = await getConnectLoginUrl();
@@ -1948,14 +2013,38 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
         <>
             <Header title={pageTitle} onBack={onBack} />
             <ScrollView style={styles.scrollContent} contentContainerStyle={{ paddingBottom: 40 }}>
+                <View style={styles.earningsRow}>
+                    <View style={[styles.earningsTile, { backgroundColor: colors.backgroundSecondary }]}>
+                        <Text style={[styles.earningsLabel, { color: colors.textSecondary }]}>EARNED</Text>
+                        <Text style={[styles.earningsValue, { color: '#15803d' }]}>${earnings.earned.toFixed(2)}</Text>
+                    </View>
+                    <View style={[styles.earningsTile, { backgroundColor: colors.backgroundSecondary }]}>
+                        <Text style={[styles.earningsLabel, { color: colors.textSecondary }]}>THIS MONTH</Text>
+                        <Text style={[styles.earningsValue, { color: colors.text }]}>${earnings.thisMonth.toFixed(2)}</Text>
+                    </View>
+                    {sellsStyling && (
+                        <View style={[styles.earningsTile, { backgroundColor: colors.backgroundSecondary }]}>
+                            <Text style={[styles.earningsLabel, { color: colors.textSecondary }]}>PENDING</Text>
+                            <Text style={[styles.earningsValue, { color: colors.textSecondary }]}>${earnings.pending.toFixed(2)}</Text>
+                        </View>
+                    )}
+                </View>
+
                 <Pressable
                     style={[styles.card, { borderColor: colors.border, backgroundColor: colors.background, padding: 14, marginBottom: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
-                    onPress={() => setShowPayoutSetup(true)}
+                    // Once setup is done this opens the Stripe dashboard, where
+                    // balances and payout dates live. It used to reopen the
+                    // onboarding flow -- the same fault the button below the
+                    // empty state had: the wording changed with payoutReady and
+                    // the handler never did.
+                    onPress={payoutReady ? openPayoutDashboard : () => setShowPayoutSetup(true)}
                 >
                     <View style={{ flex: 1 }}>
                         <Text style={{ color: colors.text, fontWeight: '700' }}>Seller payouts</Text>
                         <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                            {payoutReady ? 'Stripe setup is complete' : 'Complete Stripe setup before buyers can check out'}
+                            {payoutReady
+                                ? 'Setup complete — view balance and payouts on Stripe'
+                                : 'Complete Stripe setup before buyers can check out'}
                         </Text>
                     </View>
                     <Feather name="chevron-right" size={20} color={colors.textTertiary} />

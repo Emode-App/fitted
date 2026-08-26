@@ -57,11 +57,18 @@ export default function TaggedItemsModal({
 
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-            <Pressable style={styles.overlay} onPress={onClose}>
-                <Pressable
-                    style={[styles.sheet, { backgroundColor: colors.background }]}
-                    onPress={(event) => event.stopPropagation()}
-                >
+            <View style={styles.overlay}>
+                {/* The backdrop is a sibling behind the sheet, not a wrapper
+                    around it.
+                    
+                    Wrapping meant a Pressable ancestor sat directly above the
+                    pager, and a pressable competes for the touch responder as
+                    soon as a drag starts -- so the dots were there and swiping
+                    did nothing. As a sibling it still closes on a tap outside,
+                    because a tap on the sheet never reaches it. */}
+                <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+
+                <View style={[styles.sheet, { backgroundColor: colors.background }]}>
                     <ScrollView
                         ref={scrollRef}
                         horizontal
@@ -143,8 +150,8 @@ export default function TaggedItemsModal({
                     <Pressable style={styles.close} onPress={onClose}>
                         <Text style={[styles.closeText, { color: colors.textTertiary }]}>Close</Text>
                     </Pressable>
-                </Pressable>
-            </Pressable>
+                </View>
+            </View>
         </Modal>
     );
 }
