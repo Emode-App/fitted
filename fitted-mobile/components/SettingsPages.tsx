@@ -1900,10 +1900,23 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
         let pending = 0;
         let thisMonth = 0;
 
+        // A sale is made when the goods reach the buyer, not when the card is
+        // charged. 'fulfilled' is the furthest the app follows an order -- it
+        // is set when the seller marks it shipped -- so that is what counts as
+        // done, and a paid-but-unshipped order sits under pending with work
+        // still attached to it.
+        //
+        // Same rule the sessions use: booked is authorised, delivered is
+        // earned. One definition of "done" across both, rather than money
+        // counted at one moment for a shop and another for a stylist.
         for (const order of sales) {
             const amount = orderPayout(order);
-            earned += amount;
-            if (new Date(order.created_at) >= startOfMonth) thisMonth += amount;
+            if (order.status === 'fulfilled') {
+                earned += amount;
+                if (new Date(order.created_at) >= startOfMonth) thisMonth += amount;
+            } else {
+                pending += amount;
+            }
         }
 
         for (const session of sessions) {
@@ -1923,8 +1936,8 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
         // Everything in `sales` has been paid for -- the query asks for paid and
         // fulfilled -- so the count is of real sales, with the shipped subset
         // called out separately because that is the part still owed work.
-        const soldCount = sales.length;
-        const awaitingShipment = sales.filter((order) => order.status === 'paid').length;
+        const soldCount = sales.filter((order) => order.status === 'fulfilled').length;
+        const awaitingShipment = sales.filter((order) => order.status !== 'fulfilled').length;
 
         return { earned, pending, thisMonth, soldCount, awaitingShipment };
     }, [sales, sessions]);
@@ -2040,12 +2053,15 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
                                 : String(earnings.soldCount),
                             tone: colors.text,
                         }] : []),
-                        ...(sellsStyling ? [{
+                        {
+                            // Shown to shops too now. An order that is paid for
+                            // and not yet shipped is money in the same waiting
+                            // room as a booked session.
                             key: 'pending',
                             label: 'PENDING',
                             value: `$${earnings.pending.toFixed(2)}`,
                             tone: colors.textSecondary,
-                        }] : []),
+                        },
                     ].map((tile) => (
                         <View key={tile.key} style={[styles.earningsTile, { backgroundColor: colors.backgroundSecondary }]}>
                             <Text style={[styles.earningsLabel, { color: colors.textSecondary }]}>{tile.label}</Text>
