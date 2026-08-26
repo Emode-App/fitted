@@ -1,4 +1,4 @@
-import { StyleSheet, FlatList, Pressable, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Modal as RNModal, PanResponder, Alert } from 'react-native';
+import { StyleSheet, FlatList, Pressable, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Modal as RNModal, PanResponder, Alert, RefreshControl } from 'react-native';
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -47,6 +47,7 @@ export default function MessagesScreen() {
     const fetchMessages = useMessagesStore((state) => state.fetchMessages);
     const sendMessage = useMessagesStore((state) => state.sendMessage);
     const deleteMessage = useMessagesStore((state) => state.deleteMessage);
+    const hideMessage = useMessagesStore((state) => state.hideMessage);
     const sendFacePhoto = useMessagesStore((state) => state.sendFacePhoto);
     const sendImage = useMessagesStore((state) => state.sendImage);
     const setActiveConversation = useMessagesStore((state) => state.setActiveConversation);
@@ -424,6 +425,18 @@ export default function MessagesScreen() {
     }), []);
 
     // Render a single message — PaymentCard, OutfitDeliveryCard, FaceShare, or regular bubble
+    const [refreshingConversations, setRefreshingConversations] = useState(false);
+
+    const refreshConversations = async () => {
+        if (!user?.id) return;
+        setRefreshingConversations(true);
+        try {
+            await fetchConversations(user.id);
+        } finally {
+            setRefreshingConversations(false);
+        }
+    };
+
     const showMessageActions = (item: Message & { sender: User }) => {
         if (!user) return;
 
@@ -443,10 +456,17 @@ export default function MessagesScreen() {
                 return;
             }
 
-            Alert.alert('Unsend Message', 'This removes it for both of you.', [
+            Alert.alert('Your Message', undefined, [
                 { text: 'Cancel', style: 'cancel' },
                 {
-                    text: 'Unsend',
+                    text: 'Delete for Me',
+                    onPress: async () => {
+                        const error = await hideMessage(item.id);
+                        if (error) Alert.alert('Could Not Delete', error);
+                    },
+                },
+                {
+                    text: 'Unsend for Everyone',
                     style: 'destructive',
                     onPress: async () => {
                         const error = await deleteMessage(item.id);
@@ -458,6 +478,14 @@ export default function MessagesScreen() {
         }
         Alert.alert('Message Options', 'Report this message or block its sender?', [
             { text: 'Cancel', style: 'cancel' },
+            {
+                // The main use of hiding is somebody else's message: you cannot
+                // unsend theirs, and you should not have to keep looking at it.
+                text: 'Delete for Me', onPress: async () => {
+                    const error = await hideMessage(item.id);
+                    if (error) Alert.alert('Could Not Delete', error);
+                },
+            },
             {
                 text: 'Report Message', onPress: async () => {
                     const result = await reportContent({ contentType: 'message', contentId: item.id, reportedUserId: item.sender_id, reason: 'Objectionable direct message' });
@@ -825,6 +853,17 @@ export default function MessagesScreen() {
                     <FlatList
                         data={filteredConversations}
                         keyExtractor={(item) => item.id}
+                        // Pulling down did nothing at all -- there was no
+                        // RefreshControl on this list, so there was no spinner
+                        // and no refetch, and a stale list could only be fixed
+                        // by restarting the app.
+                        refreshControl={
+                            <RefreshControl
+                                refreshing={refreshingConversations}
+                                onRefresh={refreshConversations}
+                                tintColor={colors.text}
+                            />
+                        }
                         renderItem={({ item }) => (
                             <Pressable style={[styles.conversationItem, { borderBottomColor: colors.border }]} onPress={() => setActiveConversation(item)}>
                                 <View style={styles.avatarContainer}>

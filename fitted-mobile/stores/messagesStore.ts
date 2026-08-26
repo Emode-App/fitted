@@ -63,6 +63,8 @@ interface MessagesState {
     sendStylingDelivery: (conversationId: string, senderId: string, delivery: StylingDelivery) => Promise<string | null>;
     sendFacePhoto: (conversationId: string, senderId: string, faceUrl: string) => Promise<void>;
     sendImage: (conversationId: string, senderId: string, localUri: string) => Promise<boolean>;
+    /** Hide for yourself only. The other person still sees it. Resolves to an error string, or null. */
+    hideMessage: (messageId: string) => Promise<string | null>;
     /** Unsend: removes the message for both people. Resolves to an error string, or null on success. */
     deleteMessage: (messageId: string) => Promise<string | null>;
     createConversation: (userId: string, otherUserId: string) => Promise<string | null>;
@@ -146,6 +148,14 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
                 .eq('conversation_id', conversationId)
                 .order('created_at', { ascending: true });
 
+            // Messages this person hid for themselves. Filtered here rather
+            // than in the query, because the hidden list is private and a join
+            // against it would leak nothing useful but complicate the policy.
+            const { data: hidden } = await supabase
+                .from('hidden_messages')
+                .select('message_id');
+            const hiddenIds = new Set((hidden ?? []).map((h: any) => h.message_id));
+
             if (!error && data) {
                 // Resolve private media (DM images, shared face photos, and the
                 // face-derived styling deliveries) to short-lived signed URLs.
@@ -169,7 +179,7 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
                         };
                     })
                 );
-                set({ messages: resolved as MessageWithUser[] });
+                set({ messages: (resolved as MessageWithUser[]).filter((m) => !hiddenIds.has(m.id)) });
             }
         } catch (error) {
             console.error('Error fetching messages:', error);
@@ -178,15 +188,26 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
 
     sendMessage: async (conversationId: string, senderId: string, text: string) => {
         try {
-            const { error } = await supabase.from('messages').insert({
+            const { data, error } = await supabase.from('messages').insert({
                 conversation_id: conversationId,
                 sender_id: senderId,
                 text,
-            });
+            }).select('*').single();
 
             if (!error) {
-                // Refresh messages
                 get().fetchMessages(conversationId);
+
+                // The conversation list quotes the last message, and this only
+                // ever refreshed the thread -- so the preview kept showing what
+                // the other person had said last, until the app was restarted
+                // and the list was fetched again from scratch. Patched here
+                // rather than refetched: the row was just written, so what it
+                // says is already known.
+                set({
+                    conversations: get().conversations.map((c) => (
+                        c.id === conversationId ? { ...c, lastMessage: data as Message } : c
+                    )),
+                });
             }
         } catch (error) {
             console.error('Error sending message:', error);
@@ -205,6 +226,25 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
 
     // Returns the new message id so the caller can hand it to the styling-session
     // function, which captures payment against that specific delivery.
+    hideMessage: async (messageId: string) => {
+        const userId = (await supabase.auth.getUser()).data.user?.id;
+        if (!userId) return 'Sign in to hide messages';
+
+        const previous = get().messages;
+        set({ messages: previous.filter((m) => m.id !== messageId) });
+
+        const { error } = await supabase
+            .from('hidden_messages')
+            .insert({ user_id: userId, message_id: messageId });
+
+        // Already hidden is the state we wanted, not a failure.
+        if (error && error.code !== '23505') {
+            set({ messages: previous });
+            return error.message || 'Could not hide that message';
+        }
+        return null;
+    },
+
     deleteMessage: async (messageId: string) => {
         // Gone from the list first, so the bubble does not sit there looking
         // undeleted while the round trip finishes. Put back if the server

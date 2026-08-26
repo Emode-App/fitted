@@ -14,6 +14,7 @@ import { BlurView } from 'expo-blur';
 import { useTheme } from '@/hooks/useTheme';
 import { StylingDelivery, ClothingItem } from '@/types';
 import ZoomableImageViewer from '@/components/ZoomableImageViewer';
+import TaggedItemsModal from '@/components/TaggedItemsModal';
 
 const CARD_PADDING = 14;
 
@@ -30,6 +31,7 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
     const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
     const [page, setPage] = useState(0);
     const [pageSize, setPageSize] = useState(0);
+    const [openItemIndex, setOpenItemIndex] = useState<number | null>(null);
 
     const pages = [
         { uri: delivery.generated_image_url, label: '' },
@@ -178,8 +180,12 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                                 contentContainerStyle={styles.itemsScroll}
                             >
                                 {delivery.items.map((item, index) => (
-                                    <View
+                                    /* The row used to be decoration. Tapping a
+                                       piece opens it properly, on that piece
+                                       rather than the first one. */
+                                    <Pressable
                                         key={item.id || index.toString()}
+                                        onPress={() => setOpenItemIndex(index)}
                                         style={[styles.itemCard, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }]}
                                     >
                                         {item.image_url ? (
@@ -204,7 +210,7 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                                                 ${item.price.toFixed(0)}
                                             </Text>
                                         )}
-                                    </View>
+                                    </Pressable>
                                 ))}
                             </ScrollView>
                         </View>
@@ -239,6 +245,15 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                 visible={showFullscreen}
                 uri={fullscreenImage}
                 onClose={() => setShowFullscreen(false)}
+            />
+
+            {/* Swipeable, because the reason to look at one piece is usually to
+                compare it with the others in the same outfit. */}
+            <TaggedItemsModal
+                visible={openItemIndex !== null}
+                items={delivery.items}
+                initialIndex={openItemIndex ?? 0}
+                onClose={() => setOpenItemIndex(null)}
             />
         </>
     );
