@@ -251,7 +251,16 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
 
 const styles = StyleSheet.create({
     container: {
-        maxWidth: '90%',
+        // A definite width, not a cap.
+        //
+        // maxWidth alone never gives this a width: it sizes to its content,
+        // while the pager inside asks for width:'100%' *of this*. That is
+        // circular, and Yoga settles it over several passes -- so the frame's
+        // aspectRatio height was computed against one width while the card
+        // ended up another, and the difference stayed behind as dead space
+        // below the timestamp. A definite width breaks the loop: card width is
+        // known first, the pager follows it, and the square is actually square.
+        width: '90%',
         marginBottom: 10,
     },
     card: {
