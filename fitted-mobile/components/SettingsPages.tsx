@@ -17,6 +17,7 @@ import { submitSupportRequest } from '@/services/supportService';
 import { useStripeCheckout } from '@/hooks/useStripeCheckout';
 import StripeConnectOnboarding from '@/components/StripeConnectOnboarding';
 import { checkConnectStatus, getConnectLoginUrl } from '@/services/stripeService';
+import { CARRIERS, CarrierId, carrierLabel, trackingUrl } from '@/constants/tracking';
 import { getOwnPortfolio, requestPortfolioItem } from '@/services/portfolio';
 
 interface LoginSession {
@@ -1625,6 +1626,8 @@ interface OrderRow {
     shipping: any;
     seller?: { id: string; username?: string; handle?: string; avatar_url?: string } | null;
     items: { id: string; name: string; price_amount: number; size?: string | null; image_url?: string | null }[];
+    tracking_carrier?: string | null;
+    tracking_number?: string | null;
 }
 
 const ORDER_STATUS: Record<string, { label: string; color: string; bg: string }> = {
@@ -1648,6 +1651,7 @@ export const OrdersPage = ({ onBack }: { onBack: () => void }) => {
                 .from('orders')
                 .select(`
                     id, status, subtotal_amount, created_at, shipping,
+                    tracking_carrier, tracking_number,
                     seller:users!orders_seller_id_fkey(id, username, handle, avatar_url),
                     items:order_items(id, name, price_amount, size, image_url)
                 `)
@@ -1730,6 +1734,51 @@ export const OrdersPage = ({ onBack }: { onBack: () => void }) => {
                                 ))}
                             </View>
 
+                            {/* Track it. This is the whole point of storing a
+                                number: the buyer goes to the carrier instead of
+                                messaging the seller to ask where it is.
+
+                                A carrier we have no URL for shows the number as
+                                text to copy rather than a button that goes
+                                nowhere -- a dead link reads as the app being
+                                broken instead of as an unusual carrier. */}
+                            {order.tracking_number ? (
+                                trackingUrl(order.tracking_carrier, order.tracking_number) ? (
+                                    <Pressable
+                                        style={{
+                                            flexDirection: 'row',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: 8,
+                                            marginTop: 12,
+                                            paddingVertical: 12,
+                                            borderRadius: 12,
+                                            borderWidth: 1,
+                                            borderColor: colors.border,
+                                        }}
+                                        onPress={() => {
+                                            const url = trackingUrl(order.tracking_carrier, order.tracking_number);
+                                            if (url) Linking.openURL(url);
+                                        }}
+                                    >
+                                        <Feather name="truck" size={15} color={colors.text} />
+                                        <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>
+                                            Track with {carrierLabel(order.tracking_carrier)}
+                                        </Text>
+                                        <Feather name="external-link" size={13} color={colors.textTertiary} />
+                                    </Pressable>
+                                ) : (
+                                    <View style={{ marginTop: 12, padding: 10, borderRadius: 10, backgroundColor: isDark ? '#27272a' : '#f9fafb' }}>
+                                        <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textSecondary, textTransform: 'uppercase' }}>
+                                            Tracking
+                                        </Text>
+                                        <Text selectable style={{ fontSize: 13, color: colors.text, marginTop: 3 }}>
+                                            {order.tracking_number}
+                                        </Text>
+                                    </View>
+                                )
+                            ) : null}
+
                             {/* Date + total */}
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: isDark ? '#27272a' : '#f3f4f6' }}>
                                 <Text style={{ fontSize: 12, color: colors.textTertiary }}>{fmtDate(order.created_at)}</Text>
@@ -1753,6 +1802,9 @@ interface SaleRow {
     shipping: { name?: string; line1?: string; line2?: string; city?: string; state?: string; postal_code?: string; country?: string } | null;
     buyer?: { id: string; username?: string; handle?: string; avatar_url?: string } | null;
     items: { id: string; name: string; price_amount: number; size?: string | null; image_url?: string | null }[];
+    tracking_carrier?: string | null;
+    tracking_number?: string | null;
+    shipped_at?: string | null;
 }
 
 export const SalesPage = ({ onBack }: { onBack: () => void }) => {
@@ -1784,6 +1836,7 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
                 .from('orders')
                 .select(`
                     id, status, subtotal_amount, platform_fee_amount, created_at, shipping,
+                    tracking_carrier, tracking_number, shipped_at,
                     buyer:users!orders_buyer_id_fkey(id, username, handle, avatar_url),
                     items:order_items(id, name, price_amount, size, image_url)
                 `)
@@ -1942,6 +1995,10 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
         return { earned, pending, thisMonth, soldCount, awaitingShipment };
     }, [sales, sessions]);
 
+    const [trackingOrder, setTrackingOrder] = useState<SaleRow | null>(null);
+    const [trackingCarrier, setTrackingCarrier] = useState<CarrierId>('usps');
+    const [trackingNumber, setTrackingNumber] = useState('');
+
     const openPayoutDashboard = async () => {
         try {
             const { url } = await getConnectLoginUrl();
@@ -1951,20 +2008,42 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
         }
     };
 
+    // Marking shipped asks for the tracking details in the same breath.
+    //
+    // Asked here rather than in a separate step because this is the one moment
+    // the seller is holding the label. A prompt later is a prompt that gets
+    // ignored, and then the buyer has nothing to look at and messages them to
+    // ask -- which is the thing tracking is meant to save everybody.
+    //
+    // Both are optional. Somebody handing an item over in person has no number,
+    // and refusing to let them mark it shipped would be worse than an order
+    // with no tracking on it.
     const markShipped = (order: SaleRow) => {
-        Alert.alert('Mark as Shipped', "Confirm you've shipped this order to the buyer?", [
-            { text: 'Cancel', style: 'cancel' },
-            {
-                text: 'Mark Shipped',
-                onPress: async () => {
-                    setUpdatingId(order.id);
-                    const { error } = await supabase.from('orders').update({ status: 'fulfilled' }).eq('id', order.id);
-                    setUpdatingId(null);
-                    if (error) { Alert.alert('Error', error.message); return; }
-                    setSales((prev) => prev.map((s) => (s.id === order.id ? { ...s, status: 'fulfilled' } : s)));
-                },
-            },
-        ]);
+        setTrackingOrder(order);
+        setTrackingCarrier('usps');
+        setTrackingNumber('');
+    };
+
+    const confirmShipped = async () => {
+        const order = trackingOrder;
+        if (!order) return;
+
+        const code = trackingNumber.trim();
+        setUpdatingId(order.id);
+
+        const patch = {
+            status: 'fulfilled',
+            shipped_at: new Date().toISOString(),
+            tracking_carrier: code ? trackingCarrier : null,
+            tracking_number: code || null,
+        };
+
+        const { error } = await supabase.from('orders').update(patch).eq('id', order.id);
+        setUpdatingId(null);
+        setTrackingOrder(null);
+
+        if (error) { Alert.alert('Error', error.message); return; }
+        setSales((prev) => prev.map((s) => (s.id === order.id ? { ...s, ...patch } as SaleRow : s)));
     };
 
     const fmtDate = (ts: string) =>
@@ -2028,6 +2107,78 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
                         </Text>
                     </Pressable>
                 </View>
+                {/* Asked at the moment the seller is holding the label. A
+                    separate step later is a step that gets skipped, and then
+                    the buyer has nothing to look at and messages to ask. */}
+                <Modal visible={!!trackingOrder} transparent animationType="slide" onRequestClose={() => setTrackingOrder(null)}>
+                    <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+                        <Pressable style={StyleSheet.absoluteFill} onPress={() => setTrackingOrder(null)} />
+                        <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 14 }}>
+                            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>Mark as shipped</Text>
+                            <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: -8 }}>
+                                Add tracking and the buyer can follow it themselves. Leave it blank if there is none.
+                            </Text>
+
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                                {CARRIERS.map((carrier) => (
+                                    <Pressable
+                                        key={carrier.id}
+                                        onPress={() => setTrackingCarrier(carrier.id)}
+                                        style={{
+                                            paddingVertical: 9,
+                                            paddingHorizontal: 14,
+                                            borderRadius: 10,
+                                            backgroundColor: trackingCarrier === carrier.id ? colors.primary : colors.backgroundSecondary,
+                                        }}
+                                    >
+                                        <Text style={{
+                                            fontSize: 13,
+                                            fontWeight: '600',
+                                            color: trackingCarrier === carrier.id ? colors.primaryForeground : colors.textSecondary,
+                                        }}>
+                                            {carrier.label}
+                                        </Text>
+                                    </Pressable>
+                                ))}
+                            </View>
+
+                            <TextInput
+                                value={trackingNumber}
+                                onChangeText={setTrackingNumber}
+                                placeholder="Tracking number"
+                                placeholderTextColor={colors.placeholder}
+                                autoCapitalize="characters"
+                                autoCorrect={false}
+                                style={{
+                                    borderWidth: 1,
+                                    borderColor: colors.border,
+                                    borderRadius: 12,
+                                    paddingHorizontal: 14,
+                                    paddingVertical: 12,
+                                    fontSize: 15,
+                                    color: colors.text,
+                                }}
+                            />
+
+                            <Pressable
+                                style={[styles.button, { backgroundColor: colors.primary, alignItems: 'center' }]}
+                                onPress={confirmShipped}
+                                disabled={updatingId === trackingOrder?.id}
+                            >
+                                {updatingId === trackingOrder?.id
+                                    ? <ActivityIndicator color="#fff" size="small" />
+                                    : <Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>
+                                        {trackingNumber.trim() ? 'Mark shipped with tracking' : 'Mark shipped'}
+                                      </Text>}
+                            </Pressable>
+
+                            <Pressable style={{ alignItems: 'center', paddingVertical: 8 }} onPress={() => setTrackingOrder(null)}>
+                                <Text style={{ color: colors.textSecondary, fontWeight: '600' }}>Cancel</Text>
+                            </Pressable>
+                        </View>
+                    </View>
+                </Modal>
+
                 <StripeConnectOnboarding visible={showPayoutSetup} onClose={() => setShowPayoutSetup(false)} onComplete={() => setShowPayoutSetup(false)} />
             </>
         );
@@ -2257,6 +2408,24 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
                             ) : null}
 
                             {/* Payout + date + action */}
+                            {/* The seller's own copy of what they entered, so
+                                they can check it against the label and answer
+                                "did you send it" without leaving the app. */}
+                            {order.tracking_number ? (
+                                <Pressable
+                                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 }}
+                                    onPress={() => {
+                                        const url = trackingUrl(order.tracking_carrier, order.tracking_number);
+                                        if (url) Linking.openURL(url);
+                                    }}
+                                >
+                                    <Feather name="truck" size={13} color={colors.textSecondary} />
+                                    <Text style={{ fontSize: 12, color: colors.textSecondary }} numberOfLines={1}>
+                                        {carrierLabel(order.tracking_carrier)} · {order.tracking_number}
+                                    </Text>
+                                </Pressable>
+                            ) : null}
+
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: isDark ? '#27272a' : '#f3f4f6' }}>
                                 <View>
                                     <Text style={{ fontSize: 12, color: colors.textTertiary }}>{fmtDate(order.created_at)}</Text>

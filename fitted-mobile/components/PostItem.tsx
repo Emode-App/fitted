@@ -6,6 +6,7 @@ import * as Haptics from 'expo-haptics';
 
 import MentionText from '@/components/MentionText';
 import ZoomableImageViewer from '@/components/ZoomableImageViewer';
+import LikesModal from '@/components/LikesModal';
 import { Post, ClothingItem } from '@/types';
 import SaveItemButton from '@/components/SaveItemButton';
 import { useTheme } from '@/hooks/useTheme';
@@ -200,6 +201,7 @@ export default function PostItem({ post, onLike, onComment, onShare, onSave, onU
 
     // Handle single tap (show tags) and double tap (like)
     const [zoomUri, setZoomUri] = useState<string | null>(null);
+    const [showLikes, setShowLikes] = useState(false);
 
     const handleImageTap = () => {
         const now = Date.now();
@@ -420,7 +422,16 @@ export default function PostItem({ post, onLike, onComment, onShare, onSave, onU
                 onPress={onPostPress}
                 disabled={!onPostPress}
             >
-                <RNText style={[styles.likes, { color: colors.text }, !post.caption && { marginBottom: 0 }]}>{post.likes_count || 0} flames</RNText>
+                {/* The count was the whole of it, and the count is the least
+                    interesting part -- which people gave the flame is the point.
+                    Only pressable when there is somebody to show. */}
+                <RNText
+                    suppressHighlighting
+                    onPress={post.likes_count ? () => setShowLikes(true) : undefined}
+                    style={[styles.likes, { color: colors.text }, !post.caption && { marginBottom: 0 }]}
+                >
+                    {post.likes_count || 0} flames
+                </RNText>
                 {post.caption ? (
                     <RNText style={[styles.caption, { color: colors.text }]}>
                         <RNText style={styles.captionUsername} onPress={(e) => { e.stopPropagation?.(); onUserPress(); }}>{user?.handle || user?.username} </RNText>
@@ -479,6 +490,12 @@ export default function PostItem({ post, onLike, onComment, onShare, onSave, onU
                 visible={!!zoomUri}
                 uri={zoomUri}
                 onClose={() => setZoomUri(null)}
+            />
+
+            <LikesModal
+                visible={showLikes}
+                postId={post.id}
+                onClose={() => setShowLikes(false)}
             />
         </RNView>
     );
