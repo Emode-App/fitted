@@ -27,6 +27,12 @@ Google Cloud project **Emode** (`gen-lang-client-0249147471`):
   `19094142874-2o2e3ed46nc8fc73bkllof7jk6eiulr0.apps.googleusercontent.com`
 - `brandonmtalla@gmail.com` added as a test user (see Publishing status below).
 
+Supabase (`scvvbjheyfnxlsiiozta`):
+
+- **Apple provider enabled**, Client IDs `com.emode.app`, no secret.
+- Google provider still disabled -- it is the only thing that needs a secret,
+  and the secret is yours to paste.
+
 This repo:
 
 - Both ids in `.env.local` (gitignored) and in the EAS `production`, `preview`
@@ -38,7 +44,7 @@ This repo:
 
 ## 1. Sign in with Apple
 
-Two steps. Not more.
+One step left, in the Apple portal. The Supabase side is already done.
 
 Because the app signs in **natively** -- `expo-apple-authentication` hands back
 an identity token that Supabase verifies against Apple's public keys -- there is
@@ -57,9 +63,10 @@ server-to-server notification endpoint blank; Supabase does not support it.
 (EAS may have already enabled this while setting up credentials, since
 `ios.usesAppleSignIn` is set in app.json. Check before assuming it is missing.)
 
-### Supabase dashboard
-**Authentication → Providers → Apple**, enable, and put `com.emode.app` in
-**Client IDs**. Leave the secret fields empty.
+### Supabase dashboard -- done
+**Authentication → Providers → Apple** is enabled with `com.emode.app` in
+**Client IDs** and both secret fields empty, which the dashboard accepted
+without complaint -- the practical proof that the native path needs no key.
 
 Add `host.exp.Exponent` to that same comma-separated list *only* if you want
 Apple sign-in to work inside Expo Go -- that is the App ID Expo Go signs as.
