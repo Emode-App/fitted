@@ -745,7 +745,14 @@ export const HelpPage = ({ onBack, onNavigate }: { onBack: () => void; onNavigat
                     <MenuLink icon="mail" label="Contact Us" onPress={() => onNavigate('contact')} />
                     <MenuLink icon="shield" label="Privacy Policy" onPress={() => Linking.openURL(LEGAL.privacyPolicyUrl)} />
                     <MenuLink icon="file-text" label="Terms of Service" onPress={() => Linking.openURL(LEGAL.termsUrl)} />
-                    <MenuLink icon="trash-2" label="Account Deletion Help" onPress={() => Linking.openURL(LEGAL.accountDeletionUrl)} />
+                    {/* No "Account Deletion Help" link here.
+                        It opened the Supabase function, which is not a URL to
+                        put in front of anyone in a shipped app, and the gateway
+                        serves it as plain text anyway. Deleting an account
+                        happens in the settings drawer, which is what Guideline
+                        5.1.1(v) actually asks for -- a web page was only ever a
+                        convenience for somebody who cannot sign in. It comes
+                        back when emode.style/app/delete-account exists. */}
                 </View>
 
                 {/* Live Chat Box */}

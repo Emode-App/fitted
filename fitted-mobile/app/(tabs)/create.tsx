@@ -31,6 +31,10 @@ import { BACKGROUND_OPTIONS, DEFAULT_BACKGROUND, BackgroundOption, POLAROID_FRAM
  * a third off the top and bottom, and a shoe arrives looking like it was
  * photographed through a keyhole.
  */
+// Three rows of two: enough to judge whether the search worked, few enough
+// that the Generate button stays within reach.
+const COLLAPSED_RESULTS = 6;
+
 const MAX_COVER_CROP = 1.25;
 
 function fitForImage(imageWidth?: number, imageHeight?: number, windowWidth?: number, windowHeight?: number) {
@@ -449,6 +453,7 @@ export default function CreateScreen() {
     const [isGenerating, setIsGenerating] = useState(false);
     const [generatedImageUri, setGeneratedImageUri] = useState<string | null>(null);
     const [zoomUri, setZoomUri] = useState<string | null>(null);
+    const [showAllResults, setShowAllResults] = useState(false);
     const [capturedBoardUri, setCapturedBoardUri] = useState<string | null>(null);
 
     // Preview carousel state
@@ -1088,6 +1093,10 @@ export default function CreateScreen() {
         }
         // Tag each run so a slow one cannot overwrite the results of a faster
         // one typed after it.
+        // A fresh search starts collapsed. Left open from the last one, the long
+        // list goes straight back between them and the button.
+        setShowAllResults(false);
+
         const run = ++searchRunRef.current;
         setSearchLoading(true);
         setHasSearched(true);
@@ -1955,7 +1964,7 @@ export default function CreateScreen() {
                                             /* Search Results - 2 column grid */
                                             <>
                                             <View style={styles.searchResultsGrid}>
-                                                {searchResults.map((item, index) => (
+                                                {(showAllResults ? searchResults : searchResults.slice(0, COLLAPSED_RESULTS)).map((item, index) => (
                                                     <Pressable
                                                         key={`${item.name}-${index}`}
                                                         style={styles.productCard}
@@ -1988,6 +1997,28 @@ export default function CreateScreen() {
                                                     </Pressable>
                                                 ))}
                                             </View>
+
+                                            {/* Two columns and up to thirty results puts
+                                                fifteen rows between somebody and the
+                                                Generate button they reach once they have
+                                                finished adding pieces. Collapsed to three
+                                                rows the button stays close, and it opens
+                                                again for anyone still browsing. */}
+                                            {searchResults.length > COLLAPSED_RESULTS && (
+                                                <Pressable
+                                                    style={[styles.showAllResults, { borderColor: colors.border }]}
+                                                    onPress={() => setShowAllResults((open) => !open)}
+                                                >
+                                                    <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>
+                                                        {showAllResults ? 'Show fewer' : `Show all ${searchResults.length} results`}
+                                                    </Text>
+                                                    <Feather
+                                                        name={showAllResults ? 'chevron-up' : 'chevron-down'}
+                                                        size={16}
+                                                        color={colors.textSecondary}
+                                                    />
+                                                </Pressable>
+                                            )}
 
                                             {/* The web pass runs behind results that are
                                                 already showing, so say so rather than
@@ -3396,6 +3427,17 @@ const styles = StyleSheet.create({
     searchResultsGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
+    },
+    showAllResults: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        marginHorizontal: 6,
+        marginTop: 6,
+        paddingVertical: 12,
+        borderRadius: 12,
+        borderWidth: 1,
     },
     productCard: {
         flexBasis: '50%', // 2 columns like grid-cols-2

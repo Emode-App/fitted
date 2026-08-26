@@ -15,17 +15,20 @@
 // about face consent, stylist sessions or user reporting. Pointing the app at
 // those would have handed Apple a policy for a different product.
 //
-// Account deletion has no page yet. It stays on the function: nothing in the
-// app links to it, since deletion happens in Settings, and it is only wanted
-// for the optional App Store Connect field.
+// Nothing here points at Supabase. A shipped app should not send anyone to an
+// infrastructure URL, and that one renders as plain text besides.
+//
+// Account deletion has no page on the site yet. The value is kept because App
+// Store Connect has a field for it, but nothing in the app opens it -- deleting
+// an account happens in the settings drawer, which is what Guideline 5.1.1(v)
+// asks for. The link in Settings comes back when the page exists.
 const SITE = 'https://www.emode.style';
-const LEGAL_BASE = 'https://scvvbjheyfnxlsiiozta.supabase.co/functions/v1/legal';
 
 export const LEGAL = {
     privacyPolicyUrl: process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL || `${SITE}/app/privacy`,
     termsUrl: process.env.EXPO_PUBLIC_TERMS_URL || `${SITE}/app/terms`,
     supportUrl: process.env.EXPO_PUBLIC_SUPPORT_URL || `${SITE}/support`,
-    accountDeletionUrl: process.env.EXPO_PUBLIC_ACCOUNT_DELETION_URL || `${LEGAL_BASE}/delete-account`,
+    accountDeletionUrl: process.env.EXPO_PUBLIC_ACCOUNT_DELETION_URL || `${SITE}/app/delete-account`,
     supportEmail: 'support@emode.style',
     termsVersion: '2026-08-17',
     aiConsentVersion: '2026-08-12',
