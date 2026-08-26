@@ -5,7 +5,6 @@ import {
     StyleSheet,
     Pressable,
     ScrollView,
-    Dimensions,
     Modal,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -16,7 +15,6 @@ import { useTheme } from '@/hooks/useTheme';
 import { StylingDelivery, ClothingItem } from '@/types';
 import ZoomableImageViewer from '@/components/ZoomableImageViewer';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_PADDING = 14;
 
 interface OutfitDeliveryCardProps {
@@ -31,16 +29,7 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
     const [showFullscreen, setShowFullscreen] = useState(false);
     const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
     const [page, setPage] = useState(0);
-
-    // Worked out, not measured.
-    //
-    // Measuring meant the card rendered short on the first pass and grew once
-    // onLayout came back, and the chat scrolls to the end on content-size
-    // change -- so it scrolled against the short height and stopped there,
-    // leaving the next message below the fold. The card is 90% of the screen
-    // (styles.container) less its own padding, which is known before any
-    // layout happens, so the height is right on the first render.
-    const PAGE_SIZE = Math.round(SCREEN_WIDTH * 0.9) - CARD_PADDING * 2;
+    const [pageSize, setPageSize] = useState(0);
 
     const pages = [
         { uri: delivery.generated_image_url, label: '' },
@@ -103,33 +92,42 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                         message ran off the bottom and hid every message sent
                         after it. Swiping keeps the card one image tall however
                         many pictures a delivery carries. */}
-                    <View style={[styles.pagerFrame, { height: PAGE_SIZE }]}>
-                        {/* Every size here is a measured number, never a
-                            percentage.
+                    {/* The frame gives itself its height.
+                        aspectRatio in a vertical parent is safe and needs no
+                        measurement, so the card is its final height on the very
+                        first render -- which matters because the chat scrolls to
+                        the end on content-size change, and a card that grows
+                        afterwards leaves the next message below the fold.
 
-                            The pages sit in a horizontal ScrollView, where a
-                            width of '100%' resolves against a container with no
-                            bound -- and aspectRatio then matched the height to
-                            that runaway width. The card grew past the bottom of
-                            the screen and swallowed the messages under it. */}
-                        <ScrollView
+                        I previously computed this from SCREEN_WIDTH * 0.9, but
+                        the container takes 90% of the list's content width, and
+                        the list has 16pt of padding. Every page came out ~29pt
+                        wider than the card's inside, which pushed the expand
+                        button past the frame's right edge where overflow:hidden
+                        cut it in half. The frame's own width is the only honest
+                        source for this, so the pages read it from onLayout. */}
+                    <View
+                        style={styles.pagerFrame}
+                        onLayout={(event) => setPageSize(Math.round(event.nativeEvent.layout.width))}
+                    >
+                        {pageSize > 0 && (
+                            <ScrollView
                                 horizontal
                                 pagingEnabled
                                 showsHorizontalScrollIndicator={false}
-                                style={{ width: PAGE_SIZE, height: PAGE_SIZE }}
                                 onMomentumScrollEnd={(event) => {
-                                    setPage(Math.round(event.nativeEvent.contentOffset.x / PAGE_SIZE));
+                                    setPage(Math.round(event.nativeEvent.contentOffset.x / pageSize));
                                 }}
                             >
                                 {pages.map((image) => (
                                     <Pressable
                                         key={image.uri}
                                         onPress={() => openFullscreen(image.uri)}
-                                        style={{ width: PAGE_SIZE, height: PAGE_SIZE }}
+                                        style={{ width: pageSize, height: pageSize }}
                                     >
                                         <Image
                                             source={{ uri: image.uri }}
-                                            style={{ width: PAGE_SIZE, height: PAGE_SIZE }}
+                                            style={{ width: pageSize, height: pageSize }}
                                             contentFit="cover"
                                             transition={300}
                                         />
@@ -143,7 +141,8 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                                         </View>
                                     </Pressable>
                                 ))}
-                        </ScrollView>
+                            </ScrollView>
+                        )}
                     </View>
 
                     {pages.length > 1 && (
@@ -297,13 +296,18 @@ const styles = StyleSheet.create({
         fontFamily: 'Inter_700Bold',
     },
     // Outfit Image
-    // The pages are sized inline from PAGE_SIZE. There were styles here doing
-    // it with width:'100%' and aspectRatio, and inside a horizontal ScrollView
-    // that is exactly what made the card grow past the bottom of the screen.
+    // The pages are sized inline from the frame's measured width. Styles here
+    // used to do it with width:'100%' and aspectRatio, and inside a horizontal
+    // ScrollView that is what made the card grow past the bottom of the screen.
     // Deleted rather than left lying around, because they read as correct until
     // you notice which axis they are in.
     pagerFrame: {
         width: '100%',
+        // Square, decided here rather than from the screen size. This is a
+        // vertical context, so aspectRatio is safe -- the width is already
+        // bounded by the card. It was only dangerous on the pages themselves,
+        // which sit inside a horizontal ScrollView where width has no bound.
+        aspectRatio: 1,
         borderRadius: 14,
         // overflow:hidden is load-bearing, not decoration: it stops a page that
         // measures wrong from painting outside the card.
@@ -434,26 +438,4 @@ const styles = StyleSheet.create({
         fontFamily: 'Inter_400Regular',
     },
     // Fullscreen
-    fullscreenOverlay: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    fullscreenClose: {
-        position: 'absolute',
-        top: 60,
-        right: 20,
-        zIndex: 10,
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    fullscreenImage: {
-        width: SCREEN_WIDTH - 32,
-        height: SCREEN_WIDTH - 32,
-        borderRadius: 16,
-    },
 });
