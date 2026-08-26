@@ -1628,7 +1628,20 @@ interface OrderRow {
     items: { id: string; name: string; price_amount: number; size?: string | null; image_url?: string | null }[];
     tracking_carrier?: string | null;
     tracking_number?: string | null;
+    refunded_amount?: number | null;
+    dispute_status?: string | null;
 }
+
+// Shared by both order screens. It lived inside SalesPage, so the buyer's page
+// could not format the address it had already fetched.
+const fmtAddress = (a: {
+    name?: string; line1?: string; line2?: string;
+    city?: string; state?: string; postal_code?: string; country?: string;
+} | null) => {
+    if (!a) return '';
+    return [a.name, a.line1, a.line2, [a.city, a.state].filter(Boolean).join(', '), a.postal_code, a.country]
+        .filter(Boolean).join('\n');
+};
 
 const ORDER_STATUS: Record<string, { label: string; color: string; bg: string }> = {
     pending: { label: 'Pending', color: '#b45309', bg: 'rgba(245,158,11,0.15)' },
@@ -1651,7 +1664,7 @@ export const OrdersPage = ({ onBack }: { onBack: () => void }) => {
                 .from('orders')
                 .select(`
                     id, status, subtotal_amount, created_at, shipping,
-                    tracking_carrier, tracking_number,
+                    tracking_carrier, tracking_number, refunded_amount, dispute_status,
                     seller:users!orders_seller_id_fkey(id, username, handle, avatar_url),
                     items:order_items(id, name, price_amount, size, image_url)
                 `)
@@ -1733,6 +1746,39 @@ export const OrdersPage = ({ onBack }: { onBack: () => void }) => {
                                     </View>
                                 ))}
                             </View>
+
+                            {/* Where it is going.
+                                The address was fetched and never shown on the
+                                buyer's side -- only on the seller's, where it
+                                is a packing label. The buyer needs it for the
+                                opposite reason: to check they did not send it
+                                to an old flat. */}
+                            {order.shipping ? (
+                                <View style={{ marginTop: 12, padding: 10, borderRadius: 10, backgroundColor: isDark ? '#27272a' : '#f9fafb' }}>
+                                    <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textSecondary, marginBottom: 4, textTransform: 'uppercase' }}>
+                                        Delivering to
+                                    </Text>
+                                    <Text style={{ fontSize: 13, color: colors.text, lineHeight: 18 }}>
+                                        {fmtAddress(order.shipping)}
+                                    </Text>
+                                </View>
+                            ) : null}
+
+                            {/* Money that came back, and anything contested.
+                                Both were already on the row and shown nowhere,
+                                which is the worst place for a refund to live --
+                                somebody chasing one had no way to see it had
+                                happened. */}
+                            {(order.refunded_amount ?? 0) > 0 ? (
+                                <Text style={{ fontSize: 12, color: '#15803d', marginTop: 10, fontWeight: '600' }}>
+                                    Refunded ${((order.refunded_amount ?? 0) / 100).toFixed(2)}
+                                </Text>
+                            ) : null}
+                            {order.dispute_status ? (
+                                <Text style={{ fontSize: 12, color: '#b45309', marginTop: 6, fontWeight: '600' }}>
+                                    Payment disputed · {order.dispute_status}
+                                </Text>
+                            ) : null}
 
                             {/* Track it. This is the whole point of storing a
                                 number: the buyer goes to the carrier instead of
@@ -2048,11 +2094,6 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
 
     const fmtDate = (ts: string) =>
         new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-    const fmtAddress = (s: SaleRow['shipping']) => {
-        if (!s) return '';
-        return [s.name, s.line1, s.line2, [s.city, s.state].filter(Boolean).join(', '), s.postal_code, s.country]
-            .filter(Boolean).join('\n');
-    };
 
     if (loading) {
         return (
