@@ -1,8 +1,7 @@
 # Turning on Apple and Google sign-in
 
-The app code is done, and so is everything that could be done from a machine.
-What is left is three fields in the Supabase dashboard and one capability in the
-Apple Developer portal.
+Apple sign-in is finished, end to end. Google is finished everywhere except one
+field: its client secret, in the Supabase dashboard.
 
 Until each provider is configured, its button does not appear at all. That is
 deliberate: a sign-in button that fails at the tap is worse than one that is
@@ -25,7 +24,17 @@ Google Cloud project **Emode** (`gen-lang-client-0249147471`):
   `19094142874-9fd03alukh8pq6msiom93ape4krlmnv6.apps.googleusercontent.com`
 - **iOS client** — "emode iOS", bundle `com.emode.app`
   `19094142874-2o2e3ed46nc8fc73bkllof7jk6eiulr0.apps.googleusercontent.com`
-- `brandonmtalla@gmail.com` added as a test user (see Publishing status below).
+- `brandonmtalla@gmail.com` added as a test user.
+- **Published to production.** Any Google account can sign in. No verification
+  review was needed: that is triggered by more than 10 domains, an uploaded
+  logo, or sensitive/restricted scopes, and this app has two domains, no logo
+  and only email/profile/openid.
+
+Apple Developer portal (Team `95MF46F623`):
+
+- **Sign In with Apple enabled** on the `com.emode.app` App ID. EAS had *not*
+  done this despite `usesAppleSignIn` -- it was unchecked. Saving it invalidated
+  the existing provisioning profiles, which EAS regenerates on the next build.
 
 Supabase (`scvvbjheyfnxlsiiozta`):
 
@@ -42,9 +51,9 @@ This repo:
 
 ---
 
-## 1. Sign in with Apple
+## 1. Sign in with Apple -- done
 
-One step left, in the Apple portal. The Supabase side is already done.
+Nothing to do. Recorded here because the shape of it is worth keeping.
 
 Because the app signs in **natively** -- `expo-apple-authentication` hands back
 an identity token that Supabase verifies against Apple's public keys -- there is
@@ -55,13 +64,14 @@ settings."
 
 This also means there is no secret to rotate every six months.
 
-### Apple Developer portal
+### Apple Developer portal -- done
 **Certificates, Identifiers & Profiles → Identifiers →** the `com.emode.app`
-App ID → tick **Sign In with Apple** in the Capabilities list → Save. Leave the
-server-to-server notification endpoint blank; Supabase does not support it.
+App ID → **Sign In with Apple** ticked in Capabilities. The server-to-server
+notification endpoint is left blank; Supabase does not support it.
 
-(EAS may have already enabled this while setting up credentials, since
-`ios.usesAppleSignIn` is set in app.json. Check before assuming it is missing.)
+Note there are two emode identifiers in this account -- `com.emode.app`
+(ours, named `bmtallemode c6e7...`) and `com.emodeai.emode`. The capability is
+on the first. Putting it on the second would do nothing and look like it had.
 
 ### Supabase dashboard -- done
 **Authentication → Providers → Apple** is enabled with `com.emode.app` in
@@ -96,20 +106,15 @@ Google Cloud is finished. What remains is one screen.
   the token it returns, so with the check left on, every Google sign-in fails
   verification with an error that says nothing about nonces.
 
-### Publishing status
+### Publishing status -- done
 
-The consent screen is in **Testing**, which means only the listed test users can
-sign in -- everyone else is turned away by Google before the app is ever
-involved. Fine for TestFlight with a short list. **Not fine for App Review or
-release:** a reviewer tapping the Google button would be refused.
+The consent screen is **In production**, so anyone with a Google account can
+sign in. It spent a while in Testing, where only listed test users get through
+and everyone else is turned away by Google before the app is ever involved --
+which would have failed App Review the moment a reviewer tapped the button.
 
-Publish it from **Google Auth Platform → Audience → Publish app**. Because the
-app asks only for email, profile and openid -- no sensitive or restricted
-scopes -- publishing does not trigger a verification review. It takes effect
-immediately.
-
-While still in Testing, each tester's Google address has to be added under
-**Audience → Test users**.
+If it is ever pushed **Back to testing**, every tester's Google address has to
+be listed under **Audience → Test users** again.
 
 ---
 
