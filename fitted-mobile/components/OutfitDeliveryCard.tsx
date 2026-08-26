@@ -94,28 +94,38 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                         after it. Swiping keeps the card one image tall however
                         many pictures a delivery carries. */}
                     <View
-                        style={styles.pagerFrame}
-                        onLayout={(event) => setPagerWidth(event.nativeEvent.layout.width)}
+                        style={[styles.pagerFrame, { height: pagerWidth || undefined }]}
+                        onLayout={(event) => setPagerWidth(Math.round(event.nativeEvent.layout.width))}
                     >
-                        <ScrollView
-                            horizontal
-                            pagingEnabled
-                            showsHorizontalScrollIndicator={false}
-                            onMomentumScrollEnd={(event) => {
-                                if (!pagerWidth) return;
-                                setPage(Math.round(event.nativeEvent.contentOffset.x / pagerWidth));
-                            }}
-                        >
-                            {pages.map((image) => (
-                                <Pressable
-                                    key={image.uri}
-                                    onPress={() => openFullscreen(image.uri)}
-                                    style={{ width: pagerWidth || undefined }}
-                                >
-                                    <View style={styles.pageImageContainer}>
+                        {/* Every size here is a measured number, never a
+                            percentage.
+
+                            The pages sit in a horizontal ScrollView, where a
+                            width of '100%' resolves against a container with no
+                            bound -- and aspectRatio then matched the height to
+                            that runaway width. The card grew past the bottom of
+                            the screen and swallowed the messages under it. On
+                            the first pass pagerWidth is 0, so nothing is drawn
+                            until the frame has been measured. */}
+                        {pagerWidth > 0 && (
+                            <ScrollView
+                                horizontal
+                                pagingEnabled
+                                showsHorizontalScrollIndicator={false}
+                                style={{ width: pagerWidth, height: pagerWidth }}
+                                onMomentumScrollEnd={(event) => {
+                                    setPage(Math.round(event.nativeEvent.contentOffset.x / pagerWidth));
+                                }}
+                            >
+                                {pages.map((image) => (
+                                    <Pressable
+                                        key={image.uri}
+                                        onPress={() => openFullscreen(image.uri)}
+                                        style={{ width: pagerWidth, height: pagerWidth }}
+                                    >
                                         <Image
                                             source={{ uri: image.uri }}
-                                            style={styles.pageImage}
+                                            style={{ width: pagerWidth, height: pagerWidth }}
                                             contentFit="cover"
                                             transition={300}
                                         />
@@ -127,10 +137,10 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                                         <View style={styles.expandOverlay}>
                                             <Feather name="maximize-2" size={16} color="rgba(255,255,255,0.9)" />
                                         </View>
-                                    </View>
-                                </Pressable>
-                            ))}
-                        </ScrollView>
+                                    </Pressable>
+                                ))}
+                            </ScrollView>
+                        )}
                     </View>
 
                     {pages.length > 1 && (
@@ -284,18 +294,17 @@ const styles = StyleSheet.create({
         fontFamily: 'Inter_700Bold',
     },
     // Outfit Image
+    // The pages themselves are sized inline from a measured pagerWidth. There
+    // were styles here doing it with width:'100%' and aspectRatio, and inside a
+    // horizontal ScrollView that is exactly what made the card grow past the
+    // bottom of the screen. Deleted rather than left lying around, because they
+    // read as correct until you notice which axis they are in.
     pagerFrame: {
+        width: '100%',
         borderRadius: 14,
+        // overflow:hidden is load-bearing, not decoration: it stops a page that
+        // measures wrong from painting outside the card.
         overflow: 'hidden',
-    },
-    pageImageContainer: {
-        width: '100%',
-        aspectRatio: 1,
-        position: 'relative',
-    },
-    pageImage: {
-        width: '100%',
-        height: '100%',
     },
     dots: {
         flexDirection: 'row',
@@ -307,16 +316,6 @@ const styles = StyleSheet.create({
         width: 6,
         height: 6,
         borderRadius: 3,
-    },
-    outfitImageContainer: {
-        borderRadius: 14,
-        overflow: 'hidden',
-        position: 'relative',
-    },
-    outfitImage: {
-        width: '100%',
-        aspectRatio: 1,
-        borderRadius: 14,
     },
     expandOverlay: {
         position: 'absolute',
@@ -330,16 +329,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     // Board Image
-    boardImageContainer: {
-        borderRadius: 10,
-        overflow: 'hidden',
-        position: 'relative',
-        height: 80,
-    },
-    boardImage: {
-        width: '100%',
-        height: '100%',
-    },
     boardLabel: {
         position: 'absolute',
         bottom: 6,
