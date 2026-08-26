@@ -527,7 +527,11 @@ export default function MessagesScreen() {
                 styles.messageBubble,
                 isOwn
                     ? { backgroundColor: colors.primary, borderBottomRightRadius: 4, alignSelf: 'flex-end' }
-                    : { backgroundColor: colors.backgroundSecondary, borderBottomLeftRadius: 4, alignSelf: 'flex-start' }
+                    : { backgroundColor: colors.backgroundSecondary, borderBottomLeftRadius: 4, alignSelf: 'flex-start' },
+                // TEMPORARY, __DEV__ only. An incoming bubble is #f9fafb, which
+                // is indistinguishable from the card's #ffffff in a screenshot.
+                // Green tells the two apart.
+                __DEV__ && { borderColor: 'limegreen', borderWidth: 2 }
             ]}>
                 <Text style={[
                     styles.messageText,

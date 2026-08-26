@@ -65,7 +65,12 @@ export default function OutfitDeliveryCard({ delivery, isOwnMessage, timestamp, 
                         backgroundColor: isDark ? '#1a1a2e' : '#ffffff',
                         borderColor: isDark ? '#2d2d5e' : '#e0e7ff',
                         boxShadow: '0px 4px 16px rgba(99, 102, 241, 0.08)',
-                    }
+                    },
+                    // TEMPORARY, __DEV__ only. The card's real border is
+                    // #e0e7ff at 1px, which is close enough to white to be
+                    // invisible in a screenshot -- so "where does the card
+                    // actually end" has been guesswork. Red says exactly.
+                    __DEV__ && { borderColor: 'red', borderWidth: 2 }
                 ]}>
                     {/* Header */}
                     <View style={styles.headerRow}>
