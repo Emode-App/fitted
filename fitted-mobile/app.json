@@ -159,7 +159,8 @@
             ]
           }
         ]
-      }
+      },
+      "usesAppleSignIn": true
     },
     "android": {
       "edgeToEdgeEnabled": true,

@@ -15,6 +15,14 @@ import Animated, {
 import { useAuthStore } from '@/stores/authStore';
 import { useTheme } from '@/hooks/useTheme';
 import { LEGAL } from '@/constants/legal';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import {
+    isAppleAuthAvailable,
+    isGoogleAuthAvailable,
+    signInWithApple,
+    signInWithGoogle,
+    isCancellation,
+} from '@/services/socialAuth';
 
 /**
  * What the server actually enforces on a new password.
@@ -97,7 +105,35 @@ function BobbingEmoji({ emoji, delay }: { emoji: string; delay: number }) {
 }
 
 export default function LoginScreen() {
-    const { colors } = useTheme();
+    const { colors, isDark } = useTheme();
+    const [appleAvailable, setAppleAvailable] = useState(false);
+    const googleAvailable = isGoogleAuthAvailable();
+
+    // Asked rather than assumed: Sign in with Apple needs iOS 13, and the
+    // button should not exist on a device that cannot use it.
+    useEffect(() => {
+        isAppleAuthAvailable().then(setAppleAvailable);
+    }, []);
+
+    const runSocial = async (provider: 'apple' | 'google') => {
+        setLoading(true);
+        try {
+            if (provider === 'apple') await signInWithApple();
+            else await signInWithGoogle();
+            // The auth listener in the store picks the session up and routes
+            // from there, exactly as it does after a password sign-in.
+        } catch (error: any) {
+            // Backing out of the sheet is a decision, not a failure. Telling
+            // somebody their sign-in failed because they changed their mind is
+            // the kind of message that makes an app feel broken.
+            if (!isCancellation(error)) {
+                Alert.alert('Could Not Sign In', error?.message || 'Please try again.');
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -252,6 +288,55 @@ export default function LoginScreen() {
                     <Pressable style={[styles.button, { backgroundColor: colors.primary }, loading && styles.buttonDisabled]} onPress={submit} disabled={loading}>
                         <Text style={[styles.buttonText, { color: colors.primaryForeground }]}>{loading ? 'Loading…' : isLogin ? 'Sign In' : 'Create Account'}</Text>
                     </Pressable>
+
+                    {/* Neither option is drawn unless it can actually run: Apple
+                        needs iOS 13 and Google needs both client ids. A sign-in
+                        button that fails at the tap is worse than one absent. */}
+                    {(appleAvailable || googleAvailable) && (
+                        <>
+                            <View style={styles.dividerRow}>
+                                <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+                                <Text style={[styles.dividerText, { color: colors.textSecondary }]}>or</Text>
+                                <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+                            </View>
+
+                            {appleAvailable && (
+                                <AppleAuthentication.AppleAuthenticationButton
+                                    buttonType={isLogin
+                                        ? AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN
+                                        : AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP}
+                                    buttonStyle={isDark
+                                        ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+                                        : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+                                    cornerRadius={14}
+                                    style={styles.socialButton}
+                                    onPress={() => runSocial('apple')}
+                                />
+                            )}
+
+                            {googleAvailable && (
+                                <Pressable
+                                    style={[styles.googleButton, { borderColor: colors.inputBorder, backgroundColor: colors.background }, loading && styles.buttonDisabled]}
+                                    onPress={() => runSocial('google')}
+                                    disabled={loading}
+                                >
+                                    <Text style={styles.googleMark}>G</Text>
+                                    <Text style={[styles.googleText, { color: colors.text }]}>
+                                        {isLogin ? 'Sign in with Google' : 'Sign up with Google'}
+                                    </Text>
+                                </Pressable>
+                            )}
+
+                            {/* Nothing is ticked for these, so say what tapping
+                                one commits to rather than leaving it implied. */}
+                            <Text style={[styles.socialLegal, { color: colors.textTertiary }]}>
+                                By continuing you agree to our{' '}
+                                <Text style={{ textDecorationLine: 'underline' }} onPress={() => Linking.openURL(LEGAL.termsUrl)}>Terms</Text>
+                                {' '}and{' '}
+                                <Text style={{ textDecorationLine: 'underline' }} onPress={() => Linking.openURL(LEGAL.privacyPolicyUrl)}>Privacy Policy</Text>.
+                            </Text>
+                        </>
+                    )}
                 </View>
 
                 {isLogin && <Pressable onPress={forgotPassword}><Text style={[styles.forgotText, { color: colors.textSecondary }]}>Forgot password?</Text></Pressable>}
@@ -263,6 +348,17 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
+    dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 20, marginBottom: 16 },
+    dividerLine: { flex: 1, height: 1 },
+    dividerText: { fontSize: 13 },
+    socialButton: { width: '100%', height: 50, marginBottom: 10 },
+    googleButton: {
+        width: '100%', height: 50, borderRadius: 14, borderWidth: 1,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+    },
+    googleMark: { fontSize: 18, fontWeight: '700', color: '#4285F4' },
+    googleText: { fontSize: 16, fontWeight: '600' },
+    socialLegal: { fontSize: 11, lineHeight: 16, textAlign: 'center', marginTop: 14 },
     inner: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 40 },
     logoContainer: { alignItems: 'center', marginBottom: 26 },
     mark: { width: 78, height: 89, marginBottom: 14 },
