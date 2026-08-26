@@ -9,3 +9,5 @@ export function addNotificationResponseListener(
 }
 
 export async function unregisterPush(): Promise<void> {}
+
+export async function syncPushToken(_userId: string): Promise<void> {}

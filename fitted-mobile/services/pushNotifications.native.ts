@@ -87,10 +87,60 @@ export function addNotificationResponseListener(
     return () => subscription.remove();
 }
 
-export async function unregisterPush(): Promise<void> {
-    if (!registeredToken) return;
+/**
+ * This device's push token, or null -- without ever prompting.
+ *
+ * getPermissionsAsync only reports; it is requestPermissionsAsync that asks.
+ * The difference matters: rebinding a token on sign-in must not throw a
+ * permission dialog at somebody who is just logging in.
+ */
+async function currentDeviceToken(): Promise<string | null> {
+    if (isExpoGo || !Device.isDevice) return null;
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== 'granted') return null;
     try {
-        await supabase.from('push_tokens').delete().eq('token', registeredToken);
+        const response = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+        return response?.data ?? null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Point this device's token at whoever is signed in now.
+ *
+ * A token belongs to a device, not to an account, and push_tokens maps it to
+ * exactly one user. Registration only ever happened from the notifications
+ * toggle in settings, so the row kept pointing at whichever account first
+ * turned it on -- and that account's messages kept arriving on this phone after
+ * signing out of it and into another one. Somebody else's notifications on your
+ * lock screen is a privacy problem, not a curiosity.
+ *
+ * Silent by design: it does nothing unless notifications were already allowed.
+ */
+export async function syncPushToken(userId: string): Promise<void> {
+    const token = await currentDeviceToken();
+    if (!token) return;
+
+    const { error } = await supabase.from('push_tokens').upsert(
+        { token, user_id: userId, platform: Platform.OS, updated_at: new Date().toISOString() },
+        { onConflict: 'token' },
+    );
+    if (error) {
+        console.warn('Push token sync failed:', error.message);
+        return;
+    }
+    registeredToken = token;
+}
+
+export async function unregisterPush(): Promise<void> {
+    // registeredToken is only set when this app session did the registering, so
+    // after a restart it is null and this used to return having done nothing --
+    // leaving the row behind on every sign-out that followed a cold start.
+    const token = registeredToken ?? await currentDeviceToken();
+    if (!token) return;
+    try {
+        await supabase.from('push_tokens').delete().eq('token', token);
     } catch {
         // Best effort: local sign-out must still complete.
     }

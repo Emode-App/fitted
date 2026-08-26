@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { Platform } from 'react-native';
 import { supabase } from '../services/supabase';
 import { getSignedUrl } from '../services/privateMedia';
-import { unregisterPush } from '../services/pushNotifications';
+import { unregisterPush, syncPushToken } from '../services/pushNotifications';
 import { User } from '../types';
 import * as Device from 'expo-device';
 import { logOutPurchases } from '../services/revenueCatService';
@@ -121,6 +121,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                     isAuthenticated: true,
                     isLoading: false
                 });
+
+                // A push token belongs to the device, and push_tokens maps it
+                // to one user. It was only ever written from the notifications
+                // toggle in settings, so it kept pointing at whichever account
+                // first switched it on -- and that account's messages went on
+                // arriving on this phone after signing out of it. Rebinding on
+                // the way in is what keeps the lock screen showing this
+                // account's notifications and nobody else's. It never prompts.
+                void syncPushToken(session.user.id);
             } else {
                 set({ isLoading: false });
             }
@@ -146,6 +155,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                         isAuthenticated: true,
                         isLoading: false,
                     });
+
+                    // Same rebinding for the account switch, which is the case
+                    // that actually went wrong: signing out of one account and
+                    // into another on the same phone.
+                    void syncPushToken(session.user.id);
 
                     if (event === 'SIGNED_IN') {
                         const sessionId = await recordLoginSession(session.user.id);
