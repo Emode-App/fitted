@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { Notification, NotificationType } from '@/types';
 import { useTheme } from '@/hooks/useTheme';
 import { getPendingPortfolioRequests, respondToPortfolioRequest, PortfolioItem } from '@/services/portfolio';
+import UserBadges from '@/components/UserBadges';
 
 interface NotificationWithDetails {
     id: string;
@@ -28,6 +29,9 @@ interface NotificationWithDetails {
         id: string;
         username: string;
         avatar_url?: string;
+        is_verified_stylist?: boolean | null;
+        is_business_account?: boolean | null;
+        is_verified_boutique?: boolean | null;
     };
     post?: {
         id: string;
@@ -247,6 +251,7 @@ export default function ActivityScreen() {
                     >
                         {item.actor.username || 'Someone'}
                     </Text>
+                    <UserBadges user={item.actor} size={12} inline />
                     {' '}{getFollowingText(item)}
                     {item.type === 'follow' && item.target_user && (
                         <Text
@@ -296,6 +301,7 @@ export default function ActivityScreen() {
                     >
                         {item.actor?.username || 'Someone'}
                     </Text>
+                    <UserBadges user={item.actor} size={12} inline />
                     {' '}{getNotificationText(item)}
                 </Text>
                 <View style={styles.meta}>

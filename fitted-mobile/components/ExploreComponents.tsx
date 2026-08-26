@@ -1,12 +1,13 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Dimensions, ActivityIndicator } from 'react-native';
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '@/hooks/useTheme';
 import { User, Product } from '@/types';
 import { TrendingBrand, getBrandLogoUrl } from '@/constants/brands';
 import ProductCard from '@/components/ProductCard';
+import UserBadges from '@/components/UserBadges';
 
 // Constants
 const { width } = Dimensions.get('window');
@@ -356,11 +357,9 @@ const UserResultRow = ({ user, onViewProfile }: { user: User, onViewProfile: (id
                 )}
             </View>
             <View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Text style={[styles.userName, { color: colors.text }]}>{user.username}</Text>
-                    {user.is_verified_stylist && (
-                        <MaterialCommunityIcons name="check-decagram" size={14} color="#3b82f6" />
-                    )}
+                    <UserBadges user={user} size={14} />
                 </View>
                 <Text style={[styles.userHandle, { color: colors.textSecondary }]}>{user.handle}</Text>
             </View>

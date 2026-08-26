@@ -13,6 +13,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useTheme } from '@/hooks/useTheme';
 import { Comment, User } from '@/types';
 import { blockUser, reportContent } from '@/services/moderation';
+import UserBadges from '@/components/UserBadges';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MODAL_HEIGHT = SCREEN_HEIGHT * 0.5;
@@ -337,7 +338,9 @@ export default function CommentsModal({ postId, postOwnerId, visible, onClose }:
             </Pressable>
             <View style={styles.commentContent}>
                 <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }}>
-                    <Text style={{ fontWeight: '600' }} onPress={() => handleCommentUserPress(item.user?.id)}>{item.user?.username || 'User'} </Text>
+                    <Text style={{ fontWeight: '600' }} onPress={() => handleCommentUserPress(item.user?.id)}>{item.user?.username || 'User'}</Text>
+                    <UserBadges user={item.user} size={12} inline />
+                    <Text>{' '}</Text>
                     <MentionText text={item.text} style={{ color: colors.text }} />
                 </Text>
                 <View style={styles.commentMeta}>

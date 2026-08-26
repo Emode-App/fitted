@@ -7,14 +7,29 @@ interface NotificationWithDetails extends Notification {
     post?: Post;
 }
 
+/**
+ * Enough of a person to draw an activity row: their avatar, their name, and
+ * the marks that go beside it. The three flags are optional because these rows
+ * are assembled from three separate queries and a caller that has not widened
+ * its select simply draws no marks rather than failing to compile.
+ */
+export interface ActivityActor {
+    id: string;
+    username: string;
+    avatar_url?: string;
+    is_verified_stylist?: boolean | null;
+    is_business_account?: boolean | null;
+    is_verified_boutique?: boolean | null;
+}
+
 // A single activity event performed BY someone the current user follows
 // (old-Instagram "Following" tab). Aggregated from likes/follows/comments.
 export interface FollowingActivityItem {
     id: string;
     type: 'like' | 'follow' | 'comment';
     created_at: string;
-    actor: { id: string; username: string; avatar_url?: string };
-    target_user?: { id: string; username: string; avatar_url?: string }; // for follow events
+    actor: ActivityActor;
+    target_user?: ActivityActor; // for follow events
     post?: { id: string; generated_image?: string };
     content?: string; // comment text
 }
@@ -90,19 +105,19 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
             const [likesRes, followsRes, commentsRes] = await Promise.all([
                 supabase
                     .from('likes')
-                    .select(`created_at, actor:users!likes_user_id_fkey(id, username, avatar_url), post:posts!likes_post_id_fkey(id, generated_image)`)
+                    .select(`created_at, actor:users!likes_user_id_fkey(id, username, avatar_url, is_verified_stylist, is_business_account, is_verified_boutique), post:posts!likes_post_id_fkey(id, generated_image)`)
                     .in('user_id', followingIds)
                     .order('created_at', { ascending: false })
                     .limit(30),
                 supabase
                     .from('follows')
-                    .select(`created_at, actor:users!follows_follower_id_fkey(id, username, avatar_url), target_user:users!follows_following_id_fkey(id, username, avatar_url)`)
+                    .select(`created_at, actor:users!follows_follower_id_fkey(id, username, avatar_url, is_verified_stylist, is_business_account, is_verified_boutique), target_user:users!follows_following_id_fkey(id, username, avatar_url, is_verified_stylist, is_business_account, is_verified_boutique)`)
                     .in('follower_id', followingIds)
                     .order('created_at', { ascending: false })
                     .limit(30),
                 supabase
                     .from('comments')
-                    .select(`id, text, created_at, actor:users!comments_user_id_fkey(id, username, avatar_url), post:posts!comments_post_id_fkey(id, generated_image)`)
+                    .select(`id, text, created_at, actor:users!comments_user_id_fkey(id, username, avatar_url, is_verified_stylist, is_business_account, is_verified_boutique), post:posts!comments_post_id_fkey(id, generated_image)`)
                     .in('user_id', followingIds)
                     .order('created_at', { ascending: false })
                     .limit(30),

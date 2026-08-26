@@ -7,12 +7,16 @@ import { Image } from 'expo-image';
 import { Text, View } from '@/components/Themed';
 import { supabase } from '@/services/supabase';
 import { useTheme } from '@/hooks/useTheme';
+import UserBadges from '@/components/UserBadges';
 
 interface ConnectionUser {
     id: string;
     username: string;
     handle?: string;
     avatar_url?: string;
+    is_verified_stylist?: boolean | null;
+    is_business_account?: boolean | null;
+    is_verified_boutique?: boolean | null;
 }
 
 export default function ConnectionsScreen() {
@@ -49,7 +53,7 @@ export default function ConnectionsScreen() {
 
         const { data: userRows } = await supabase
             .from('users')
-            .select('id, username, handle, avatar_url')
+            .select('id, username, handle, avatar_url, is_verified_stylist, is_business_account, is_verified_boutique')
             .in('id', ids);
 
         setUsers((userRows as ConnectionUser[]) || []);
@@ -77,7 +81,10 @@ export default function ConnectionsScreen() {
                 </View>
             )}
             <View style={styles.userInfo}>
-                <Text style={[styles.username, { color: colors.text }]}>{item.username}</Text>
+                <View style={styles.usernameRow}>
+                    <Text style={[styles.username, { color: colors.text }]}>{item.username}</Text>
+                    <UserBadges user={item} size={14} />
+                </View>
                 {item.handle ? (
                     <Text style={[styles.handle, { color: colors.textSecondary }]}>{item.handle}</Text>
                 ) : null}
@@ -185,6 +192,10 @@ const styles = StyleSheet.create({
     userInfo: {
         flex: 1,
         marginLeft: 12,
+    },
+    usernameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     username: {
         fontSize: 15,

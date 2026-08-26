@@ -34,6 +34,7 @@ import { LEGAL } from '@/constants/legal';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '@/constants/colors';
 import { ONBOARDING_MEDIA, type OnboardingSlot } from '@/constants/onboardingMedia';
+import UserBadges from '@/components/UserBadges';
 
 /**
  * Onboarding is painted in Emode's own colours, not the viewer's theme.
@@ -91,6 +92,7 @@ interface SuggestedAccount {
     bio: string | null;
     is_verified_stylist: boolean | null;
     is_business_account: boolean | null;
+    is_verified_boutique: boolean | null;
 }
 
 // ─────────────────────────────────────── SLIDE DATA ───
@@ -402,7 +404,7 @@ export default function OnboardingScreen() {
             // suggestion rather than a directory as the app fills up.
             const { data } = await supabase
                 .from('users')
-                .select('id, username, handle, avatar_url, bio, is_verified_stylist, is_business_account')
+                .select('id, username, handle, avatar_url, bio, is_verified_stylist, is_business_account, is_verified_boutique')
                 .neq('id', user.id)
                 .order('is_verified_stylist', { ascending: false })
                 .order('created_at', { ascending: true })
@@ -766,13 +768,11 @@ export default function OnboardingScreen() {
                                             )}
 
                                             <View style={{ flex: 1 }}>
-                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                                                     <Text style={styles.suggestName} numberOfLines={1}>
                                                         {account.username || 'Emode user'}
                                                     </Text>
-                                                    {!!account.is_verified_stylist && (
-                                                        <Feather name="check-circle" size={13} color="#3b82f6" />
-                                                    )}
+                                                    <UserBadges user={account} size={13} />
                                                 </View>
                                                 <Text style={styles.suggestMeta} numberOfLines={1}>
                                                     {account.is_verified_stylist

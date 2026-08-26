@@ -10,6 +10,7 @@ import { createBookingIntent, getStylistRateCents } from '@/services/stylingSess
 import { STRIPE_CONFIG, PLATFORM_CONFIG } from '@/constants/payments';
 import { LEGAL } from '@/constants/legal';
 import type { StylingSession, User } from '@/types';
+import UserBadges from '@/components/UserBadges';
 
 interface Props {
     visible: boolean;
@@ -113,9 +114,16 @@ export default function StylingBookingModal({ visible, stylist, conversationId, 
                         <MaterialCommunityIcons name="hanger" size={36} color="#4f46e5" />
                     </View>
 
-                    <Text style={[styles.title, { color: colors.text }]}>
-                        Book {stylist.username}
-                    </Text>
+                    <View style={styles.titleRow}>
+                        {/* The row owns the bottom margin and the name is free to
+                            shrink: left on the Text, the margin would drag the
+                            badge off the name's optical centre, and a long
+                            username would push the badge out of the sheet. */}
+                        <Text style={[styles.title, { color: colors.text, marginBottom: 0, flexShrink: 1 }]}>
+                            Book {stylist.username}
+                        </Text>
+                        <UserBadges user={stylist} size={18} />
+                    </View>
                     <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
                         A live one-to-one session. You and your stylist are in the chat
                         together for the whole window.
@@ -192,6 +200,12 @@ const styles = StyleSheet.create({
     card: { width: '85%', maxWidth: 360, borderRadius: 24, padding: 24, paddingTop: 32, alignItems: 'center', boxShadow: '0px 10px 20px rgba(0,0,0,0.25)', elevation: 10 },
     close: { position: 'absolute', top: 16, right: 16, width: 32, height: 32, justifyContent: 'center', alignItems: 'center' },
     icon: { width: 72, height: 72, borderRadius: 36, justifyContent: 'center', alignItems: 'center', marginBottom: 18 },
+    titleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 8,
+    },
     title: { fontSize: 22, fontWeight: '700', fontFamily: 'Inter_700Bold', textAlign: 'center', marginBottom: 8 },
     subtitle: { fontSize: 13, textAlign: 'center', lineHeight: 19, marginBottom: 20 },
     unavailable: { fontSize: 14, textAlign: 'center', marginVertical: 24 },

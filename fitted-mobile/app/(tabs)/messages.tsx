@@ -29,6 +29,7 @@ import {
     startSession,
 } from '@/services/stylingSessions';
 import type { StylingSession } from '@/types';
+import UserBadges from '@/components/UserBadges';
 
 // Height of the persistent header rendered above the tab content (see (tabs)/_layout.tsx).
 // KeyboardAvoidingView measures its own position relative to its parent (not the screen),
@@ -631,6 +632,7 @@ export default function MessagesScreen() {
                             </View>
                         )}
                         <Text style={[styles.chatUsername, { color: colors.text }]}>{activeConversation.otherUser?.username || 'User'}</Text>
+                        <UserBadges user={activeConversation.otherUser} size={15} />
                     </Pressable>
                     <View style={{ width: 40 }} />
                 </View>
@@ -877,7 +879,10 @@ export default function MessagesScreen() {
                                 </View>
                                 <View style={styles.conversationInfo}>
                                     <View style={styles.topRow}>
-                                        <Text style={[styles.username, { color: colors.text }]}>{item.otherUser?.username || 'User'}</Text>
+                                        <View style={styles.nameWithBadges}>
+                                            <Text style={[styles.username, { color: colors.text }]} numberOfLines={1}>{item.otherUser?.username || 'User'}</Text>
+                                            <UserBadges user={item.otherUser} size={13} />
+                                        </View>
                                         {item.lastMessage && (
                                             <Text style={[styles.timestamp, { color: colors.textTertiary }]}>{formatTime(item.lastMessage.created_at)}</Text>
                                         )}
@@ -1010,6 +1015,11 @@ const styles = StyleSheet.create({
     avatar: { width: 56, height: 56, borderRadius: 28 },
     avatarPlaceholder: { width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center' },
     conversationInfo: { flex: 1 },
+    nameWithBadges: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexShrink: 1,
+    },
     topRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
     username: { fontSize: 16, fontWeight: '700', fontFamily: 'Inter_700Bold' },
     timestamp: { fontSize: 12, fontFamily: 'Inter_400Regular' },

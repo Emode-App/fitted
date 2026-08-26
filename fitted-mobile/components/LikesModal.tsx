@@ -6,12 +6,16 @@ import { router } from 'expo-router';
 
 import { supabase } from '@/services/supabase';
 import { useTheme } from '@/hooks/useTheme';
+import UserBadges from '@/components/UserBadges';
 
 interface Liker {
     id: string;
     username?: string;
     handle?: string;
     avatar_url?: string;
+    is_verified_stylist?: boolean | null;
+    is_business_account?: boolean | null;
+    is_verified_boutique?: boolean | null;
 }
 
 interface LikesModalProps {
@@ -43,7 +47,7 @@ export default function LikesModal({ visible, postId, onClose }: LikesModalProps
         (async () => {
             const { data, error } = await supabase
                 .from('likes')
-                .select('created_at, user:users!likes_user_id_fkey(id, username, handle, avatar_url)')
+                .select('created_at, user:users!likes_user_id_fkey(id, username, handle, avatar_url, is_verified_stylist, is_business_account, is_verified_boutique)')
                 .eq('post_id', postId)
                 .order('created_at', { ascending: false });
 
@@ -103,9 +107,12 @@ export default function LikesModal({ visible, postId, onClose }: LikesModalProps
                                         </View>
                                     )}
                                     <View style={{ flex: 1 }}>
-                                        <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
-                                            {item.username || 'User'}
-                                        </Text>
+                                        <View style={styles.nameRow}>
+                                            <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
+                                                {item.username || 'User'}
+                                            </Text>
+                                            <UserBadges user={item} size={13} />
+                                        </View>
                                         {item.handle ? (
                                             <Text style={[styles.handle, { color: colors.textSecondary }]} numberOfLines={1}>
                                                 {item.handle}
@@ -173,6 +180,10 @@ const styles = StyleSheet.create({
     avatarEmpty: {
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    nameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     name: {
         fontSize: 15,

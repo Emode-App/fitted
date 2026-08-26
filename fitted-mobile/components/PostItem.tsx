@@ -11,6 +11,7 @@ import { Post, ClothingItem } from '@/types';
 import SaveItemButton from '@/components/SaveItemButton';
 import { useTheme } from '@/hooks/useTheme';
 import { reportContent, blockUser } from '@/services/moderation';
+import UserBadges from '@/components/UserBadges';
 
 const { width } = Dimensions.get('window');
 const POST_SIZE = width;
@@ -325,7 +326,10 @@ export default function PostItem({ post, onLike, onComment, onShare, onSave, onU
                         </RNView>
                     )}
                     <RNView style={styles.userText}>
-                        <RNText style={[styles.username, { color: colors.text }]}>{user?.handle || '@user'}</RNText>
+                        <RNView style={styles.usernameRow}>
+                            <RNText style={[styles.username, { color: colors.text }]}>{user?.handle || '@user'}</RNText>
+                            <UserBadges user={user} size={14} />
+                        </RNView>
                         {wearingText && (
                             <RNText style={[styles.wearingText, { color: colors.textSecondary }]} numberOfLines={1}>
                                 Wearing {wearingText}
@@ -548,6 +552,10 @@ const styles = StyleSheet.create({
     },
     userText: {
         marginLeft: 10,
+    },
+    usernameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
     },
     username: {
         fontSize: 14,

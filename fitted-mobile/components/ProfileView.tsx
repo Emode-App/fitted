@@ -41,6 +41,7 @@ import ProductCard from '@/components/ProductCard';
 import ProductDetailModal from '@/components/ProductDetailModal';
 import ProductUploadModal from './ProductUploadModal';
 import TutorialModal, { useFirstVisitTutorial, TutorialStep } from '@/components/TutorialModal';
+import UserBadges from '@/components/UserBadges';
 
 const { width } = Dimensions.get('window');
 const GRID_SIZE = (width - 4) / 3;
@@ -424,15 +425,7 @@ export default function ProfileView({
                         {/* Name + Verified Badge */}
                         <View style={styles.nameRow}>
                             <Text style={[styles.username, { color: colors.text }]}>{user.username}</Text>
-                            {user.is_verified_stylist && (
-                                <MaterialCommunityIcons name="check-decagram" size={20} color="#3b82f6" style={{ marginLeft: 6 }} />
-                            )}
-                            {user.is_business_account && (
-                                <Feather name="shopping-bag" size={18} color="#3b82f6" style={{ marginLeft: 6 }} />
-                            )}
-                            {user.is_verified_boutique && (
-                                <Ionicons name="shield-checkmark" size={18} color="#22c55e" style={{ marginLeft: 6 }} />
-                            )}
+                            <UserBadges user={user} size={20} />
                         </View>
 
                         {/* Handle */}
