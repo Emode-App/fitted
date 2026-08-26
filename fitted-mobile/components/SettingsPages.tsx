@@ -1111,11 +1111,15 @@ export const DraftsPage = ({ onBack, onCloseDrawer }: DraftsPageProps) => {
 const styles = StyleSheet.create({
     earningsRow: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         gap: 8,
         marginBottom: 14,
     },
     earningsTile: {
-        flex: 1,
+        // Grows to share a row, but never narrower than this -- which is what
+        // makes a fourth tile wrap instead of crushing the other three.
+        flexGrow: 1,
+        flexBasis: 96,
         borderRadius: 12,
         paddingVertical: 12,
         paddingHorizontal: 10,
@@ -1915,7 +1919,14 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
             }
         }
 
-        return { earned, pending, thisMonth };
+        // A shop wants to know how many it sold, not only what that came to.
+        // Everything in `sales` has been paid for -- the query asks for paid and
+        // fulfilled -- so the count is of real sales, with the shipped subset
+        // called out separately because that is the part still owed work.
+        const soldCount = sales.length;
+        const awaitingShipment = sales.filter((order) => order.status === 'paid').length;
+
+        return { earned, pending, thisMonth, soldCount, awaitingShipment };
     }, [sales, sessions]);
 
     const openPayoutDashboard = async () => {
@@ -2013,21 +2024,34 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
         <>
             <Header title={pageTitle} onBack={onBack} />
             <ScrollView style={styles.scrollContent} contentContainerStyle={{ paddingBottom: 40 }}>
+                {/* Which tiles appear follows what the account actually
+                    does. A shop has sales to count; a stylist has money
+                    authorised but not yet captured. Somebody who is both gets
+                    four, which wrap to two rows rather than being squeezed. */}
                 <View style={styles.earningsRow}>
-                    <View style={[styles.earningsTile, { backgroundColor: colors.backgroundSecondary }]}>
-                        <Text style={[styles.earningsLabel, { color: colors.textSecondary }]}>EARNED</Text>
-                        <Text style={[styles.earningsValue, { color: '#15803d' }]}>${earnings.earned.toFixed(2)}</Text>
-                    </View>
-                    <View style={[styles.earningsTile, { backgroundColor: colors.backgroundSecondary }]}>
-                        <Text style={[styles.earningsLabel, { color: colors.textSecondary }]}>THIS MONTH</Text>
-                        <Text style={[styles.earningsValue, { color: colors.text }]}>${earnings.thisMonth.toFixed(2)}</Text>
-                    </View>
-                    {sellsStyling && (
-                        <View style={[styles.earningsTile, { backgroundColor: colors.backgroundSecondary }]}>
-                            <Text style={[styles.earningsLabel, { color: colors.textSecondary }]}>PENDING</Text>
-                            <Text style={[styles.earningsValue, { color: colors.textSecondary }]}>${earnings.pending.toFixed(2)}</Text>
+                    {[
+                        { key: 'earned', label: 'EARNED', value: `$${earnings.earned.toFixed(2)}`, tone: '#15803d' },
+                        { key: 'month', label: 'THIS MONTH', value: `$${earnings.thisMonth.toFixed(2)}`, tone: colors.text },
+                        ...(sellsGoods ? [{
+                            key: 'sold',
+                            label: earnings.awaitingShipment > 0 ? 'SALES · TO SHIP' : 'SALES',
+                            value: earnings.awaitingShipment > 0
+                                ? `${earnings.soldCount} · ${earnings.awaitingShipment}`
+                                : String(earnings.soldCount),
+                            tone: colors.text,
+                        }] : []),
+                        ...(sellsStyling ? [{
+                            key: 'pending',
+                            label: 'PENDING',
+                            value: `$${earnings.pending.toFixed(2)}`,
+                            tone: colors.textSecondary,
+                        }] : []),
+                    ].map((tile) => (
+                        <View key={tile.key} style={[styles.earningsTile, { backgroundColor: colors.backgroundSecondary }]}>
+                            <Text style={[styles.earningsLabel, { color: colors.textSecondary }]}>{tile.label}</Text>
+                            <Text style={[styles.earningsValue, { color: tile.tone }]}>{tile.value}</Text>
                         </View>
-                    )}
+                    ))}
                 </View>
 
                 <Pressable
@@ -2037,14 +2061,26 @@ export const SalesPage = ({ onBack }: { onBack: () => void }) => {
                     // onboarding flow -- the same fault the button below the
                     // empty state had: the wording changed with payoutReady and
                     // the handler never did.
+                    // Nothing to press until the answer is in. Sending someone
+                    // to onboarding they have already finished is the mistake
+                    // this whole card keeps making.
+                    disabled={payoutReady === null}
                     onPress={payoutReady ? openPayoutDashboard : () => setShowPayoutSetup(true)}
                 >
                     <View style={{ flex: 1 }}>
                         <Text style={{ color: colors.text, fontWeight: '700' }}>Seller payouts</Text>
+                        {/* payoutReady is null until the check comes back, and
+                            `null ? a : b` takes the b branch -- so this told
+                            everybody to go and set up Stripe for the moment
+                            before flipping. That is a guess rendered as fact,
+                            and it reads worst to the person who finished
+                            onboarding weeks ago. Three states, not two. */}
                         <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                            {payoutReady
-                                ? 'Setup complete — view balance and payouts on Stripe'
-                                : 'Complete Stripe setup before buyers can check out'}
+                            {payoutReady === null
+                                ? 'Checking your payout account…'
+                                : payoutReady
+                                    ? 'Setup complete — view balance and payouts on Stripe'
+                                    : 'Complete Stripe setup before buyers can check out'}
                         </Text>
                     </View>
                     <Feather name="chevron-right" size={20} color={colors.textTertiary} />
