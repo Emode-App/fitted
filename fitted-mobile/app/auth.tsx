@@ -109,6 +109,16 @@ export default function LoginScreen() {
     const [appleAvailable, setAppleAvailable] = useState(false);
     const googleAvailable = isGoogleAuthAvailable();
 
+    // Guideline 4.8: Sign in with Apple has to be offered wherever another
+    // third-party login is. Gating the two independently only satisfies that by
+    // coincidence -- appleAvailable resolves asynchronously while googleAvailable
+    // is known synchronously, so there is a first paint where Google is drawn
+    // and Apple is not, and any future reason for the Apple check to fail would
+    // quietly promote that frame to the shipped state. So on iOS, Google is
+    // drawn only when Apple is. Android is exempt: Apple does not ask for its
+    // button on a platform it does not ship on.
+    const googleShown = googleAvailable && (appleAvailable || Platform.OS !== 'ios');
+
     // Asked rather than assumed: Sign in with Apple needs iOS 13, and the
     // button should not exist on a device that cannot use it.
     useEffect(() => {
@@ -292,7 +302,7 @@ export default function LoginScreen() {
                     {/* Neither option is drawn unless it can actually run: Apple
                         needs iOS 13 and Google needs both client ids. A sign-in
                         button that fails at the tap is worse than one absent. */}
-                    {(appleAvailable || googleAvailable) && (
+                    {(appleAvailable || googleShown) && (
                         <>
                             <View style={styles.dividerRow}>
                                 <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
@@ -314,7 +324,7 @@ export default function LoginScreen() {
                                 />
                             )}
 
-                            {googleAvailable && (
+                            {googleShown && (
                                 <Pressable
                                     style={[styles.googleButton, { borderColor: colors.inputBorder, backgroundColor: colors.background }, loading && styles.buttonDisabled]}
                                     onPress={() => runSocial('google')}
