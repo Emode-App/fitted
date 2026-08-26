@@ -46,6 +46,7 @@ export default function MessagesScreen() {
     const fetchConversations = useMessagesStore((state) => state.fetchConversations);
     const fetchMessages = useMessagesStore((state) => state.fetchMessages);
     const sendMessage = useMessagesStore((state) => state.sendMessage);
+    const deleteMessage = useMessagesStore((state) => state.deleteMessage);
     const sendFacePhoto = useMessagesStore((state) => state.sendFacePhoto);
     const sendImage = useMessagesStore((state) => state.sendImage);
     const setActiveConversation = useMessagesStore((state) => state.setActiveConversation);
@@ -424,7 +425,37 @@ export default function MessagesScreen() {
 
     // Render a single message — PaymentCard, OutfitDeliveryCard, FaceShare, or regular bubble
     const showMessageActions = (item: Message & { sender: User }) => {
-        if (!user || item.sender_id === user.id) return;
+        if (!user) return;
+
+        // Your own message: unsend it. Long-pressing one used to do nothing at
+        // all, because this returned early on anything you had sent.
+        if (item.sender_id === user.id) {
+            // A delivery is what a client paid for, and a payment request is
+            // the record of what was agreed. Neither is yours to take back
+            // after the fact, and the database refuses both -- so say why here
+            // rather than letting the tap fail silently.
+            if (item.styling_delivery) {
+                Alert.alert('Cannot Unsend', 'A delivered outfit stays in the conversation. Your client paid for it.');
+                return;
+            }
+            if (item.payment_request) {
+                Alert.alert('Cannot Unsend', 'A payment request stays in the conversation as a record of what was agreed.');
+                return;
+            }
+
+            Alert.alert('Unsend Message', 'This removes it for both of you.', [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Unsend',
+                    style: 'destructive',
+                    onPress: async () => {
+                        const error = await deleteMessage(item.id);
+                        if (error) Alert.alert('Could Not Unsend', error);
+                    },
+                },
+            ]);
+            return;
+        }
         Alert.alert('Message Options', 'Report this message or block its sender?', [
             { text: 'Cancel', style: 'cancel' },
             {
@@ -527,11 +558,7 @@ export default function MessagesScreen() {
                 styles.messageBubble,
                 isOwn
                     ? { backgroundColor: colors.primary, borderBottomRightRadius: 4, alignSelf: 'flex-end' }
-                    : { backgroundColor: colors.backgroundSecondary, borderBottomLeftRadius: 4, alignSelf: 'flex-start' },
-                // TEMPORARY, __DEV__ only. An incoming bubble is #f9fafb, which
-                // is indistinguishable from the card's #ffffff in a screenshot.
-                // Green tells the two apart.
-                __DEV__ && { borderColor: 'limegreen', borderWidth: 2 }
+                    : { backgroundColor: colors.backgroundSecondary, borderBottomLeftRadius: 4, alignSelf: 'flex-start' }
             ]}>
                 <Text style={[
                     styles.messageText,

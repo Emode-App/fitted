@@ -63,6 +63,8 @@ interface MessagesState {
     sendStylingDelivery: (conversationId: string, senderId: string, delivery: StylingDelivery) => Promise<string | null>;
     sendFacePhoto: (conversationId: string, senderId: string, faceUrl: string) => Promise<void>;
     sendImage: (conversationId: string, senderId: string, localUri: string) => Promise<boolean>;
+    /** Unsend: removes the message for both people. Resolves to an error string, or null on success. */
+    deleteMessage: (messageId: string) => Promise<string | null>;
     createConversation: (userId: string, otherUserId: string) => Promise<string | null>;
     setActiveConversation: (conversation: ConversationWithDetails | null) => void;
 }
@@ -203,6 +205,30 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
 
     // Returns the new message id so the caller can hand it to the styling-session
     // function, which captures payment against that specific delivery.
+    deleteMessage: async (messageId: string) => {
+        // Gone from the list first, so the bubble does not sit there looking
+        // undeleted while the round trip finishes. Put back if the server
+        // refuses, rather than leaving the two views disagreeing.
+        const previous = get().messages;
+        set({ messages: previous.filter((m) => m.id !== messageId) });
+
+        const { error } = await supabase.from('messages').delete().eq('id', messageId);
+
+        if (error) {
+            set({ messages: previous });
+            return error.message || 'Could not unsend that message';
+        }
+
+        // The conversation list shows the last message, and it has just
+        // changed. Without this the preview keeps quoting something that no
+        // longer exists in the thread.
+        const conversation = get().activeConversation;
+        const userId = (await supabase.auth.getUser()).data.user?.id;
+        if (conversation && userId) await get().fetchConversations(userId);
+
+        return null;
+    },
+
     sendStylingDelivery: async (conversationId: string, senderId: string, delivery: StylingDelivery) => {
         try {
             const itemCount = delivery.items.length;
