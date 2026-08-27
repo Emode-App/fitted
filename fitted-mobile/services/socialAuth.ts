@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { NativeModules, Platform, TurboModuleRegistry } from 'react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
 
 import { supabase } from '@/services/supabase';
@@ -50,8 +50,40 @@ type GoogleSignInModule = typeof import('@react-native-google-signin/google-sign
 // undefined = not tried yet, null = tried and not present in this binary.
 let googleModule: GoogleSignInModule | null | undefined;
 
+/**
+ * Is the native side actually in this binary?
+ *
+ * Asked before requiring the package, because wrapping the require in a try is
+ * not enough. getEnforcing does not merely throw -- in development it hands the
+ * error to LogBox and Sentry on the way out, so catching it produces a caught
+ * exception that still shows up as a red screen and a fatal-level issue in the
+ * dashboard. The only way to stay quiet is not to ask that question at all.
+ *
+ * TurboModuleRegistry.get is the non-throwing sibling of getEnforcing: absent
+ * module, null return. NativeModules covers the old bridge, for a binary where
+ * the new architecture is off.
+ */
+function hasGoogleNativeModule(): boolean {
+    try {
+        if (TurboModuleRegistry.get?.('RNGoogleSignin')) return true;
+    } catch {
+        // Fall through to the legacy lookup rather than deciding from a throw.
+    }
+    try {
+        return !!(NativeModules as any)?.RNGoogleSignin;
+    } catch {
+        return false;
+    }
+}
+
 function loadGoogleModule(): GoogleSignInModule | null {
     if (googleModule !== undefined) return googleModule;
+
+    if (!hasGoogleNativeModule()) {
+        googleModule = null;
+        return null;
+    }
+
     try {
         googleModule = require('@react-native-google-signin/google-signin');
     } catch {
