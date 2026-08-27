@@ -52,10 +52,15 @@ export async function registerForPush(userId: string): Promise<boolean> {
         const token = tokenResponse?.data;
         if (!token) return false;
 
-        const { error } = await supabase.from('push_tokens').upsert(
-            { token, user_id: userId, platform: Platform.OS, updated_at: new Date().toISOString() },
-            { onConflict: 'token' },
-        );
+        // Through the RPC rather than a direct upsert: if this device was
+        // previously registered by another account, the row still belongs to
+        // them and the update arm fails the RLS USING check. The function
+        // reassigns it, and takes the user id from auth.uid() rather than from
+        // us, so a token cannot be pointed at somebody else.
+        const { error } = await supabase.rpc('register_push_token', {
+            p_token: token,
+            p_platform: Platform.OS,
+        });
         if (error) {
             console.warn('Push token save failed:', error.message);
             return false;
@@ -107,18 +112,6 @@ async function currentDeviceToken(): Promise<string | null> {
 }
 
 /**
- * Point this device's token at whoever is signed in now.
- *
- * A token belongs to a device, not to an account, and push_tokens maps it to
- * exactly one user. Registration only ever happened from the notifications
- * toggle in settings, so the row kept pointing at whichever account first
- * turned it on -- and that account's messages kept arriving on this phone after
- * signing out of it and into another one. Somebody else's notifications on your
- * lock screen is a privacy problem, not a curiosity.
- *
- * Silent by design: it does nothing unless notifications were already allowed.
- */
-/**
  * The number on the app icon.
  *
  * Driven by our own counts rather than by the push payload, which is why the
@@ -139,14 +132,32 @@ export async function setAppIconBadge(count: number): Promise<void> {
     }
 }
 
+/**
+ * Point this device's token at whoever is signed in now.
+ *
+ * A token belongs to a device, not to an account, and push_tokens maps it to
+ * exactly one user. Registration only ever happened from the notifications
+ * toggle in settings, so the row kept pointing at whichever account first
+ * turned it on -- and that account's messages kept arriving on this phone after
+ * signing out of it and into another one. Somebody else's notifications on your
+ * lock screen is a privacy problem, not a curiosity.
+ *
+ * Silent by design: it does nothing unless notifications were already allowed.
+ *
+ * The userId argument is now only used to decide whether there is anyone to
+ * sync for. The row's owner comes from auth.uid() inside register_push_token,
+ * because a client that can name the user is a client that can hand somebody
+ * else's notifications to itself.
+ */
 export async function syncPushToken(userId: string): Promise<void> {
+    if (!userId) return;
     const token = await currentDeviceToken();
     if (!token) return;
 
-    const { error } = await supabase.from('push_tokens').upsert(
-        { token, user_id: userId, platform: Platform.OS, updated_at: new Date().toISOString() },
-        { onConflict: 'token' },
-    );
+    const { error } = await supabase.rpc('register_push_token', {
+        p_token: token,
+        p_platform: Platform.OS,
+    });
     if (error) {
         console.warn('Push token sync failed:', error.message);
         return;

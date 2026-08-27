@@ -1,6 +1,5 @@
 import { Platform } from 'react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
-import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 
 import { supabase } from '@/services/supabase';
 import { LEGAL } from '@/constants/legal';
@@ -28,6 +27,39 @@ import { LEGAL } from '@/constants/legal';
 const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
 const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
 
+/**
+ * The Google Sign-In package, loaded only if this binary actually contains it.
+ *
+ * This was a top-level import once, and it took the entire sign-in screen down
+ * with it. The package reaches for its native module the moment it is required
+ * -- TurboModuleRegistry.getEnforcing('RNGoogleSignin') throws rather than
+ * returning null -- so on a binary built before that module existed, the throw
+ * escaped this file, into app/auth.tsx which imports it, and into expo-router's
+ * route scan, which evaluates every route file at startup. The symptom was not
+ * "Google sign-in is unavailable". It was "there is no auth route": signing out
+ * navigated to /auth and landed on Unmatched Route, with no way back in.
+ *
+ * It would be tempting to file that under stale dev builds. It is not: JS ships
+ * over the air ahead of native code, so the same crash reaches anyone who takes
+ * an update while running an older binary. Requiring it lazily inside a try
+ * means a missing native module hides the Google button, which is the behaviour
+ * this file claimed to have all along.
+ */
+type GoogleSignInModule = typeof import('@react-native-google-signin/google-signin');
+
+// undefined = not tried yet, null = tried and not present in this binary.
+let googleModule: GoogleSignInModule | null | undefined;
+
+function loadGoogleModule(): GoogleSignInModule | null {
+    if (googleModule !== undefined) return googleModule;
+    try {
+        googleModule = require('@react-native-google-signin/google-signin');
+    } catch {
+        googleModule = null;
+    }
+    return googleModule ?? null;
+}
+
 let googleConfigured = false;
 
 /**
@@ -39,16 +71,22 @@ let googleConfigured = false;
  * rejected here -- which is worse than not offering it.
  */
 export function isGoogleAuthAvailable(): boolean {
-    return !!GOOGLE_IOS_CLIENT_ID && !!GOOGLE_WEB_CLIENT_ID;
+    return !!GOOGLE_IOS_CLIENT_ID && !!GOOGLE_WEB_CLIENT_ID && !!loadGoogleModule();
 }
 
-function ensureGoogleConfigured() {
-    if (googleConfigured) return;
-    GoogleSignin.configure({
-        iosClientId: GOOGLE_IOS_CLIENT_ID,
-        webClientId: GOOGLE_WEB_CLIENT_ID,
-    });
-    googleConfigured = true;
+/** Configures the SDK on first use and hands back the module. */
+function ensureGoogleConfigured(): GoogleSignInModule {
+    const module = loadGoogleModule();
+    if (!module) throw new Error('Google sign-in is not available in this build');
+
+    if (!googleConfigured) {
+        module.GoogleSignin.configure({
+            iosClientId: GOOGLE_IOS_CLIENT_ID,
+            webClientId: GOOGLE_WEB_CLIENT_ID,
+        });
+        googleConfigured = true;
+    }
+    return module;
 }
 
 export type SocialProvider = 'apple' | 'google';
@@ -139,7 +177,7 @@ export async function signInWithApple(): Promise<SocialAuthResult> {
 
 export async function signInWithGoogle(): Promise<SocialAuthResult> {
     if (!isGoogleAuthAvailable()) throw new Error('Google sign-in is not configured');
-    ensureGoogleConfigured();
+    const { GoogleSignin } = ensureGoogleConfigured();
 
     await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: false });
     const response = await GoogleSignin.signIn();
@@ -165,10 +203,14 @@ export async function signInWithGoogle(): Promise<SocialAuthResult> {
 /** True when the person backed out rather than something going wrong. */
 export function isCancellation(error: any): boolean {
     const message = String(error?.message ?? '');
+    // Read through the lazy module: this is called from a catch block, and a
+    // build without the native module must not throw on the way to deciding
+    // whether someone simply backed out.
+    const googleCancelled = loadGoogleModule()?.statusCodes?.SIGN_IN_CANCELLED;
     return (
         error?.code === 'ERR_REQUEST_CANCELED'
         || error?.code === 'ERR_CANCELED'
-        || error?.code === statusCodes.SIGN_IN_CANCELLED
+        || (googleCancelled !== undefined && error?.code === googleCancelled)
         || message === 'cancelled'
         || /cancell?ed/i.test(message)
     );
