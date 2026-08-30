@@ -44,6 +44,29 @@ function fitForImage(imageWidth?: number, imageHeight?: number, windowWidth?: nu
     const overflow = Math.max(image / window, window / image);
     return overflow > MAX_COVER_CROP ? ('contain' as const) : ('cover' as const);
 }
+
+/**
+ * Whether this image is a product shot rather than a photo somebody took.
+ *
+ * The crop threshold above is only ever the right question for a product. A
+ * portrait phone photo is 3:4, which scores 1.50 against the polaroid opening
+ * and so was being fitted rather than filled -- the picture snapped correctly
+ * into the frame and then, a beat later when getSize came back, jumped out of
+ * it. Measuring is what produced that: the answer arrives after the render, so
+ * every change of mind is visible.
+ *
+ * A photo of your own should fill the frame, full stop. There is no shape of
+ * personal photo for which letterboxing inside a polaroid is what you wanted.
+ * So only products get measured, which also means only products can flicker,
+ * and the common case is decided before the first paint.
+ *
+ * The fallback reads the product metadata for items saved before this field
+ * existed -- a draft from last week still opens the way it was left.
+ */
+function isProductImage(item: Pick<CanvasItem, 'source' | 'purchaseLink' | 'itemName' | 'brand'>): boolean {
+    if (item.source) return item.source === 'product';
+    return !!(item.purchaseLink || item.itemName || item.brand);
+}
 import CropModal from '@/components/CropModal';
 import TutorialModal, { useFirstVisitTutorial, TutorialStep } from '@/components/TutorialModal';
 import ProductSearchModal from '@/components/ProductSearchModal';
@@ -103,6 +126,12 @@ interface CanvasItem {
     price?: number; // What search read off the product page, so the tag can prefill
     scale: number;
     rotation: number;
+    /**
+     * Where the picture came from. Decides whether it fills the polaroid
+     * opening or is fitted inside it -- see isProductImage. Optional because
+     * drafts saved before it existed have to keep opening.
+     */
+    source?: 'photo' | 'product';
 }
 
 // --- DRAGGABLE IMAGE COMPONENT ---
@@ -196,9 +225,16 @@ function DraggableImage({
     // a wide product shot kept getting its sides cut off. getSize is a plain
     // documented call that either returns the intrinsic size or errors.
     const [photoFit, setPhotoFit] = useState<'cover' | 'contain'>('cover');
+    const measureThisOne = isProductImage(item);
 
     useEffect(() => {
         if (!item.url) return;
+        // Your own photo fills the frame and is never re-decided, so it cannot
+        // snap in and then jump back out a frame later.
+        if (!measureThisOne) {
+            setPhotoFit('cover');
+            return;
+        }
         let cancelled = false;
         RNImage.getSize(
             item.url,
@@ -208,7 +244,7 @@ function DraggableImage({
             () => { /* unmeasurable: leave it filling the frame */ },
         );
         return () => { cancelled = true; };
-    }, [item.url, PHOTO.width, PHOTO.height]);
+    }, [item.url, measureThisOne, PHOTO.width, PHOTO.height]);
 
     return (
         <GestureDetector gesture={composedGesture}>
@@ -307,9 +343,16 @@ function PreviewItem({ canvasItem, keepFrames }: { canvasItem: CanvasItem; keepF
     }));
 
     const [previewFit, setPreviewFit] = useState<'cover' | 'contain'>('cover');
+    const measurePreview = isProductImage(canvasItem);
 
     useEffect(() => {
         if (!canvasItem.url) return;
+        // Matches the canvas exactly, or the preview would disagree with the
+        // thing it is previewing.
+        if (!measurePreview) {
+            setPreviewFit('cover');
+            return;
+        }
         let cancelled = false;
         RNImage.getSize(
             canvasItem.url,
@@ -319,7 +362,7 @@ function PreviewItem({ canvasItem, keepFrames }: { canvasItem: CanvasItem; keepF
             () => {},
         );
         return () => { cancelled = true; };
-    }, [canvasItem.url]);
+    }, [canvasItem.url, measurePreview]);
 
     return (
         <Animated.View style={[{ width: PREVIEW_SIZE, height: PREVIEW_SIZE }, swingStyle]}>
@@ -509,6 +552,7 @@ export default function CreateScreen() {
                 scale: 1,
                 rotation: 0,
                 itemName: addProductName,
+                source: 'product',
             };
             setCanvasItems(prev => [...prev, newItem]);
 
@@ -599,6 +643,7 @@ export default function CreateScreen() {
                     scale: 1,
                     rotation: 0,
                     usePolaroid: true,
+                    source: 'photo',
                 };
 
                 setCanvasItems((prev) => [...prev, newItem]);
@@ -632,6 +677,7 @@ export default function CreateScreen() {
                 usePolaroid: true, // Default to polaroid frame
                 scale: 1,
                 rotation: 0,
+                source: 'photo',
             }));
             setCanvasItems([...canvasItems, ...newItems]);
 
@@ -1012,6 +1058,7 @@ export default function CreateScreen() {
             x: CANVAS_WIDTH / 2 - 75,
             y: 150,
             usePolaroid: true, // Default to polaroid frame
+            source: 'product',
             purchaseLink: product.purchaseLink,
             itemName: product.name, // Just the product name
             brand: product.brand, // Store brand separately for multi-word brands
@@ -1169,6 +1216,9 @@ export default function CreateScreen() {
             brand: asset.brand,
             itemName: asset.itemName,
             purchaseLink: asset.purchaseLink,
+            // A wardrobe asset is either a shot of something you own or a
+            // product you saved, and only the second wants fitting.
+            source: (asset.purchaseLink || asset.itemName) ? 'product' : 'photo',
         };
         setCanvasItems([...canvasItems, newItem]);
     };
