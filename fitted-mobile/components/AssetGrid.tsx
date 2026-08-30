@@ -1,7 +1,7 @@
 // AssetGrid - Grid of saved clothing items in a folder
-// Tap to add to canvas, long-press to delete
+// Tap to add to canvas, long-press to file it elsewhere or remove it
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
@@ -10,6 +10,7 @@ import {
     TouchableOpacity,
     Dimensions,
     Alert,
+    Modal,
     Pressable,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -31,23 +32,51 @@ const GRID_MAX_HEIGHT = 30 + (MAX_ROWS * ITEM_SIZE) + ((MAX_ROWS - 1) * GAP) + C
 
 export default function AssetGrid({ onAssetSelect }: { onAssetSelect: (asset: Asset) => void }) {
     const { colors, isDark } = useTheme();
-    const { folders, selectedFolderId, removeAsset, addAsset } = useWardrobeStore();
+    const { folders, selectedFolderId, removeAsset, addAsset, moveAssetToFolder } = useWardrobeStore();
 
     const selectedFolder = folders.find(f => f.id === selectedFolderId);
     const assets = selectedFolder?.assets || [];
 
+    // The item a long-press is asking about. Held rather than passed straight
+    // to the sheet because the choice of folder happens a tap later.
+    const [movingAsset, setMovingAsset] = useState<Asset | null>(null);
+
+    // Everywhere it could go. Last Used is excluded as a destination: it fills
+    // itself from every add, so choosing it would be a no-op dressed up as an
+    // action.
+    const destinations = folders.filter(f => f.id !== selectedFolderId && f.id !== 'last_used');
+
     const handleLongPress = (asset: Asset) => {
+        const buttons: any[] = [{ text: 'Cancel', style: 'cancel' }];
+
+        if (destinations.length > 0) {
+            buttons.push({ text: 'Move to Folder…', onPress: () => setMovingAsset(asset) });
+        }
+
+        buttons.push({
+            text: 'Remove',
+            style: 'destructive',
+            onPress: () => removeAsset(selectedFolderId, asset.id),
+        });
+
         Alert.alert(
-            'Remove from Wardrobe?',
-            'This will remove the item from this folder.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Remove',
-                    style: 'destructive',
-                    onPress: () => removeAsset(selectedFolderId, asset.id),
-                },
-            ]
+            asset.itemName || asset.name || 'This item',
+            `In ${selectedFolder?.name ?? 'this folder'}.`,
+            buttons,
+        );
+    };
+
+    const handleMoveTo = (folderId: string, folderName: string) => {
+        if (!movingAsset) return;
+        moveAssetToFolder(movingAsset.id, selectedFolderId, folderId);
+        setMovingAsset(null);
+        // Say which way it went, because out of Last Used the item stays put and
+        // an unchanged grid otherwise looks like the tap did nothing.
+        Alert.alert(
+            'Filed',
+            selectedFolderId === 'last_used'
+                ? `Added to ${folderName}. It stays in Last Used too.`
+                : `Moved to ${folderName}.`,
         );
     };
 
@@ -92,6 +121,48 @@ export default function AssetGrid({ onAssetSelect }: { onAssetSelect: (asset: As
         </TouchableOpacity>
     );
 
+    const renderFolderPicker = () => (
+        <Modal
+            visible={!!movingAsset}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setMovingAsset(null)}
+        >
+            <Pressable style={styles.pickerBackdrop} onPress={() => setMovingAsset(null)}>
+                {/* Stops a tap inside the sheet from closing it, without making
+                    the sheet itself a button. */}
+                <Pressable
+                    style={[styles.pickerSheet, { backgroundColor: isDark ? '#18181b' : '#fff' }]}
+                    onPress={() => {}}
+                >
+                    <Text style={[styles.pickerTitle, { color: isDark ? '#fff' : '#000' }]}>
+                        Move to folder
+                    </Text>
+                    <ScrollView style={{ maxHeight: 320 }}>
+                        {destinations.map((folder) => (
+                            <Pressable
+                                key={folder.id}
+                                style={styles.pickerRow}
+                                onPress={() => handleMoveTo(folder.id, folder.name)}
+                            >
+                                <Feather name="folder" size={18} color={colors.textSecondary} />
+                                <Text style={[styles.pickerRowText, { color: isDark ? '#fff' : '#000' }]}>
+                                    {folder.name}
+                                </Text>
+                                <Text style={[styles.pickerCount, { color: colors.textTertiary }]}>
+                                    {folder.assets.length}
+                                </Text>
+                            </Pressable>
+                        ))}
+                    </ScrollView>
+                    <Pressable style={styles.pickerCancel} onPress={() => setMovingAsset(null)}>
+                        <Text style={[styles.pickerCancelText, { color: colors.textSecondary }]}>Cancel</Text>
+                    </Pressable>
+                </Pressable>
+            </Pressable>
+        </Modal>
+    );
+
     // Empty state with dashed border
     const renderEmpty = () => (
         <View style={[styles.emptyState, isDark && { borderColor: '#3f3f46' }]}>
@@ -102,6 +173,8 @@ export default function AssetGrid({ onAssetSelect }: { onAssetSelect: (asset: As
 
     return (
         <View style={[styles.container, isDark && { backgroundColor: '#18181b' }]}>
+            {renderFolderPicker()}
+
             {/* Header Row */}
             <View style={styles.headerRow}>
                 <Text style={[styles.headerLabel, isDark && { color: '#71717a' }]}>
@@ -142,6 +215,49 @@ export default function AssetGrid({ onAssetSelect }: { onAssetSelect: (asset: As
 }
 
 const styles = StyleSheet.create({
+    pickerBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 32,
+    },
+    pickerSheet: {
+        width: '100%',
+        borderRadius: 18,
+        paddingTop: 18,
+        paddingBottom: 8,
+        overflow: 'hidden',
+    },
+    pickerTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        textAlign: 'center',
+        marginBottom: 12,
+    },
+    pickerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        paddingVertical: 14,
+        paddingHorizontal: 20,
+    },
+    pickerRowText: {
+        flex: 1,
+        fontSize: 15,
+        fontWeight: '500',
+    },
+    pickerCount: {
+        fontSize: 13,
+    },
+    pickerCancel: {
+        paddingVertical: 14,
+        alignItems: 'center',
+    },
+    pickerCancelText: {
+        fontSize: 15,
+        fontWeight: '600',
+    },
     container: {
         backgroundColor: '#f9fafb',
         borderRadius: 16,

@@ -75,6 +75,8 @@ interface WardrobeState {
     setSelectedFolder: (folderId: string) => void;
     addAsset: (folderId: string, asset: Omit<Asset, 'id' | 'dateAdded'>) => void;
     removeAsset: (folderId: string, assetId: string) => void;
+    /** File an item into another folder. Out of Last Used this copies; between named folders it moves. */
+    moveAssetToFolder: (assetId: string, fromFolderId: string, toFolderId: string) => void;
     createFolder: (name: string) => string;
     deleteFolder: (folderId: string) => void;
     getFolder: (folderId: string) => Folder | undefined;
@@ -188,6 +190,53 @@ export const useWardrobeStore = create<WardrobeState>()(
                 });
 
                 if (removedUrlForSink) sink.onRemove?.(removedUrlForSink);
+            },
+
+            /**
+             * File an item into another folder.
+             *
+             * Last Used is a recency view rather than a bucket: addAsset already
+             * mirrors everything into it, so an item that lives in Shirts also
+             * appears there. Taking it out of Last Used when filing it would
+             * therefore contradict what happens when the same item is added
+             * from anywhere else, and would make the folder mean two different
+             * things depending on how the item arrived. So filing out of Last
+             * Used copies, and filing between two named folders moves.
+             *
+             * Nothing is tombstoned either way -- the item ends up somewhere, so
+             * this is never a deletion, and removedUrls must not learn about it.
+             */
+            moveAssetToFolder: (assetId, fromFolderId, toFolderId) => {
+                if (fromFolderId === toFolderId) return;
+
+                let moved: Asset | undefined;
+                let destinationName = toFolderId;
+
+                set((state) => {
+                    const asset = state.folders
+                        .find(f => f.id === fromFolderId)?.assets
+                        .find(a => a.id === assetId);
+                    if (!asset) return state;
+
+                    moved = asset;
+                    destinationName = state.folders.find(f => f.id === toFolderId)?.name ?? toFolderId;
+
+                    const leavesSource = fromFolderId !== 'last_used';
+
+                    return {
+                        folders: state.folders.map(folder => {
+                            if (folder.id === toFolderId) {
+                                return { ...folder, assets: upsertAsset(folder.assets, asset) };
+                            }
+                            if (leavesSource && folder.id === fromFolderId) {
+                                return { ...folder, assets: folder.assets.filter(a => a.id !== assetId) };
+                            }
+                            return folder;
+                        }),
+                    };
+                });
+
+                if (moved) sink.onAdd?.(toFolderId, destinationName, moved);
             },
 
             createFolder: (name) => {
