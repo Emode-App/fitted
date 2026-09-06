@@ -6,9 +6,6 @@ import {
     Dimensions,
     ActivityIndicator,
     Alert,
-    NativeModules,
-    Platform,
-    TurboModuleRegistry,
     Image as RNImage,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -19,33 +16,9 @@ import Animated, { useSharedValue, useAnimatedStyle } from 'react-native-reanima
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { Text, View } from '@/components/Themed';
+import { cutOutBackground, isBackgroundRemovalAvailable } from '@/services/backgroundRemoval';
 
-/**
- * Is the cutout module actually in this binary?
- *
- * Asked without getEnforcing, and asked before the package is required. The
- * package's own entry point hands back a Proxy that throws on first property
- * access when the native side is missing, and its TurboModule spec calls
- * getEnforcing at module scope -- either one turns a missing module into a
- * crash rather than a missing button. The same shape of import took the whole
- * sign-in route down earlier, so this one is loaded lazily and only when the
- * answer here is yes.
- */
-function backgroundRemovalAvailable(): boolean {
-    if (Platform.OS !== 'ios' && Platform.OS !== 'android') return false;
-    try {
-        if (TurboModuleRegistry.get?.('BackgroundRemover')) return true;
-    } catch {
-        // fall through to the legacy bridge rather than deciding from a throw
-    }
-    try {
-        return !!(NativeModules as any)?.BackgroundRemover;
-    } catch {
-        return false;
-    }
-}
-
-const CAN_REMOVE_BACKGROUND = backgroundRemovalAvailable();
+const CAN_REMOVE_BACKGROUND = isBackgroundRemovalAvailable();
 
 /**
  * Check if a URI is a remote URL that needs to be downloaded
@@ -295,19 +268,9 @@ export default function CropModal({ visible, imageUri, onClose, onCropComplete }
 
         setRemovingBg(true);
         try {
-            let source = workingUri;
-            if (isRemoteUri(source)) source = await downloadToLocalCache(source);
+            const result = await cutOutBackground(workingUri);
 
-            // Required here rather than at the top of the file. See
-            // backgroundRemovalAvailable: importing it eagerly would throw on a
-            // binary without the native module and take this screen with it.
-            const { removeBackground } = require('react-native-background-remover');
-            const result = await removeBackground(source);
-
-            // A simulator returns the original URI untouched, so treat an
-            // unchanged path as "nothing happened" rather than claiming a
-            // cutout that is not there.
-            if (!result || result === source) {
+            if (!result) {
                 Alert.alert(
                     'Could Not Remove Background',
                     'This needs a real device -- the simulator cannot do it.',

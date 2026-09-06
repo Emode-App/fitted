@@ -35,6 +35,10 @@ import { BACKGROUND_OPTIONS, DEFAULT_BACKGROUND, BackgroundOption, POLAROID_FRAM
 // that the Generate button stays within reach.
 const COLLAPSED_RESULTS = 6;
 
+// Resolved once at module scope: whether the binary can do this cannot change
+// while the app is running, and asking per render would be noise.
+const CAN_CUT_OUT = isBackgroundRemovalAvailable();
+
 const MAX_COVER_CROP = 1.25;
 
 function fitForImage(imageWidth?: number, imageHeight?: number, windowWidth?: number, windowHeight?: number) {
@@ -67,6 +71,17 @@ function isProductImage(item: Pick<CanvasItem, 'source' | 'purchaseLink' | 'item
     if (item.source) return item.source === 'product';
     return !!(item.purchaseLink || item.itemName || item.brand);
 }
+
+/**
+ * How this image should sit in the polaroid opening.
+ *
+ * A cutout is always fitted whole. Someone who took the background out did it
+ * to see the thing itself, and filling the frame would crop the very edges they
+ * just isolated -- a jacket loses its shoulders to make a square.
+ */
+function fitFor(item: CanvasItem, measured: 'cover' | 'contain'): 'cover' | 'contain' {
+    return item.cutOut ? 'contain' : measured;
+}
 import CropModal from '@/components/CropModal';
 import TutorialModal, { useFirstVisitTutorial, TutorialStep } from '@/components/TutorialModal';
 import ProductSearchModal from '@/components/ProductSearchModal';
@@ -74,6 +89,7 @@ import FolderCarousel from '@/components/FolderCarousel';
 import AssetGrid from '@/components/AssetGrid';
 import { Product, generateOutfit, searchProducts, searchProductsOnWeb, identifyItem, ItemSuggestion } from '@/services/aiService';
 import { Asset, useWardrobeStore } from '@/stores/wardrobeStore';
+import { cutOutBackground, isBackgroundRemovalAvailable } from '@/services/backgroundRemoval';
 import { useTheme } from '@/hooks/useTheme';
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -132,6 +148,8 @@ interface CanvasItem {
      * drafts saved before it existed have to keep opening.
      */
     source?: 'photo' | 'product';
+    /** The background has been taken out, so this image carries transparency. */
+    cutOut?: boolean;
 }
 
 // --- DRAGGABLE IMAGE COMPONENT ---
@@ -142,6 +160,8 @@ function DraggableImage({
     onRemove,
     onCrop,
     onTogglePolaroid,
+    onCutOut,
+    cuttingOut = false,
     onUpdate,
     hideControls = false
 }: {
@@ -149,6 +169,8 @@ function DraggableImage({
     onRemove: () => void;
     onCrop: () => void;
     onTogglePolaroid: () => void;
+    onCutOut: () => void;
+    cuttingOut?: boolean;
     onUpdate: (id: string, updates: Partial<CanvasItem>) => void;
     hideControls?: boolean;
 }) {
@@ -273,7 +295,7 @@ function DraggableImage({
                             <Image
                                 source={{ uri: item.url }}
                                 style={{ width: '100%', height: '100%' }}
-                                contentFit={photoFit}
+                                contentFit={fitFor(item, photoFit)}
                             />
                         </View>
                         {/* Frame renders second (on top with transparent center) */}
@@ -311,6 +333,20 @@ function DraggableImage({
                         >
                             <Feather name={item.usePolaroid ? "check-square" : "square"} size={14} color="#fff" />
                         </Pressable>
+                        {/* Absent, not disabled, where the binary cannot do it,
+                            and absent once done -- there is nothing left to cut
+                            out of an image that has already been isolated. */}
+                        {CAN_CUT_OUT && !item.cutOut && (
+                            <Pressable
+                                style={styles.cutOutButton}
+                                onPress={onCutOut}
+                                disabled={cuttingOut}
+                            >
+                                {cuttingOut
+                                    ? <ActivityIndicator size="small" color="#fff" />
+                                    : <Feather name="scissors" size={14} color="#fff" />}
+                            </Pressable>
+                        )}
                     </>
                 )}
             </Animated.View>
@@ -985,7 +1021,12 @@ export default function CreateScreen() {
 
         if (target) {
             setCanvasItems(canvasItems.map((i) =>
-                i.id === target.id ? { ...i, url: croppedUri } : i
+                // cutOut only ever goes true here. Cropping a picture whose
+                // background was already removed does not put it back, so the
+                // flag must not be cleared by a later crop that did not use it.
+                i.id === target.id
+                    ? { ...i, url: croppedUri, cutOut: cutOut || i.cutOut }
+                    : i
             ));
         }
         setCropItem(null);
@@ -1252,6 +1293,52 @@ export default function CreateScreen() {
             source: (asset.purchaseLink || asset.itemName) ? 'product' : 'photo',
         };
         setCanvasItems([...canvasItems, newItem]);
+    };
+
+    // Which item is having its background taken out, so only that one shows a
+    // spinner rather than the whole canvas going busy.
+    const [cuttingOutId, setCuttingOutId] = useState<string | null>(null);
+
+    const handleCutOut = async (item: CanvasItem) => {
+        setCuttingOutId(item.id);
+        try {
+            const cut = await cutOutBackground(item.url);
+            if (!cut) {
+                Alert.alert(
+                    'Could Not Remove Background',
+                    'This needs a real device — the simulator cannot do it.',
+                );
+                return;
+            }
+
+            // Show the local file straight away. The upload below is durability,
+            // not something worth making anyone wait behind.
+            setCanvasItems(items => items.map(i =>
+                i.id === item.id ? { ...i, url: cut, cutOut: true } : i
+            ));
+
+            // The cutout is written to the cache directory, which iOS may empty.
+            // Without this a draft holding one comes back to a broken image.
+            if (!user) return;
+            const base64 = await FileSystem.readAsStringAsync(cut, {
+                encoding: FileSystem.EncodingType.Base64,
+            });
+            const filename = `${user.id}/wardrobe/${Date.now()}_${Math.random().toString(36).slice(2)}.png`;
+            const publicUrl = await uploadImage('posts', filename, base64);
+            if (!publicUrl) return;
+
+            setCanvasItems(items => items.map(i =>
+                i.id === item.id && i.url === cut ? { ...i, url: publicUrl } : i
+            ));
+        } catch (error: any) {
+            console.warn('Background removal failed:', error?.message ?? error);
+            Alert.alert(
+                'Could Not Remove Background',
+                'Nothing was changed, so the picture is exactly as it was.',
+            );
+        } finally {
+            setCuttingOutId(null);
+        }
     };
 
     // Toggle polaroid frame for an item
@@ -1948,6 +2035,8 @@ export default function CreateScreen() {
                                                 onRemove={() => removeItem(item.id)}
                                                 onCrop={() => handleCropItem(item)}
                                                 onTogglePolaroid={() => togglePolaroid(item.id)}
+                                                onCutOut={() => handleCutOut(item)}
+                                                cuttingOut={cuttingOutId === item.id}
                                                 onUpdate={handleUpdateItem}
                                                 hideControls={isCapturing}
                                             />
@@ -3053,6 +3142,18 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
     // Polaroid frame toggle button styles
+    cutOutButton: {
+        position: 'absolute',
+        bottom: -10,
+        left: -10,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 10,
+    },
     polaroidToggleButton: {
         position: 'absolute',
         bottom: -10,
