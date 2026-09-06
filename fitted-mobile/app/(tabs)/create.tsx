@@ -36,8 +36,10 @@ import { BACKGROUND_OPTIONS, DEFAULT_BACKGROUND, BackgroundOption, POLAROID_FRAM
 const COLLAPSED_RESULTS = 6;
 
 // Resolved once at module scope: whether the binary can do this cannot change
-// while the app is running, and asking per render would be noise.
-const CAN_CUT_OUT = isBackgroundRemovalAvailable();
+// while the app is running, and asking per render would be noise. In
+// development this is true regardless, so the control can be seen and worked on
+// against a dev client that predates the native module.
+const CAN_CUT_OUT = shouldOfferBackgroundRemoval();
 
 const MAX_COVER_CROP = 1.25;
 
@@ -89,7 +91,12 @@ import FolderCarousel from '@/components/FolderCarousel';
 import AssetGrid from '@/components/AssetGrid';
 import { Product, generateOutfit, searchProducts, searchProductsOnWeb, identifyItem, ItemSuggestion } from '@/services/aiService';
 import { Asset, useWardrobeStore } from '@/stores/wardrobeStore';
-import { cutOutBackground, isBackgroundRemovalAvailable } from '@/services/backgroundRemoval';
+import {
+    backgroundRemovalUnavailableReason,
+    cutOutBackground,
+    isBackgroundRemovalAvailable,
+    shouldOfferBackgroundRemoval,
+} from '@/services/backgroundRemoval';
 import { useTheme } from '@/hooks/useTheme';
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -1300,6 +1307,14 @@ export default function CreateScreen() {
     const [cuttingOutId, setCuttingOutId] = useState<string | null>(null);
 
     const handleCutOut = async (item: CanvasItem) => {
+        // Only reachable in development, where the button is drawn whether or
+        // not the binary can run it. Saying so is more use than a button that
+        // appears to do nothing.
+        if (!isBackgroundRemovalAvailable()) {
+            Alert.alert('Not In This Build', backgroundRemovalUnavailableReason());
+            return;
+        }
+
         setCuttingOutId(item.id);
         try {
             const cut = await cutOutBackground(item.url);

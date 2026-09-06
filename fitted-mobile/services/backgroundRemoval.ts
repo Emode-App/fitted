@@ -49,6 +49,29 @@ export function isBackgroundRemovalAvailable(): boolean {
     return cachedAvailability;
 }
 
+/**
+ * Whether to draw the button at all.
+ *
+ * In a release build this is simply whether it works: an end user should never
+ * meet a control that cannot do anything, and hiding it is the honest choice.
+ *
+ * In development it is always drawn, because the opposite is worse. A native
+ * module only arrives with a new binary, so while working on this against an
+ * older dev client the button silently does not exist -- and "it will appear in
+ * a build" is not something anyone can check. Being able to see it, position
+ * it, and have it explain itself on tap is worth more during development than
+ * the tidiness of hiding it, and none of that reaches anybody else.
+ */
+export function shouldOfferBackgroundRemoval(): boolean {
+    return isBackgroundRemovalAvailable() || __DEV__;
+}
+
+/** Why the button cannot do its job, phrased for whoever is looking at it. */
+export function backgroundRemovalUnavailableReason(): string {
+    return 'This needs a native module that arrives with a new build. '
+        + 'The button is shown here so it can be worked on, but it cannot run on this binary.';
+}
+
 const isRemote = (uri: string) => uri.startsWith('http://') || uri.startsWith('https://');
 
 /**

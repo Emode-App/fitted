@@ -16,9 +16,14 @@ import Animated, { useSharedValue, useAnimatedStyle } from 'react-native-reanima
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { Text, View } from '@/components/Themed';
-import { cutOutBackground, isBackgroundRemovalAvailable } from '@/services/backgroundRemoval';
+import {
+    backgroundRemovalUnavailableReason,
+    cutOutBackground,
+    isBackgroundRemovalAvailable,
+    shouldOfferBackgroundRemoval,
+} from '@/services/backgroundRemoval';
 
-const CAN_REMOVE_BACKGROUND = isBackgroundRemovalAvailable();
+const CAN_REMOVE_BACKGROUND = shouldOfferBackgroundRemoval();
 
 /**
  * Check if a URI is a remote URL that needs to be downloaded
@@ -263,6 +268,11 @@ export default function CropModal({ visible, imageUri, onClose, onCropComplete }
         if (cutOut) {
             setWorkingUri(imageUri);
             setCutOut(false);
+            return;
+        }
+
+        if (!isBackgroundRemovalAvailable()) {
+            Alert.alert('Not In This Build', backgroundRemovalUnavailableReason());
             return;
         }
 
