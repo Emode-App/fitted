@@ -980,13 +980,44 @@ export default function CreateScreen() {
         setCropItem(item);
     };
 
-    const handleCropComplete = (croppedUri: string) => {
-        if (cropItem) {
+    const handleCropComplete = (croppedUri: string, cutOut?: boolean) => {
+        const target = cropItem;
+
+        if (target) {
             setCanvasItems(canvasItems.map((i) =>
-                i.id === cropItem.id ? { ...i, url: croppedUri } : i
+                i.id === target.id ? { ...i, url: croppedUri } : i
             ));
         }
         setCropItem(null);
+
+        // A cutout is written to the cache directory, which iOS is free to
+        // empty. The original picture is already in storage -- it was uploaded
+        // when it was picked -- but the version with the background taken out
+        // exists only on disk, so a draft saved with one would come back to a
+        // broken image. Upload it, then swap the canvas over to the durable URL.
+        //
+        // Deliberately after the state update rather than instead of it: the
+        // local file draws immediately, and the swap is invisible when it
+        // lands. Failing the upload leaves the local URI in place, which is
+        // still the right picture for this session.
+        if (!cutOut || !target || !user) return;
+
+        (async () => {
+            try {
+                const base64 = await FileSystem.readAsStringAsync(croppedUri, {
+                    encoding: FileSystem.EncodingType.Base64,
+                });
+                const filename = `${user.id}/wardrobe/${Date.now()}_${Math.random().toString(36).slice(2)}.png`;
+                const publicUrl = await uploadImage('posts', filename, base64);
+                if (!publicUrl) return;
+
+                setCanvasItems(items => items.map(i =>
+                    i.id === target.id && i.url === croppedUri ? { ...i, url: publicUrl } : i
+                ));
+            } catch (error) {
+                console.warn('Could not store the cutout:', error);
+            }
+        })();
     };
 
     // Keep a styling session's work without being asked.
@@ -1255,10 +1286,21 @@ export default function CreateScreen() {
         try {
             const arrayBuffer = decode(base64Data);
 
+            // Storage serves back whatever content type it was handed, so a PNG
+            // uploaded as image/jpeg is served as a JPEG that is not one. Most
+            // viewers sniff the bytes and cope, but anything that trusts the
+            // header does not -- and transparency is the first casualty when
+            // something decides to re-encode. Read it off the name rather than
+            // asserting one shape for every image the app stores.
+            const lower = filename.toLowerCase();
+            const contentType = lower.endsWith('.png') ? 'image/png'
+                : lower.endsWith('.webp') ? 'image/webp'
+                    : 'image/jpeg';
+
             const { error } = await supabase.storage
                 .from(targetBucket)
                 .upload(filename, arrayBuffer, {
-                    contentType: 'image/jpeg',
+                    contentType,
                     upsert: false,
                 });
 

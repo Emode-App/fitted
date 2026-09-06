@@ -180,7 +180,19 @@ serve(async (req: Request) => {
                 }),
             });
             if (!response.ok) {
-                console.error('Gemini image request failed', response.status);
+                // The status alone cannot tell these apart, and they need
+                // opposite fixes: 429 is quota and waiting or paying resolves
+                // it, while 403 is the project or the key being refused this
+                // model and no amount of billing changes that. Google says
+                // which in the body, so log the body. It carries no key -- the
+                // key travels in the query string, not the response.
+                const detail = await response.text().catch(() => '<unreadable>');
+                console.error(
+                    'Gemini image request failed',
+                    response.status,
+                    'model=' + IMAGE_MODEL,
+                    detail.slice(0, 700),
+                );
                 await recordGeneration(user.id, 'failed', faceProvided);
                 return json({ error: 'The AI provider could not generate this outfit' }, 502);
             }
