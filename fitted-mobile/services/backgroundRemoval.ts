@@ -66,10 +66,19 @@ export function shouldOfferBackgroundRemoval(): boolean {
     return isBackgroundRemovalAvailable() || __DEV__;
 }
 
-/** Why the button cannot do its job, phrased for whoever is looking at it. */
+/**
+ * Why the button cannot do its job, phrased for whoever is looking at it.
+ *
+ * Specifically not "needs a new build": whoever sees this has almost certainly
+ * just made one, and being told to do the thing they just did is how a correct
+ * message reads as a broken app. The distinction that matters is which binary
+ * is running, not whether a build exists.
+ */
 export function backgroundRemovalUnavailableReason(): string {
-    return 'This needs a native module that arrives with a new build. '
-        + 'The button is shown here so it can be worked on, but it cannot run on this binary.';
+    return 'The dev client you are running was compiled before this native module was added, '
+        + 'so it cannot cut anything out. Release builds have it. '
+        + 'To use it while developing, build the development profile once — '
+        + 'after that, reloading picks up changes as normal.';
 }
 
 const isRemote = (uri: string) => uri.startsWith('http://') || uri.startsWith('https://');
