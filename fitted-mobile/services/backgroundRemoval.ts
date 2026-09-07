@@ -5,6 +5,19 @@ import { supabase } from '@/services/supabase';
 /**
  * Cutting an item out of its background.
  *
+ * DORMANT. Nothing calls this, on purpose -- the buttons were taken out of the
+ * canvas and the crop sheet because both providers that can do the work refuse
+ * without credit, and a feature that is one billing screen away from working is
+ * not a feature. The plumbing stays because it is finished and correct: the
+ * ai-proxy 'remove-background' action is deployed, takes fal or Replicate
+ * depending on which key is set, and returns a transparent PNG.
+ *
+ * To turn it back on: add FAL_KEY (or REPLICATE_API_TOKEN) to the edge function
+ * secrets, then restore the scissors button on the canvas item -- see the
+ * cutOut field on CanvasItem and fitFor() in create.tsx, both of which were
+ * left in place for exactly that. No build required; it is all JavaScript and
+ * a server call.
+ *
  * This ran on the device first, through Vision, and that was the wrong call
  * twice over. Vision's subject lifting needs iOS 17 and only exists in a native
  * build -- so it could not be worked on without spending a build each time --

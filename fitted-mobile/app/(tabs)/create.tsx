@@ -35,12 +35,6 @@ import { BACKGROUND_OPTIONS, DEFAULT_BACKGROUND, BackgroundOption, POLAROID_FRAM
 // that the Generate button stays within reach.
 const COLLAPSED_RESULTS = 6;
 
-// Resolved once at module scope: whether the binary can do this cannot change
-// while the app is running, and asking per render would be noise. In
-// development this is true regardless, so the control can be seen and worked on
-// against a dev client that predates the native module.
-const CAN_CUT_OUT = shouldOfferBackgroundRemoval();
-
 const MAX_COVER_CROP = 1.25;
 
 function fitForImage(imageWidth?: number, imageHeight?: number, windowWidth?: number, windowHeight?: number) {
@@ -91,12 +85,6 @@ import FolderCarousel from '@/components/FolderCarousel';
 import AssetGrid from '@/components/AssetGrid';
 import { Product, generateOutfit, searchProducts, searchProductsOnWeb, identifyItem, ItemSuggestion } from '@/services/aiService';
 import { Asset, useWardrobeStore } from '@/stores/wardrobeStore';
-import {
-    backgroundRemovalUnavailableReason,
-    cutOutBackground,
-    isBackgroundRemovalAvailable,
-    shouldOfferBackgroundRemoval,
-} from '@/services/backgroundRemoval';
 import { useTheme } from '@/hooks/useTheme';
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -167,9 +155,6 @@ function DraggableImage({
     onRemove,
     onCrop,
     onTogglePolaroid,
-    onCutOut,
-    onRestore,
-    cuttingOut = false,
     onUpdate,
     hideControls = false
 }: {
@@ -177,9 +162,6 @@ function DraggableImage({
     onRemove: () => void;
     onCrop: () => void;
     onTogglePolaroid: () => void;
-    onCutOut: () => void;
-    onRestore: () => void;
-    cuttingOut?: boolean;
     onUpdate: (id: string, updates: Partial<CanvasItem>) => void;
     hideControls?: boolean;
 }) {
@@ -342,22 +324,6 @@ function DraggableImage({
                         >
                             <Feather name={item.usePolaroid ? "check-square" : "square"} size={14} color="#fff" />
                         </Pressable>
-                        {/* Absent, not disabled, where the binary cannot do it.
-                            Once an item is cut out this turns into an undo
-                            rather than disappearing: hiding it left a bad
-                            cutout on the canvas with no way back to the
-                            picture it replaced. */}
-                        {CAN_CUT_OUT && (
-                            <Pressable
-                                style={[styles.cutOutButton, item.cutOut && styles.cutOutButtonUndo]}
-                                onPress={item.cutOut ? onRestore : onCutOut}
-                                disabled={cuttingOut}
-                            >
-                                {cuttingOut
-                                    ? <ActivityIndicator size="small" color="#fff" />
-                                    : <Feather name={item.cutOut ? 'rotate-ccw' : 'scissors'} size={14} color="#fff" />}
-                            </Pressable>
-                        )}
                     </>
                 )}
             </Animated.View>
@@ -1027,49 +993,16 @@ export default function CreateScreen() {
         setCropItem(item);
     };
 
-    const handleCropComplete = (croppedUri: string, cutOut?: boolean) => {
+    const handleCropComplete = (croppedUri: string) => {
         const target = cropItem;
 
         if (target) {
             setCanvasItems(canvasItems.map((i) =>
-                // cutOut only ever goes true here. Cropping a picture whose
-                // background was already removed does not put it back, so the
-                // flag must not be cleared by a later crop that did not use it.
-                i.id === target.id
-                    ? { ...i, url: croppedUri, cutOut: cutOut || i.cutOut }
-                    : i
+                i.id === target.id ? { ...i, url: croppedUri } : i
             ));
         }
         setCropItem(null);
 
-        // A cutout is written to the cache directory, which iOS is free to
-        // empty. The original picture is already in storage -- it was uploaded
-        // when it was picked -- but the version with the background taken out
-        // exists only on disk, so a draft saved with one would come back to a
-        // broken image. Upload it, then swap the canvas over to the durable URL.
-        //
-        // Deliberately after the state update rather than instead of it: the
-        // local file draws immediately, and the swap is invisible when it
-        // lands. Failing the upload leaves the local URI in place, which is
-        // still the right picture for this session.
-        if (!cutOut || !target || !user) return;
-
-        (async () => {
-            try {
-                const base64 = await FileSystem.readAsStringAsync(croppedUri, {
-                    encoding: FileSystem.EncodingType.Base64,
-                });
-                const filename = `${user.id}/wardrobe/${Date.now()}_${Math.random().toString(36).slice(2)}.png`;
-                const publicUrl = await uploadImage('posts', filename, base64);
-                if (!publicUrl) return;
-
-                setCanvasItems(items => items.map(i =>
-                    i.id === target.id && i.url === croppedUri ? { ...i, url: publicUrl } : i
-                ));
-            } catch (error) {
-                console.warn('Could not store the cutout:', error);
-            }
-        })();
     };
 
     // Keep a styling session's work without being asked.
@@ -1304,73 +1237,6 @@ export default function CreateScreen() {
             source: (asset.purchaseLink || asset.itemName) ? 'product' : 'photo',
         };
         setCanvasItems([...canvasItems, newItem]);
-    };
-
-    // Which item is having its background taken out, so only that one shows a
-    // spinner rather than the whole canvas going busy.
-    const [cuttingOutId, setCuttingOutId] = useState<string | null>(null);
-
-    const handleCutOut = async (item: CanvasItem) => {
-        // Only reachable in development, where the button is drawn whether or
-        // not the binary can run it. Saying so is more use than a button that
-        // appears to do nothing.
-        if (!isBackgroundRemovalAvailable()) {
-            Alert.alert('Not In This Build', backgroundRemovalUnavailableReason());
-            return;
-        }
-
-        setCuttingOutId(item.id);
-        try {
-            const cut = await cutOutBackground(item.url);
-            if (!cut) {
-                // Covers all three ways this comes back empty-handed: no
-                // subject found, a simulator, or an unreadable source. The
-                // picture is untouched in every one of them, which is the only
-                // part that matters to say.
-                Alert.alert(
-                    'Nothing To Cut Out',
-                    'No clear subject was found in this picture, so it has been left exactly as it was. '
-                    + 'Photos with the item against a plain background work best.',
-                );
-                return;
-            }
-
-            // Show the local file straight away. The upload below is durability,
-            // not something worth making anyone wait behind.
-            setCanvasItems(items => items.map(i =>
-                i.id === item.id ? { ...i, url: cut, cutOut: true } : i
-            ));
-
-            // The cutout is written to the cache directory, which iOS may empty.
-            // Without this a draft holding one comes back to a broken image.
-            if (!user) return;
-            const base64 = await FileSystem.readAsStringAsync(cut, {
-                encoding: FileSystem.EncodingType.Base64,
-            });
-            const filename = `${user.id}/wardrobe/${Date.now()}_${Math.random().toString(36).slice(2)}.png`;
-            const publicUrl = await uploadImage('posts', filename, base64);
-            if (!publicUrl) return;
-
-            setCanvasItems(items => items.map(i =>
-                i.id === item.id && i.url === cut ? { ...i, url: publicUrl } : i
-            ));
-        } catch (error: any) {
-            console.warn('Background removal failed:', error?.message ?? error);
-            Alert.alert(
-                'Could Not Remove Background',
-                'Nothing was changed, so the picture is exactly as it was.',
-            );
-        } finally {
-            setCuttingOutId(null);
-        }
-    };
-
-    // Put back the picture a cutout replaced. originalUrl has been carried
-    // since the item was created, for re-cropping, and serves here too.
-    const handleRestoreItem = (item: CanvasItem) => {
-        setCanvasItems(items => items.map(i =>
-            i.id === item.id ? { ...i, url: i.originalUrl || i.url, cutOut: false } : i
-        ));
     };
 
     // Toggle polaroid frame for an item
@@ -2067,9 +1933,6 @@ export default function CreateScreen() {
                                                 onRemove={() => removeItem(item.id)}
                                                 onCrop={() => handleCropItem(item)}
                                                 onTogglePolaroid={() => togglePolaroid(item.id)}
-                                                onCutOut={() => handleCutOut(item)}
-                                                onRestore={() => handleRestoreItem(item)}
-                                                cuttingOut={cuttingOutId === item.id}
                                                 onUpdate={handleUpdateItem}
                                                 hideControls={isCapturing}
                                             />
@@ -3175,21 +3038,6 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
     // Polaroid frame toggle button styles
-    cutOutButtonUndo: {
-        backgroundColor: 'rgba(59,130,246,0.85)',
-    },
-    cutOutButton: {
-        position: 'absolute',
-        bottom: -10,
-        left: -10,
-        width: 28,
-        height: 28,
-        borderRadius: 14,
-        backgroundColor: 'rgba(0,0,0,0.7)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 10,
-    },
     polaroidToggleButton: {
         position: 'absolute',
         bottom: -10,

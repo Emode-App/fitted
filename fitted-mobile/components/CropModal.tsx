@@ -16,14 +16,7 @@ import Animated, { useSharedValue, useAnimatedStyle } from 'react-native-reanima
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { Text, View } from '@/components/Themed';
-import {
-    backgroundRemovalUnavailableReason,
-    cutOutBackground,
-    isBackgroundRemovalAvailable,
-    shouldOfferBackgroundRemoval,
-} from '@/services/backgroundRemoval';
 
-const CAN_REMOVE_BACKGROUND = shouldOfferBackgroundRemoval();
 
 /**
  * Check if a URI is a remote URL that needs to be downloaded
@@ -59,31 +52,17 @@ interface CropModalProps {
     visible: boolean;
     imageUri: string;
     onClose: () => void;
-    /** `cutOut` says the image carries transparency, so it must stay a PNG. */
-    onCropComplete: (croppedUri: string, cutOut?: boolean) => void;
+    onCropComplete: (croppedUri: string) => void;
 }
 
 export default function CropModal({ visible, imageUri, onClose, onCropComplete }: CropModalProps) {
     const [processing, setProcessing] = useState(false);
     const [imageInfo, setImageInfo] = useState({ width: 1000, height: 1000, displayWidth: CONTAINER_WIDTH, displayHeight: CONTAINER_WIDTH });
 
-    // What is being shown and cropped. Starts as what was handed in, and
-    // becomes the cutout once the background is taken out -- so the crop box
-    // works against the picture on screen rather than the one behind it.
-    const [workingUri, setWorkingUri] = useState(imageUri);
-    const [cutOut, setCutOut] = useState(false);
-    const [removingBg, setRemovingBg] = useState(false);
-
-    // A new picture is a fresh start, including undoing any previous cutout.
-    useEffect(() => {
-        setWorkingUri(imageUri);
-        setCutOut(false);
-    }, [imageUri]);
-
     // Load actual image dimensions
     useEffect(() => {
-        if (workingUri) {
-            RNImage.getSize(workingUri, (width, height) => {
+        if (imageUri) {
+            RNImage.getSize(imageUri, (width, height) => {
                 // Calculate how the image will be displayed (contain mode)
                 const aspectRatio = width / height;
                 let displayWidth, displayHeight;
@@ -103,10 +82,7 @@ export default function CropModal({ visible, imageUri, onClose, onCropComplete }
                 console.error('Failed to get image size:', error);
             });
         }
-        // Keyed on workingUri, not imageUri: Vision returns the cutout at its
-        // own dimensions, and cropping against the original's would scale every
-        // coordinate wrongly.
-    }, [workingUri]);
+    }, [imageUri]);
 
     // Crop box position and size - start centered with margin
     const boxX = useSharedValue(20);
@@ -263,53 +239,15 @@ export default function CropModal({ visible, imageUri, onClose, onCropComplete }
         height: boxHeight.value,
     }));
 
-    const toggleBackground = async () => {
-        // Putting it back is just showing the original again; nothing to compute.
-        if (cutOut) {
-            setWorkingUri(imageUri);
-            setCutOut(false);
-            return;
-        }
-
-        if (!isBackgroundRemovalAvailable()) {
-            Alert.alert('Not In This Build', backgroundRemovalUnavailableReason());
-            return;
-        }
-
-        setRemovingBg(true);
-        try {
-            const result = await cutOutBackground(workingUri);
-
-            if (!result) {
-                Alert.alert(
-                    'Could Not Remove Background',
-                    'This needs a real device -- the simulator cannot do it.',
-                );
-                return;
-            }
-
-            setWorkingUri(result);
-            setCutOut(true);
-        } catch (error: any) {
-            console.warn('Background removal failed:', error?.message ?? error);
-            Alert.alert(
-                'Could Not Remove Background',
-                'Nothing was changed, so you can carry on cropping as normal.',
-            );
-        } finally {
-            setRemovingBg(false);
-        }
-    };
-
     const handleCrop = async () => {
         setProcessing(true);
         try {
             // If image is remote, download it to local cache first
             // ImageManipulator cannot process remote URLs directly
-            let localImageUri = workingUri;
-            if (isRemoteUri(workingUri)) {
+            let localImageUri = imageUri;
+            if (isRemoteUri(imageUri)) {
                 console.log('Downloading remote image for cropping...');
-                localImageUri = await downloadToLocalCache(workingUri);
+                localImageUri = await downloadToLocalCache(imageUri);
             }
 
             // Convert screen coordinates to actual image coordinates
@@ -342,18 +280,12 @@ export default function CropModal({ visible, imageUri, onClose, onCropComplete }
                         },
                     },
                 ],
-                // JPEG has no alpha channel, so saving a cutout as one fills
-                // everything that was removed with black. PNG only when there
-                // is transparency to keep, because it is several times the size
-                // for an ordinary photo that has none.
-                cutOut
-                    ? { format: ImageManipulator.SaveFormat.PNG }
-                    : { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+                { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
             );
-            onCropComplete(result.uri, cutOut);
+            onCropComplete(result.uri);
         } catch (error) {
             console.error('Crop error:', error);
-            onCropComplete(workingUri, cutOut);
+            onCropComplete(imageUri);
         } finally {
             setProcessing(false);
         }
@@ -384,20 +316,8 @@ export default function CropModal({ visible, imageUri, onClose, onCropComplete }
                 <View style={styles.cropAreaContainer}>
                     <View style={[styles.cropArea, { width: imageInfo.displayWidth, height: imageInfo.displayHeight }]}>
                         {/* The image */}
-                        {/* A checkerboard would be the honest backdrop for a
-                            cutout, but the crop overlay already darkens most of
-                            the frame; a flat mid grey reads as "nothing here"
-                            without fighting it. */}
-                        <View
-                            style={[
-                                styles.transparencyMat,
-                                { width: imageInfo.displayWidth, height: imageInfo.displayHeight },
-                                !cutOut && { opacity: 0 },
-                            ]}
-                            pointerEvents="none"
-                        />
                         <Image
-                            source={{ uri: workingUri }}
+                            source={{ uri: imageUri }}
                             style={{ width: imageInfo.displayWidth, height: imageInfo.displayHeight }}
                             contentFit="fill"
                         />
@@ -460,25 +380,6 @@ export default function CropModal({ visible, imageUri, onClose, onCropComplete }
                         <Text style={styles.resetText}>Reset</Text>
                     </Pressable>
 
-                    {/* Absent rather than disabled where the binary cannot do
-                        it: a button that explains why it will not work is worse
-                        than one that was never offered. */}
-                    {CAN_REMOVE_BACKGROUND && (
-                        <Pressable
-                            style={[styles.resetBtn, cutOut && styles.cutoutActive]}
-                            onPress={toggleBackground}
-                            disabled={removingBg || processing}
-                        >
-                            {removingBg ? (
-                                <ActivityIndicator size="small" color="#fff" />
-                            ) : (
-                                <Feather name={cutOut ? 'check' : 'scissors'} size={16} color="#fff" />
-                            )}
-                            <Text style={styles.resetText}>
-                                {removingBg ? 'Removing…' : cutOut ? 'Background off' : 'Remove background'}
-                            </Text>
-                        </Pressable>
-                    )}
                 </View>
             </GestureHandlerRootView>
         </Modal>
@@ -487,14 +388,6 @@ export default function CropModal({ visible, imageUri, onClose, onCropComplete }
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#000' },
-    transparencyMat: {
-        position: 'absolute',
-        backgroundColor: '#6b7280',
-    },
-    cutoutActive: {
-        backgroundColor: 'rgba(59,130,246,0.35)',
-        borderColor: '#3b82f6',
-    },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
