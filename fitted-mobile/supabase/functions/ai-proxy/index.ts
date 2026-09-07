@@ -13,10 +13,17 @@ const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') || '';
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-3-pro-image-preview';
 // Background removal. A segmentation model rather than an image model, because
-// only the former returns a real alpha channel. Model is configurable so a
-// better one can be swapped in with a secret change rather than a deploy.
+// only the former returns a real alpha channel.
+//
+// Two providers, because an account can be disabled for billing on a day you
+// need it and swapping should be a secret change rather than a deploy. The one
+// whose key is present wins; set REMOVE_BG_PROVIDER to force it when both are.
+const FAL_KEY = Deno.env.get('FAL_KEY') || '';
 const REPLICATE_API_TOKEN = Deno.env.get('REPLICATE_API_TOKEN') || '';
-const REMOVE_BG_MODEL = Deno.env.get('REMOVE_BG_MODEL') || '851-labs/background-remover';
+const REMOVE_BG_PROVIDER = Deno.env.get('REMOVE_BG_PROVIDER')
+    || (FAL_KEY ? 'fal' : REPLICATE_API_TOKEN ? 'replicate' : '');
+const REMOVE_BG_MODEL = Deno.env.get('REMOVE_BG_MODEL')
+    || (REMOVE_BG_PROVIDER === 'fal' ? 'fal-ai/birefnet' : '851-labs/background-remover');
 
 const FREE_DAILY_LIMIT = 15;
 const PRO_DAILY_LIMIT = 100;
@@ -230,7 +237,7 @@ serve(async (req: Request) => {
             // ships only in a native build, and the package that wraps it
             // segments people rather than objects -- which finds nothing in a
             // photograph of a jacket. Here it is one HTTP call from anywhere.
-            if (!REPLICATE_API_TOKEN) {
+            if (!REMOVE_BG_PROVIDER) {
                 return json({ error: 'Background removal is not configured' }, 503);
             }
 
@@ -244,40 +251,50 @@ serve(async (req: Request) => {
             const image = cleanBase64(payload?.imageBase64);
             if (!image) return json({ error: 'No usable image was supplied' }, 400);
 
-            const prediction = await fetch(
-                `https://api.replicate.com/v1/models/${REMOVE_BG_MODEL}/predictions`,
-                {
+            const dataUri = `data:image/jpeg;base64,${image}`;
+
+            // Both providers are one synchronous request: fal.run returns the
+            // result directly, and Replicate does too when asked to wait. No
+            // job to poll and no state to keep either way.
+            const prediction = REMOVE_BG_PROVIDER === 'fal'
+                ? await fetch(`https://fal.run/${REMOVE_BG_MODEL}`, {
+                    method: 'POST',
+                    headers: {
+                        authorization: `Key ${FAL_KEY}`,
+                        'content-type': 'application/json',
+                    },
+                    body: JSON.stringify({ image_url: dataUri }),
+                })
+                : await fetch(`https://api.replicate.com/v1/models/${REMOVE_BG_MODEL}/predictions`, {
                     method: 'POST',
                     headers: {
                         authorization: `Bearer ${REPLICATE_API_TOKEN}`,
                         'content-type': 'application/json',
-                        // Wait for the result rather than handing back a job to
-                        // poll. One request, one answer, no state to keep.
                         prefer: 'wait',
                     },
-                    body: JSON.stringify({
-                        input: { image: `data:image/jpeg;base64,${image}` },
-                    }),
-                },
-            );
+                    body: JSON.stringify({ input: { image: dataUri } }),
+                });
 
             if (!prediction.ok) {
                 const detail = await prediction.text().catch(() => '<unreadable>');
                 console.error(
                     'Background removal failed',
                     prediction.status,
-                    'model=' + REMOVE_BG_MODEL,
+                    REMOVE_BG_PROVIDER + ':' + REMOVE_BG_MODEL,
                     detail.slice(0, 700),
                 );
                 return json({ error: 'The background could not be removed' }, 502);
             }
 
             const result = await prediction.json();
-            // Replicate returns either a URL or an array of them depending on
-            // the model, so read both rather than assuming this one's shape.
-            const output = typeof result?.output === 'string'
-                ? result.output
-                : Array.isArray(result?.output) ? result.output[0] : null;
+            // Each provider names its output differently, and some models
+            // return a list. Read every shape rather than assuming one, so
+            // changing the model in a secret cannot break this.
+            const output = result?.image?.url
+                ?? (Array.isArray(result?.images) ? result.images[0]?.url : null)
+                ?? (typeof result?.output === 'string' ? result.output : null)
+                ?? (Array.isArray(result?.output) ? result.output[0] : null)
+                ?? null;
 
             if (!output) {
                 console.error('Background removal returned no output', JSON.stringify(result).slice(0, 500));
