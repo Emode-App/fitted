@@ -81,6 +81,15 @@ export function backgroundRemovalUnavailableReason(): string {
         + 'after that, reloading picks up changes as normal.';
 }
 
+/**
+ * Below this, a cutout is almost certainly empty rather than small.
+ *
+ * A fully transparent PNG is the easiest thing PNG compression will ever be
+ * handed, so it lands in the low single-digit kilobytes at any dimensions. A
+ * real cutout from a phone photo does not come close to this floor.
+ */
+const EMPTY_RESULT_BYTES = 10 * 1024;
+
 const isRemote = (uri: string) => uri.startsWith('http://') || uri.startsWith('https://');
 
 /**
@@ -108,5 +117,25 @@ export async function cutOutBackground(uri: string): Promise<string | null> {
     const result: string = await removeBackground(source);
 
     if (!result || result === source) return null;
+
+    // Vision does not fail when it cannot find a subject. It returns an empty
+    // mask, and the library hands that back as a perfectly valid image that
+    // happens to be entirely transparent -- which passed the check above and
+    // replaced somebody's photo with nothing.
+    //
+    // Size is the cheap tell. Uniform alpha is the best case PNG compression
+    // will ever see, so an empty result lands in the low single-digit
+    // kilobytes whatever the dimensions, while a real cutout at photo
+    // resolution is far larger. An absolute floor rather than a ratio of the
+    // source: a small object legitimately cut from a large photo is a real
+    // case, and a ratio would throw it away.
+    try {
+        const info = await FileSystem.getInfoAsync(result);
+        const size = (info as any)?.size ?? 0;
+        if (size > 0 && size < EMPTY_RESULT_BYTES) return null;
+    } catch {
+        // Unmeasurable is not evidence of emptiness; let it through.
+    }
+
     return result;
 }

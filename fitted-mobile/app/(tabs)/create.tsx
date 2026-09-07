@@ -168,6 +168,7 @@ function DraggableImage({
     onCrop,
     onTogglePolaroid,
     onCutOut,
+    onRestore,
     cuttingOut = false,
     onUpdate,
     hideControls = false
@@ -177,6 +178,7 @@ function DraggableImage({
     onCrop: () => void;
     onTogglePolaroid: () => void;
     onCutOut: () => void;
+    onRestore: () => void;
     cuttingOut?: boolean;
     onUpdate: (id: string, updates: Partial<CanvasItem>) => void;
     hideControls?: boolean;
@@ -340,18 +342,20 @@ function DraggableImage({
                         >
                             <Feather name={item.usePolaroid ? "check-square" : "square"} size={14} color="#fff" />
                         </Pressable>
-                        {/* Absent, not disabled, where the binary cannot do it,
-                            and absent once done -- there is nothing left to cut
-                            out of an image that has already been isolated. */}
-                        {CAN_CUT_OUT && !item.cutOut && (
+                        {/* Absent, not disabled, where the binary cannot do it.
+                            Once an item is cut out this turns into an undo
+                            rather than disappearing: hiding it left a bad
+                            cutout on the canvas with no way back to the
+                            picture it replaced. */}
+                        {CAN_CUT_OUT && (
                             <Pressable
-                                style={styles.cutOutButton}
-                                onPress={onCutOut}
+                                style={[styles.cutOutButton, item.cutOut && styles.cutOutButtonUndo]}
+                                onPress={item.cutOut ? onRestore : onCutOut}
                                 disabled={cuttingOut}
                             >
                                 {cuttingOut
                                     ? <ActivityIndicator size="small" color="#fff" />
-                                    : <Feather name="scissors" size={14} color="#fff" />}
+                                    : <Feather name={item.cutOut ? 'rotate-ccw' : 'scissors'} size={14} color="#fff" />}
                             </Pressable>
                         )}
                     </>
@@ -1319,9 +1323,14 @@ export default function CreateScreen() {
         try {
             const cut = await cutOutBackground(item.url);
             if (!cut) {
+                // Covers all three ways this comes back empty-handed: no
+                // subject found, a simulator, or an unreadable source. The
+                // picture is untouched in every one of them, which is the only
+                // part that matters to say.
                 Alert.alert(
-                    'Could Not Remove Background',
-                    'This needs a real device — the simulator cannot do it.',
+                    'Nothing To Cut Out',
+                    'No clear subject was found in this picture, so it has been left exactly as it was. '
+                    + 'Photos with the item against a plain background work best.',
                 );
                 return;
             }
@@ -1354,6 +1363,14 @@ export default function CreateScreen() {
         } finally {
             setCuttingOutId(null);
         }
+    };
+
+    // Put back the picture a cutout replaced. originalUrl has been carried
+    // since the item was created, for re-cropping, and serves here too.
+    const handleRestoreItem = (item: CanvasItem) => {
+        setCanvasItems(items => items.map(i =>
+            i.id === item.id ? { ...i, url: i.originalUrl || i.url, cutOut: false } : i
+        ));
     };
 
     // Toggle polaroid frame for an item
@@ -2051,6 +2068,7 @@ export default function CreateScreen() {
                                                 onCrop={() => handleCropItem(item)}
                                                 onTogglePolaroid={() => togglePolaroid(item.id)}
                                                 onCutOut={() => handleCutOut(item)}
+                                                onRestore={() => handleRestoreItem(item)}
                                                 cuttingOut={cuttingOutId === item.id}
                                                 onUpdate={handleUpdateItem}
                                                 hideControls={isCapturing}
@@ -3157,6 +3175,9 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
     // Polaroid frame toggle button styles
+    cutOutButtonUndo: {
+        backgroundColor: 'rgba(59,130,246,0.85)',
+    },
     cutOutButton: {
         position: 'absolute',
         bottom: -10,
