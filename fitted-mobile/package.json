@@ -9,7 +9,8 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "doctor": "npx expo-doctor",
-    "check": "npm run typecheck && npm run doctor"
+    "check": "npm run typecheck && npm run doctor",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
@@ -66,6 +67,7 @@
   "devDependencies": {
     "@types/react": "~19.1.0",
     "babel-preset-expo": "~54.0.10",
+    "patch-package": "^8.0.1",
     "react-test-renderer": "19.1.0",
     "typescript": "~5.9.2"
   },

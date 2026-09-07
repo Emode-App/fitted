@@ -1,0 +1,146 @@
+diff --git a/node_modules/react-native-background-remover/ios/ReactNativeBackgroundRemover.swift b/node_modules/react-native-background-remover/ios/ReactNativeBackgroundRemover.swift
+index b6ffed6..e31bdc8 100644
+--- a/node_modules/react-native-background-remover/ios/ReactNativeBackgroundRemover.swift
++++ b/node_modules/react-native-background-remover/ios/ReactNativeBackgroundRemover.swift
+@@ -1,5 +1,6 @@
+ import Vision
+ import CoreImage
++import UIKit
+ 
+ public class BackgroundRemoverSwift: NSObject {
+ 
+@@ -10,65 +11,95 @@ public class BackgroundRemoverSwift: NSObject {
+         return
+         #endif
+ 
+-        if #available(iOS 15.0, *) {
+-            guard let url = URL(string: imageURI) else {
+-                reject("BackgroundRemover", "Invalid URL", NSError(domain: "BackgroundRemover", code: 3))
+-                return
+-            }
++        guard let url = URL(string: imageURI) else {
++            reject("BackgroundRemover", "Invalid URL", NSError(domain: "BackgroundRemover", code: 3))
++            return
++        }
+ 
+-            guard let originalImage = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) else {
+-                reject("BackgroundRemover", "Unable to load image", NSError(domain: "BackgroundRemover", code: 4))
+-                return
+-            }
++        guard let originalImage = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) else {
++            reject("BackgroundRemover", "Unable to load image", NSError(domain: "BackgroundRemover", code: 4))
++            return
++        }
++
++        let imageRequestHandler = VNImageRequestHandler(ciImage: originalImage)
+ 
+-            let imageRequestHandler = VNImageRequestHandler(ciImage: originalImage)
++        DispatchQueue.global(qos: .userInitiated).async {
++            do {
++                var masked: CIImage? = nil
+ 
+-            var segmentationRequest = VNGeneratePersonSegmentationRequest()
+-            segmentationRequest.qualityLevel = .accurate
+-            segmentationRequest.outputPixelFormat = kCVPixelFormatType_OneComponent8
++                // Subject lifting, the thing Photos does when you long-press an
++                // object and it pops out of the picture. Works on whatever the
++                // salient foreground is -- a jacket on a hanger, a shoe on a
++                // floor -- which is the whole point in an app whose photos are
++                // of clothes rather than of people.
++                if #available(iOS 17.0, *) {
++                    let request = VNGenerateForegroundInstanceMaskRequest()
++                    try imageRequestHandler.perform([request])
+ 
+-            DispatchQueue.global(qos: .userInitiated).async {
+-                do {
++                    if let observation = request.results?.first, !observation.allInstances.isEmpty {
++                        let buffer = try observation.generateMaskedImage(
++                            ofInstances: observation.allInstances,
++                            from: imageRequestHandler,
++                            croppedToInstancesExtent: false
++                        )
++                        masked = CIImage(cvPixelBuffer: buffer)
++                    }
++                }
++
++                // Older systems, and anything subject lifting declined, fall
++                // back to person segmentation -- the original behaviour. It
++                // finds nothing in a photo of a garment, which is why it cannot
++                // be the only attempt, but it costs nothing to try second.
++                if masked == nil {
++                    let segmentationRequest = VNGeneratePersonSegmentationRequest()
++                    segmentationRequest.qualityLevel = .accurate
++                    segmentationRequest.outputPixelFormat = kCVPixelFormatType_OneComponent8
+                     try imageRequestHandler.perform([segmentationRequest])
++
+                     guard let pixelBuffer = segmentationRequest.results?.first?.pixelBuffer else {
+-                        reject("BackgroundRemover", "No segmentation results", NSError(domain: "BackgroundRemover", code: 5))
++                        reject("BackgroundRemover", "NoSubject", NSError(domain: "BackgroundRemover", code: 5))
+                         return
+                     }
+ 
+                     var maskImage = CIImage(cvPixelBuffer: pixelBuffer)
+-                    
+-                    // Adjust mask scaling
+                     let scaleX = originalImage.extent.width / maskImage.extent.width
+                     let scaleY = originalImage.extent.height / maskImage.extent.height
+-                    
+                     maskImage = maskImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+ 
+-                    let maskedImage = originalImage.applyingFilter("CIBlendWithMask", parameters: [kCIInputMaskImageKey: maskImage])
++                    masked = originalImage.applyingFilter(
++                        "CIBlendWithMask",
++                        parameters: [kCIInputMaskImageKey: maskImage]
++                    )
++                }
+ 
+-                    // Convert to UIImage via CGImage for better control
+-                    let context = CIContext()
+-                    guard let cgMaskedImage = context.createCGImage(maskedImage, from: maskedImage.extent) else {
+-                        reject("BackgroundRemover", "Error creating CGImage", NSError(domain: "BackgroundRemover", code: 6))
+-                        return
+-                    }
++                guard let maskedImage = masked else {
++                    reject("BackgroundRemover", "NoSubject", NSError(domain: "BackgroundRemover", code: 5))
++                    return
++                }
+ 
+-                    let uiImage = UIImage(cgImage: cgMaskedImage)
++                let context = CIContext()
++                guard let cgMaskedImage = context.createCGImage(maskedImage, from: maskedImage.extent) else {
++                    reject("BackgroundRemover", "Error creating CGImage", NSError(domain: "BackgroundRemover", code: 6))
++                    return
++                }
+ 
+-                    // Save the image as PNG to preserve transparency
+-                    let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(url.lastPathComponent).appendingPathExtension("png")
+-                    if let data = uiImage.pngData() { // Use PNG to preserve transparency
+-                        try data.write(to: tempURL)
+-                        resolve(tempURL.absoluteString)
+-                    } else {
+-                        reject("BackgroundRemover", "Error saving image", NSError(domain: "BackgroundRemover", code: 7))
+-                    }
++                let uiImage = UIImage(cgImage: cgMaskedImage)
+ 
+-                } catch {
+-                    reject("BackgroundRemover", "Error removing background", error)
++                // PNG, so the alpha the mask just produced survives being written.
++                let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
++                    .appendingPathComponent(url.lastPathComponent)
++                    .appendingPathExtension("png")
++
++                if let data = uiImage.pngData() {
++                    try data.write(to: tempURL)
++                    resolve(tempURL.absoluteString)
++                } else {
++                    reject("BackgroundRemover", "Error saving image", NSError(domain: "BackgroundRemover", code: 7))
+                 }
++
++            } catch {
++                reject("BackgroundRemover", "Error removing background", error)
+             }
+-        } else {
+-            reject("BackgroundRemover", "You need a device with iOS 15 or later", NSError(domain: "BackgroundRemover", code: 1))
+         }
+     }
+ }
