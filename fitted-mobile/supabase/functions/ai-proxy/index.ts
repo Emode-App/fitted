@@ -3,6 +3,7 @@
 // entitlement limits, abuse throttles, and server-side generation accounting.
 
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
+import { encodeBase64 } from 'https://deno.land/std@0.224.0/encoding/base64.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.86.2';
 import { corsHeaders } from '../_shared/cors.ts';
 import { getUser } from '../_shared/auth.ts';
@@ -11,6 +12,12 @@ import { checkRateLimit, rateLimitResponse } from '../_shared/rateLimit.ts';
 const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') || '';
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const IMAGE_MODEL = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-3-pro-image-preview';
+// Background removal. A segmentation model rather than an image model, because
+// only the former returns a real alpha channel. Model is configurable so a
+// better one can be swapped in with a secret change rather than a deploy.
+const REPLICATE_API_TOKEN = Deno.env.get('REPLICATE_API_TOKEN') || '';
+const REMOVE_BG_MODEL = Deno.env.get('REMOVE_BG_MODEL') || '851-labs/background-remover';
+
 const FREE_DAILY_LIMIT = 15;
 const PRO_DAILY_LIMIT = 100;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -211,6 +218,84 @@ serve(async (req: Request) => {
 
             await recordGeneration(user.id, 'succeeded', faceProvided);
             return json({ image: `data:image/png;base64,${image}`, remaining: Math.max(0, dailyLimit - (count || 0) - 1) });
+        }
+
+        if (action === 'remove-background') {
+            // Not a Gemini call. Image models do not reliably return an alpha
+            // channel, and a background "removed" to white stops being removed
+            // the moment two items overlap on a canvas. A segmentation model
+            // returns a real cutout, which is the only version worth having.
+            //
+            // Nor is it on the device: Vision's subject lifting needs iOS 17,
+            // ships only in a native build, and the package that wraps it
+            // segments people rather than objects -- which finds nothing in a
+            // photograph of a jacket. Here it is one HTTP call from anywhere.
+            if (!REPLICATE_API_TOKEN) {
+                return json({ error: 'Background removal is not configured' }, 503);
+            }
+
+            // Cheaper than a generation and far cheaper than an image model, so
+            // the limit is looser -- but still a limit, because this is billed
+            // per call and a loop in the client should not be able to spend the
+            // month in an afternoon.
+            const rate = await checkRateLimit(user.id, 'ai:remove-background', 60, 3600);
+            if (!rate.allowed) return rateLimitResponse(rate, cors);
+
+            const image = cleanBase64(payload?.imageBase64);
+            if (!image) return json({ error: 'No usable image was supplied' }, 400);
+
+            const prediction = await fetch(
+                `https://api.replicate.com/v1/models/${REMOVE_BG_MODEL}/predictions`,
+                {
+                    method: 'POST',
+                    headers: {
+                        authorization: `Bearer ${REPLICATE_API_TOKEN}`,
+                        'content-type': 'application/json',
+                        // Wait for the result rather than handing back a job to
+                        // poll. One request, one answer, no state to keep.
+                        prefer: 'wait',
+                    },
+                    body: JSON.stringify({
+                        input: { image: `data:image/jpeg;base64,${image}` },
+                    }),
+                },
+            );
+
+            if (!prediction.ok) {
+                const detail = await prediction.text().catch(() => '<unreadable>');
+                console.error(
+                    'Background removal failed',
+                    prediction.status,
+                    'model=' + REMOVE_BG_MODEL,
+                    detail.slice(0, 700),
+                );
+                return json({ error: 'The background could not be removed' }, 502);
+            }
+
+            const result = await prediction.json();
+            // Replicate returns either a URL or an array of them depending on
+            // the model, so read both rather than assuming this one's shape.
+            const output = typeof result?.output === 'string'
+                ? result.output
+                : Array.isArray(result?.output) ? result.output[0] : null;
+
+            if (!output) {
+                console.error('Background removal returned no output', JSON.stringify(result).slice(0, 500));
+                return json({ error: 'The background could not be removed' }, 502);
+            }
+
+            const cutout = await fetch(output);
+            if (!cutout.ok) {
+                console.error('Could not fetch the cutout', cutout.status);
+                return json({ error: 'The background could not be removed' }, 502);
+            }
+
+            const bytes = new Uint8Array(await cutout.arrayBuffer());
+            if (bytes.byteLength > MAX_IMAGE_BYTES) {
+                return json({ error: 'The cutout came back too large to return' }, 502);
+            }
+
+            return json({ imageBase64: encodeBase64(bytes) });
         }
 
         if (action === 'identify-item') {
