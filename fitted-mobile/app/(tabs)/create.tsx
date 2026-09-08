@@ -546,6 +546,17 @@ export default function CreateScreen() {
      */
     const autoFilledFace = useRef<string | null>(null);
 
+    /**
+     * Whether the face on this canvas was decided by hand.
+     *
+     * Picking one, and clearing one, are both decisions. Clearing especially:
+     * the effect below watches facePhotoUri, so without this it saw the empty
+     * slot a tap on the chip had just made and helpfully filled it straight
+     * back in -- the chip reappearing the instant it was dismissed. Once this
+     * is true the profile never overrides the canvas again, until a reset.
+     */
+    const faceChosenHere = useRef(false);
+
     // Auto-load face photo: client's face when styling for someone, otherwise user's own
     useEffect(() => {
         if (isStylingFor) {
@@ -556,6 +567,10 @@ export default function CreateScreen() {
         // A draft carries the face it was saved with. Whoever comes back to it
         // wants the fit they left, not today's profile photo.
         if (draftId) return;
+
+        // Somebody has already said what they want here, including saying they
+        // want nothing. Leave it alone.
+        if (faceChosenHere.current) return;
 
         const profileFace = user?.ai_face_url ?? null;
 
@@ -633,7 +648,10 @@ export default function CreateScreen() {
                     if (d.currentStep) setCurrentStep(d.currentStep);
                     if (d.canvasItems) setCanvasItems(d.canvasItems);
                     if (d.caption) setCaption(d.caption);
-                    if (d.facePhotoUri) setFacePhotoUri(d.facePhotoUri);
+                    if (d.facePhotoUri) {
+                        faceChosenHere.current = true;
+                        setFacePhotoUri(d.facePhotoUri);
+                    }
                     if (d.sceneDescription) setSceneDescription(d.sceneDescription);
                     if (d.uploadMode) setUploadMode(d.uploadMode);
                     if (d.bottomTab) setBottomTab(d.bottomTab);
@@ -758,6 +776,7 @@ export default function CreateScreen() {
         });
 
         if (!result.canceled && result.assets[0]) {
+            faceChosenHere.current = true;
             setFacePhotoUri(result.assets[0].uri);
         }
     };
@@ -778,6 +797,11 @@ export default function CreateScreen() {
         setCurrentStep(1);
         setCanvasItems([]);
         setCaption('');
+        // A reset is a blank slate, so the profile face leads again rather than
+        // whatever was chosen for the fit being cleared away.
+        faceChosenHere.current = false;
+        autoFilledFace.current = user?.ai_face_url ?? null;
+
         // Preserve the stored face from profile, don't clear it
         if (user?.ai_face_url) {
             setFacePhotoUri(user.ai_face_url);
@@ -1885,7 +1909,13 @@ export default function CreateScreen() {
                                 <View style={styles.faceSceneRow}>
                                     {/* Face Upload Section */}
                                     {facePhotoUri ? (
-                                        <Pressable style={styles.faceChip} onPress={() => setFacePhotoUri(null)}>
+                                        <Pressable
+                                            style={styles.faceChip}
+                                            onPress={() => {
+                                                faceChosenHere.current = true;
+                                                setFacePhotoUri(null);
+                                            }}
+                                        >
                                             <Image source={{ uri: facePhotoUri }} style={styles.faceChipImage} />
                                             <Text style={{ fontSize: 14, fontWeight: '600', color: '#9333ea' }}>Face Added</Text>
                                             <View style={styles.faceChipRemove}>
