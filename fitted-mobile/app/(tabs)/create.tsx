@@ -538,14 +538,48 @@ export default function CreateScreen() {
     // Note: Tab navigation cannot be intercepted/prevented in React Navigation
     // The unsaved work prompt is shown when user explicitly taps "Reset" or "New Fit"
 
+    /**
+     * The profile face this screen filled in by itself.
+     *
+     * Kept so a later change can tell "the face nobody chose" apart from one
+     * picked here or restored from a draft. Only the first may be replaced.
+     */
+    const autoFilledFace = useRef<string | null>(null);
+
     // Auto-load face photo: client's face when styling for someone, otherwise user's own
     useEffect(() => {
-        if (isStylingFor && forClientFaceUrl && !facePhotoUri) {
-            setFacePhotoUri(forClientFaceUrl);
-        } else if (user?.ai_face_url && !facePhotoUri && !draftId && !isStylingFor) {
-            setFacePhotoUri(user.ai_face_url);
+        if (isStylingFor) {
+            if (forClientFaceUrl && !facePhotoUri) setFacePhotoUri(forClientFaceUrl);
+            return;
         }
-    }, [user?.ai_face_url, draftId, isStylingFor, forClientFaceUrl]);
+
+        // A draft carries the face it was saved with. Whoever comes back to it
+        // wants the fit they left, not today's profile photo.
+        if (draftId) return;
+
+        const profileFace = user?.ai_face_url ?? null;
+
+        // Already showing it. Record it so a later change is recognisable as
+        // one, and stop -- setting the same value again would loop.
+        if (profileFace && profileFace === facePhotoUri) {
+            autoFilledFace.current = profileFace;
+            return;
+        }
+
+        // This used to fill in only when nothing was there, which meant a face
+        // changed on the profile never reached a canvas already holding one:
+        // the effect re-ran, saw a face, and did nothing. It looked like the
+        // app remembering the wrong person until you reset or backed out --
+        // both of which only worked by throwing this state away.
+        //
+        // Replaceable when it is empty, or still whatever was auto-filled last.
+        // A face picked here is never touched.
+        const replaceable = facePhotoUri === null || facePhotoUri === autoFilledFace.current;
+        if (!replaceable) return;
+
+        setFacePhotoUri(profileFace);
+        autoFilledFace.current = profileFace;
+    }, [user?.ai_face_url, draftId, isStylingFor, forClientFaceUrl, facePhotoUri]);
 
     // Handle product added from marketplace via URL params
     useEffect(() => {
