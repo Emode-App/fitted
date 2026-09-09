@@ -1,5 +1,6 @@
 import { AppState, type AppStateStatus } from 'react-native';
 import { supabase } from './supabase';
+import { useAuthStore } from '@/stores/authStore';
 
 /**
  * "Active now".
@@ -35,8 +36,23 @@ async function beat(): Promise<void> {
     // clock, and writes nothing at all if this account has activity status
     // turned off. Failure here is not worth surfacing -- the worst case is
     // that someone looks offline for a few minutes.
-    const { error } = await supabase.rpc('touch_presence');
-    if (error) console.warn('[presence] heartbeat failed:', error.message);
+    const { data, error } = await supabase.rpc('touch_presence');
+    if (error) {
+        console.warn('[presence] heartbeat failed:', error.message);
+        return;
+    }
+
+    // Your own profile is the one screen that would otherwise never show this.
+    // The heartbeat lands in the database, but the signed-in user object was
+    // hydrated at sign-in and still carries the old value -- so the badge
+    // appears for everyone looking at you and not for you. The server's
+    // timestamp is used rather than the device clock, because that is what
+    // every other reader will be comparing against.
+    const store = useAuthStore.getState();
+    const current = store.user;
+    if (current && current.last_active_at !== data) {
+        store.setUser({ ...current, last_active_at: (data as string | null) ?? null });
+    }
 }
 
 function onAppStateChange(next: AppStateStatus): void {
