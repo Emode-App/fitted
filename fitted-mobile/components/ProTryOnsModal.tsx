@@ -114,14 +114,22 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
                         <Feather name="x" size={24} color={colors.textSecondary} />
                     </Pressable>
 
-                    {/* Limit reached indicator */}
-                    {remainingTryOns <= 0 && (
-                        <View style={styles.limitBanner}>
-                            <Text style={styles.limitBannerText}>
-                                Daily limit reached (0/{FREE_DAILY_TRYON_LIMIT})
-                            </Text>
-                        </View>
-                    )}
+                    {/* Always shown, because how close somebody is to the
+                        limit is the argument for upgrading -- it only became a
+                        statement of fact once they got there. The count is what
+                        has been used rather than what is left, so it climbs
+                        towards the limit instead of away from it. */}
+                    {(() => {
+                        const used = Math.max(0, FREE_DAILY_TRYON_LIMIT - Math.max(0, remainingTryOns));
+                        const reached = remainingTryOns <= 0;
+                        return (
+                            <View style={[styles.limitBanner, reached && styles.limitBannerReached]}>
+                                <Text style={[styles.limitBannerText, reached && styles.limitBannerTextReached]}>
+                                    Daily limit reached{reached ? '.' : '?'} ({used}/{FREE_DAILY_TRYON_LIMIT})
+                                </Text>
+                            </View>
+                        );
+                    })()}
 
                     {/* Icon */}
                     <View style={styles.iconWrapper}>
@@ -204,6 +212,10 @@ const styles = StyleSheet.create({
     closeButton: { position: 'absolute', top: 16, right: 16, width: 32, height: 32, justifyContent: 'center', alignItems: 'center' },
     limitBanner: { backgroundColor: 'rgba(239, 68, 68, 0.1)', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, marginBottom: 12 },
     limitBannerText: { color: '#ef4444', fontSize: 12, fontWeight: '600' },
+    // At the limit it stops being a warning and becomes the reason the sheet
+    // is open, so it takes the full red rather than a tint of it.
+    limitBannerReached: { backgroundColor: '#ef4444' },
+    limitBannerTextReached: { color: '#ffffff' },
     iconWrapper: { marginBottom: 20 },
     iconCircle: { width: 80, height: 80, borderRadius: 40, justifyContent: 'center', alignItems: 'center' },
     title: { fontSize: 24, fontWeight: '700', fontFamily: 'Inter_700Bold', textAlign: 'center', marginBottom: 8 },
