@@ -27,7 +27,16 @@ import Animated, {
     Easing,
 } from 'react-native-reanimated';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getSubscriptionPrice, purchaseSubscription, restorePurchases, type SubscriptionType } from '@/services/revenueCatService';
+import {
+    getSubscriptionPrice,
+    purchaseSubscription,
+    restorePurchases,
+    FREE_DAILY_TRYON_LIMIT,
+    PRO_DAILY_TRYON_LIMIT,
+    FREE_CLOTHING_LIMIT,
+    PRO_CLOTHING_LIMIT,
+    type SubscriptionType,
+} from '@/services/revenueCatService';
 import { useAuthStore } from '@/stores/authStore';
 import { supabase } from '@/services/supabase';
 import { LEGAL } from '@/constants/legal';
@@ -153,10 +162,9 @@ const PLANS = [
         icon: 'cpu' as const,
         gradient: ['#06b6d4', '#3b82f6'] as const,
         perks: [
-            'Up to 100 AI outfit generations per day',
-            'Combine up to 6 clothing references',
-            'Private saved try-on history',
-            'Access restored across devices',
+            `${PRO_DAILY_TRYON_LIMIT} try-ons a day, instead of ${FREE_DAILY_TRYON_LIMIT}`,
+            `Up to ${PRO_CLOTHING_LIMIT} pieces in one fit, instead of ${FREE_CLOTHING_LIMIT}`,
+            'Cancel anytime',
         ],
     },
     {

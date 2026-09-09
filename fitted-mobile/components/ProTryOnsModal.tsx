@@ -22,6 +22,8 @@ import {
     syncSubscriptionToSupabase,
     FREE_DAILY_TRYON_LIMIT,
     PRO_DAILY_TRYON_LIMIT,
+    FREE_CLOTHING_LIMIT,
+    PRO_CLOTHING_LIMIT,
     getSubscriptionPrice,
 } from '@/services/revenueCatService';
 import { LEGAL } from '@/constants/legal';
@@ -64,11 +66,12 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
 
     const remaining = liveRemaining ?? remainingTryOns;
 
+    // Only what the server actually grants. This list used to promise saved
+    // history and cross-device restore, neither of which was built.
     const benefits = [
-        `Up to ${PRO_DAILY_TRYON_LIMIT} AI try-ons each day`,
-        'Combine up to 6 clothing references',
-        'Private saved try-on history',
-        'Access restored across your devices',
+        `${PRO_DAILY_TRYON_LIMIT} try-ons a day, instead of ${FREE_DAILY_TRYON_LIMIT}`,
+        `Up to ${PRO_CLOTHING_LIMIT} pieces in one fit, instead of ${FREE_CLOTHING_LIMIT}`,
+        'Cancel anytime',
     ];
 
     const handlePurchase = async () => {

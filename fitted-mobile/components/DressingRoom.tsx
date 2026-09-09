@@ -10,7 +10,7 @@ import { useMarketplaceStore } from '@/stores/marketplaceStore';
 import { Product } from '@/types';
 import DressingRoomPreview from './DressingRoomPreview';
 import ProTryOnsModal from './ProTryOnsModal';
-import { canPerformTryOn, FREE_DAILY_TRYON_LIMIT } from '@/services/revenueCatService';
+import { canPerformTryOn, FREE_DAILY_TRYON_LIMIT, FREE_CLOTHING_LIMIT, PRO_CLOTHING_LIMIT } from '@/services/revenueCatService';
 import { useAuthStore } from '@/stores/authStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -114,6 +114,23 @@ export default function DressingRoom() {
             if (!allowed && !isPro) {
                 // Show upgrade modal
                 setShowProModal(true);
+                return;
+            }
+
+            // The other ceiling. ai-proxy rejects an over-long selection with a
+            // 400, which would surface as a generation failure rather than as
+            // the upgrade it actually is -- so ask here, where the count is
+            // known and the paywall is already on hand.
+            const maxPieces = isPro ? PRO_CLOTHING_LIMIT : FREE_CLOTHING_LIMIT;
+            if (selectedDressingRoomIds.length > maxPieces) {
+                if (isPro) {
+                    Alert.alert(
+                        'Too many pieces',
+                        `One fit can hold up to ${PRO_CLOTHING_LIMIT} pieces. Deselect a few and try again.`,
+                    );
+                } else {
+                    setShowProModal(true);
+                }
                 return;
             }
         }

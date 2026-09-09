@@ -29,6 +29,10 @@ const FREE_DAILY_LIMIT = 15;
 const PRO_DAILY_LIMIT = 100;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_CLOTHING_IMAGES = 6;
+// Pro's actual second benefit. Not unbounded: every reference is a base64
+// image up to MAX_IMAGE_BYTES, so an unlimited list is an unlimited request.
+// Twenty is far past any real outfit and still a bill this can absorb.
+const PRO_MAX_CLOTHING_IMAGES = 20;
 
 const admin = createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -77,8 +81,16 @@ serve(async (req: Request) => {
 
         if (action === 'generate-outfit') {
             const clothing = Array.isArray(payload?.clothingImagesBase64) ? payload.clothingImagesBase64 : [];
-            if (clothing.length < 1 || clothing.length > MAX_CLOTHING_IMAGES) {
-                return json({ error: `Choose between 1 and ${MAX_CLOTHING_IMAGES} clothing images` }, 400);
+
+            // Asked before the count is judged, because the ceiling depends on
+            // it. This used to reject everyone at six, which made "combine up
+            // to 6" a description of the free tier being sold as an upgrade.
+            const { data: tierProfile } = await admin
+                .from('users').select('has_pro_tryons').eq('id', user.id).single();
+            const maxClothing = tierProfile?.has_pro_tryons ? PRO_MAX_CLOTHING_IMAGES : MAX_CLOTHING_IMAGES;
+
+            if (clothing.length < 1 || clothing.length > maxClothing) {
+                return json({ error: `Choose between 1 and ${maxClothing} clothing images` }, 400);
             }
             const cleanClothing = clothing.map(cleanBase64);
             if (cleanClothing.some((image: string | null) => !image)) {

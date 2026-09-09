@@ -8,6 +8,11 @@ let configured = false;
 
 export const FREE_DAILY_TRYON_LIMIT = 15;
 export const PRO_DAILY_TRYON_LIMIT = 100;
+// How many pieces one generation may reference. Enforced in the ai-proxy
+// function -- these exist so the paywall quotes the real numbers rather than
+// a copywriter's memory of them. Change both together.
+export const FREE_CLOTHING_LIMIT = 6;
+export const PRO_CLOTHING_LIMIT = 20;
 export type SubscriptionType = 'stylist' | 'business' | 'proTryOns';
 
 const SUBSCRIPTIONS: Record<SubscriptionType, { productId: string; entitlementId: string }> = {
