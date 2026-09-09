@@ -12,6 +12,7 @@ import Animated, {
     withTiming,
     Easing,
 } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '@/stores/authStore';
 import { useTheme } from '@/hooks/useTheme';
 import { LEGAL } from '@/constants/legal';
@@ -106,6 +107,7 @@ function BobbingEmoji({ emoji, delay }: { emoji: string; delay: number }) {
 
 export default function LoginScreen() {
     const { colors, isDark } = useTheme();
+    const insets = useSafeAreaInsets();
     const [appleAvailable, setAppleAvailable] = useState(false);
     const googleAvailable = isGoogleAuthAvailable();
 
@@ -210,7 +212,15 @@ export default function LoginScreen() {
     return (
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={[styles.container, { backgroundColor: colors.background }]}>
             <ScrollView
-                contentContainerStyle={styles.inner}
+                contentContainerStyle={[
+                    styles.inner,
+                    // The inset, not a guessed number. A fixed padding put the
+                    // mark under the Dynamic Island on the phones that have one:
+                    // this screen is taller than the display in sign-up mode, so
+                    // justifyContent centre stops applying and the top of the
+                    // content sits wherever the padding leaves it.
+                    { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 40 },
+                ]}
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
             >
@@ -369,7 +379,7 @@ const styles = StyleSheet.create({
     googleMark: { fontSize: 18, fontWeight: '700', color: '#4285F4' },
     googleText: { fontSize: 16, fontWeight: '600' },
     socialLegal: { fontSize: 11, lineHeight: 16, textAlign: 'center', marginTop: 14 },
-    inner: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 40 },
+    inner: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
     logoContainer: { alignItems: 'center', marginBottom: 26 },
     mark: { width: 78, height: 89, marginBottom: 14 },
     logo: { fontSize: 48, fontWeight: '700', letterSpacing: -2 },
