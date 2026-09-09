@@ -16,6 +16,7 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
 import {
+    canPerformTryOn,
     purchaseProTryOnsSubscription,
     restorePurchases,
     syncSubscriptionToSupabase,
@@ -40,6 +41,28 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
     const [price, setPrice] = useState<string | null>(null);
 
     useEffect(() => { if (visible) getSubscriptionPrice('proTryOns').then(setPrice); }, [visible]);
+
+    /**
+     * How many try-ons are actually left.
+     *
+     * The prop is only supplied by the Dressing Room, which already knows. Open
+     * from anywhere else -- the settings row, say -- and it fell back to the
+     * default of zero, so the pill claimed the limit was reached the moment the
+     * sheet appeared, to somebody who had not used it once. Ask, rather than
+     * assume the caller knew.
+     */
+    const [liveRemaining, setLiveRemaining] = useState<number | null>(null);
+
+    useEffect(() => {
+        if (!visible || !user?.id) return;
+        let cancelled = false;
+        canPerformTryOn(user.id)
+            .then(({ remaining }) => { if (!cancelled) setLiveRemaining(remaining); })
+            .catch(() => { /* leave the caller's figure in place */ });
+        return () => { cancelled = true; };
+    }, [visible, user?.id]);
+
+    const remaining = liveRemaining ?? remainingTryOns;
 
     const benefits = [
         `Up to ${PRO_DAILY_TRYON_LIMIT} AI try-ons each day`,
@@ -120,8 +143,8 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
                         has been used rather than what is left, so it climbs
                         towards the limit instead of away from it. */}
                     {(() => {
-                        const used = Math.max(0, FREE_DAILY_TRYON_LIMIT - Math.max(0, remainingTryOns));
-                        const reached = remainingTryOns <= 0;
+                        const used = Math.max(0, FREE_DAILY_TRYON_LIMIT - Math.max(0, remaining));
+                        const reached = remaining <= 0;
                         return (
                             <View style={[styles.limitBanner, reached && styles.limitBannerReached]}>
                                 <Text style={[styles.limitBannerText, reached && styles.limitBannerTextReached]}>
