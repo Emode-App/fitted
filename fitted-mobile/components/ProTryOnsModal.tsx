@@ -35,7 +35,7 @@ interface ProTryOnsModalProps {
     remainingTryOns?: number;
 }
 
-export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }: ProTryOnsModalProps) {
+export default function ProTryOnsModal({ visible, onClose, remainingTryOns }: ProTryOnsModalProps) {
     const { colors, isDark } = useTheme();
     const user = useAuthStore((state) => state.user);
     const setUser = useAuthStore((state) => state.setUser);
@@ -65,7 +65,12 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
         return () => { cancelled = true; };
     }, [visible, user?.id]);
 
-    const remaining = liveRemaining ?? remainingTryOns;
+    // Undefined means "not known yet", which is not the same as none left.
+    // This defaulted to zero, so opening the sheet from anywhere that does not
+    // already know the count -- the settings row, the history upsell -- painted
+    // a red 15/15 "limit reached" at somebody who had used none of them, and
+    // only corrected itself once the fetch landed a moment later.
+    const remaining: number | undefined = liveRemaining ?? remainingTryOns;
 
     // Only what the server actually grants. This list used to promise saved
     // history and cross-device restore, neither of which was built.
@@ -147,7 +152,7 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
                         statement of fact once they got there. The count is what
                         has been used rather than what is left, so it climbs
                         towards the limit instead of away from it. */}
-                    {(() => {
+                    {remaining !== undefined && (() => {
                         const used = Math.max(0, FREE_DAILY_TRYON_LIMIT - Math.max(0, remaining));
                         const reached = remaining <= 0;
                         return (
