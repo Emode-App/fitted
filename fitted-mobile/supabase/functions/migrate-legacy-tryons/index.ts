@@ -43,7 +43,37 @@ serve(async (req: Request) => {
         return json({ error: 'Unauthorized' }, 401);
     }
 
-    const dryRun = new URL(req.url).searchParams.get('dry') === '1';
+    const params = new URL(req.url).searchParams;
+    const dryRun = params.get('dry') === '1';
+
+    // Second pass: generated images left in the public bucket that no row points
+    // at any more. They cannot be repointed, because there is nothing to
+    // repoint -- but they are still someone's face on a public URL, so the only
+    // thing to do with them is delete them.
+    if (params.get('orphans') === '1') {
+        const { data: objects, error: listError } = await admin.schema('storage')
+            .from('objects')
+            .select('name')
+            .eq('bucket_id', 'products')
+            .like('name', 'dressing-room/%');
+        if (listError) return json({ error: listError.message }, 500);
+
+        const { data: referenced } = await admin
+            .from('dressing_room_outfits')
+            .select('generated_image_url');
+        const inUse = (referenced || []).map((r: any) => r.generated_image_url);
+
+        // A path counts as referenced whether the row stores it bare or inside
+        // an old full public URL, so a mistake here cannot orphan a live image.
+        const orphans = (objects || [])
+            .map((o: any) => o.name)
+            .filter((name: string) => !inUse.some((u: string) => u === name || u.endsWith(name)));
+
+        if (dryRun) return json({ dryRun: true, orphans });
+
+        const { error: rmError } = await admin.storage.from('products').remove(orphans);
+        return json({ deleted: rmError ? 0 : orphans.length, orphans, error: rmError?.message });
+    }
 
     const { data: rows, error } = await admin
         .from('dressing_room_outfits')
