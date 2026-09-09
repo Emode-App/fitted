@@ -10,6 +10,8 @@ import { useMessagesStore } from '@/stores/messagesStore';
 import { setAppIconBadge } from '@/services/pushNotifications';
 import { useAuthStore } from '@/stores/authStore';
 import SettingsDrawer from '@/components/SettingsDrawer';
+import BusinessSubscriptionModal from '@/components/BusinessSubscriptionModal';
+import ProTryOnsModal from '@/components/ProTryOnsModal';
 
 export default function TabLayout() {
     const { colors, isDark } = useTheme();
@@ -19,6 +21,19 @@ export default function TabLayout() {
     const fetchConversations = useMessagesStore((state) => state.fetchConversations);
     const { user } = useAuthStore();
     const [showSettings, setShowSettings] = useState(false);
+
+    // Which paywall to show, owned here rather than in the drawer. The drawer
+    // returns null once hidden, so a sheet it rendered would vanish with it --
+    // and opening one means closing the drawer first, because iOS will not put
+    // a modal on top of a modal.
+    const [paywall, setPaywall] = useState<null | 'business' | 'pro'>(null);
+
+    const requestPaywall = (which: 'business' | 'pro') => {
+        setShowSettings(false);
+        // Long enough for the drawer's dismissal to finish; presenting into a
+        // dismissing modal is the thing that silently does nothing.
+        setTimeout(() => setPaywall(which), 400);
+    };
 
     // Both counts, for the bell and for the messages tab. The messages screen
     // refetches its own conversations when it takes focus, but the badge has to
@@ -141,6 +156,17 @@ export default function TabLayout() {
             <SettingsDrawer
                 visible={showSettings}
                 onClose={() => setShowSettings(false)}
+                onRequestPaywall={requestPaywall}
+            />
+
+            <BusinessSubscriptionModal
+                visible={paywall === 'business'}
+                onClose={() => setPaywall(null)}
+            />
+
+            <ProTryOnsModal
+                visible={paywall === 'pro'}
+                onClose={() => setPaywall(null)}
             />
         </View>
     );

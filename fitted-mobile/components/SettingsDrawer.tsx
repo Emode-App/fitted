@@ -35,8 +35,7 @@ import {
     SalesPage,
     DraftItem,
 } from './SettingsPages';
-import BusinessSubscriptionModal from './BusinessSubscriptionModal';
-import ProTryOnsModal from './ProTryOnsModal';
+
 
 // View Types
 type SettingsView =
@@ -58,13 +57,15 @@ interface SettingsDrawerProps {
     visible: boolean;
     onClose: () => void;
     initialView?: SettingsView;
+    /** Ask the parent to present a paywall, since this drawer unmounts itself. */
+    onRequestPaywall?: (which: 'business' | 'pro') => void;
 }
 
 const { width } = Dimensions.get('window');
 const DRAWER_WIDTH_PCT = 0.85;
 const DRAWER_MAX_WIDTH = 400;
 
-export default function SettingsDrawer({ visible, onClose, initialView = 'menu' }: SettingsDrawerProps) {
+export default function SettingsDrawer({ visible, onClose, initialView = 'menu', onRequestPaywall }: SettingsDrawerProps) {
     const [currentView, setCurrentView] = useState<SettingsView>(initialView);
     const { colors, isDark } = useTheme();
     const signOut = useAuthStore((state) => state.signOut);
@@ -72,21 +73,16 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
     const user = useAuthStore((state) => state.user);
     const updateProfile = useAuthStore((state) => state.updateProfile);
     const { dressingRoomBadgeCount, cartItems } = useMarketplaceStore();
-    const [showBusinessModal, setShowBusinessModal] = useState(false);
-    const [showProModal, setShowProModal] = useState(false);
-
     /**
-     * Open a paywall that lives outside this drawer.
+     * Ask whoever owns this drawer to show a paywall.
      *
-     * iOS will not present a second modal while the first is still up, and the
-     * drawer is itself a Modal. Setting the flag straight from a row in it did
-     * nothing at all -- no error, no sheet, the state simply changed behind a
-     * screen that was still covering it. Close the drawer, let the dismissal
-     * animation finish, then present.
+     * Not rendered here, and not merely because iOS refuses to present a modal
+     * on top of another -- this component returns null the moment it is hidden,
+     * so anything it owns disappears with it. A paywall opened by closing the
+     * drawer has to outlive the drawer, which means the parent renders it.
      */
-    const openPaywall = (show: (v: boolean) => void) => {
-        onClose();
-        setTimeout(() => show(true), 350);
+    const requestPaywall = (which: 'business' | 'pro') => {
+        onRequestPaywall?.(which);
     };
 
     // Animation states
@@ -239,7 +235,7 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
                             <MenuItem
                                 icon="zap"
                                 label="Pro Try-Ons"
-                                onPress={() => openPaywall(setShowProModal)}
+                                onPress={() => requestPaywall('pro')}
                                 colors={colors}
                                 isDark={isDark}
                             />
@@ -316,7 +312,7 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
                                 );
                             } else {
                                 // Not business — show subscription modal
-                                openPaywall(setShowBusinessModal);
+                                requestPaywall('business');
                             }
                         }}
                     >
@@ -446,16 +442,6 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
             </Animated.View>
         </Modal>
 
-        {/* Business Subscription Modal */}
-        <BusinessSubscriptionModal
-            visible={showBusinessModal}
-            onClose={() => setShowBusinessModal(false)}
-        />
-
-        <ProTryOnsModal
-            visible={showProModal}
-            onClose={() => setShowProModal(false)}
-        />
         </>
     );
 }
