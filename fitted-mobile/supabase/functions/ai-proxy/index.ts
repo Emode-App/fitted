@@ -82,12 +82,15 @@ serve(async (req: Request) => {
         if (action === 'generate-outfit') {
             const clothing = Array.isArray(payload?.clothingImagesBase64) ? payload.clothingImagesBase64 : [];
 
-            // Asked before the count is judged, because the ceiling depends on
-            // it. This used to reject everyone at six, which made "combine up
-            // to 6" a description of the free tier being sold as an upgrade.
-            const { data: tierProfile } = await admin
+            // Both ceilings this request is subject to depend on the tier, and
+            // the piece count is judged first, so the lookup moves up here from
+            // the daily-limit check further down. It used to reject everyone at
+            // six, which made "combine up to 6" a description of the free tier
+            // being sold back as an upgrade.
+            const { data: profile } = await admin
                 .from('users').select('has_pro_tryons').eq('id', user.id).single();
-            const maxClothing = tierProfile?.has_pro_tryons ? PRO_MAX_CLOTHING_IMAGES : MAX_CLOTHING_IMAGES;
+            const isPro = !!profile?.has_pro_tryons;
+            const maxClothing = isPro ? PRO_MAX_CLOTHING_IMAGES : MAX_CLOTHING_IMAGES;
 
             if (clothing.length < 1 || clothing.length > maxClothing) {
                 return json({ error: `Choose between 1 and ${maxClothing} clothing images` }, 400);
@@ -150,12 +153,7 @@ serve(async (req: Request) => {
                 }
             }
 
-            const { data: profile } = await admin
-                .from('users')
-                .select('has_pro_tryons')
-                .eq('id', user.id)
-                .single();
-            const dailyLimit = profile?.has_pro_tryons ? PRO_DAILY_LIMIT : FREE_DAILY_LIMIT;
+            const dailyLimit = isPro ? PRO_DAILY_LIMIT : FREE_DAILY_LIMIT;
             const today = new Date();
             today.setUTCHours(0, 0, 0, 0);
             const { count } = await admin
