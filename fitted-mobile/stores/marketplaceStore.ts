@@ -510,9 +510,19 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
         }
 
         // The row is the only reference to the file, so it goes too -- a face
-        // the user asked to forget should not be left sitting in the bucket.
+        // the user asked to forget should not be left sitting in a bucket.
+        //
+        // Two formats live in this column. Rows written before the move to
+        // private storage hold a full public URL into the products bucket;
+        // everything since holds a bare path in PRIVATE_BUCKET. Aiming every
+        // delete at the private bucket would quietly no-op on the old ones and
+        // leave the image up.
         if (entry?.imagePath) {
-            supabase.storage.from(PRIVATE_BUCKET).remove([entry.imagePath])
+            const legacy = entry.imagePath.match(/\/object\/public\/([^/]+)\/(.+)$/);
+            const [bucket, key] = legacy
+                ? [legacy[1], decodeURIComponent(legacy[2])]
+                : [PRIVATE_BUCKET, entry.imagePath];
+            supabase.storage.from(bucket).remove([key])
                 .catch((e: unknown) => console.warn('Could not remove try-on image', e));
         }
         return true;
