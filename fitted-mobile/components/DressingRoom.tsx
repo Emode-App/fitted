@@ -10,6 +10,7 @@ import { useMarketplaceStore } from '@/stores/marketplaceStore';
 import { Product } from '@/types';
 import DressingRoomPreview from './DressingRoomPreview';
 import ProTryOnsModal from './ProTryOnsModal';
+import TryOnHistoryModal from './TryOnHistoryModal';
 import { canPerformTryOn, FREE_DAILY_TRYON_LIMIT, FREE_CLOTHING_LIMIT, PRO_CLOTHING_LIMIT } from '@/services/revenueCatService';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -37,6 +38,7 @@ export default function DressingRoom() {
     const [showPreview, setShowPreview] = useState(false);
     const [uploadedItems, setUploadedItems] = useState<UploadedItem[]>([]);
     const [showProModal, setShowProModal] = useState(false);
+    const [showHistory, setShowHistory] = useState(false);
     const [remainingTryOns, setRemainingTryOns] = useState(FREE_DAILY_TRYON_LIMIT);
     const authUser = useAuthStore((state) => state.user);
 
@@ -265,6 +267,13 @@ export default function DressingRoom() {
                     )}
                 </View>
                 <View style={styles.headerRight}>
+                    <Pressable
+                        onPress={() => setShowHistory(true)}
+                        style={styles.historyButton}
+                        accessibilityLabel="Past try-ons"
+                    >
+                        <Feather name="clock" size={18} color={colors.textSecondary} />
+                    </Pressable>
                     <Pressable onPress={handleUploadImage} style={[styles.uploadButton, { backgroundColor: colors.primary }]}>
                         <Feather name="plus" size={16} color="#fff" />
                         <Text style={styles.uploadButtonText}>Add Photo</Text>
@@ -338,6 +347,18 @@ export default function DressingRoom() {
                 </View>
             )}
 
+            {/* Past try-ons. Reopening one fills the rack and carries its image
+                across, so the preview shows the old fit rather than paying for
+                a regeneration of something already generated. */}
+            <TryOnHistoryModal
+                visible={showHistory}
+                onClose={() => setShowHistory(false)}
+                // After the history sheet has finished dismissing. Presenting
+                // into a modal that is still going away is the failure mode
+                // that made the paywall rows look dead.
+                onReopened={() => setTimeout(() => setShowPreview(true), 400)}
+            />
+
             {/* Preview Modal */}
             <DressingRoomPreview
                 visible={showPreview}
@@ -386,6 +407,12 @@ const styles = StyleSheet.create({
     clearButton: {
         fontSize: 14,
         fontWeight: '600',
+    },
+    historyButton: {
+        width: 34,
+        height: 34,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     uploadButton: {
         flexDirection: 'row',

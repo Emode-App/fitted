@@ -5,6 +5,25 @@ import { PRIVATE_BUCKET, getSignedUrl } from '@/services/privateMedia';
 import { generateOutfit } from '@/services/aiService';
 import * as FileSystem from 'expo-file-system/legacy';
 
+/**
+ * One past trip to the Dressing Room.
+ *
+ * Nothing new is recorded to build this -- every generation has been writing a
+ * row to dressing_room_outfits all along, to cache the result. The row already
+ * knows the image and which pieces went into it, which is exactly a history
+ * entry, so this reads what was already there.
+ */
+export interface TryOnHistoryEntry {
+    id: string;
+    createdAt: string;
+    /** Storage path. Signed on read; the signature expires, the path does not. */
+    imagePath: string;
+    imageUrl: string | null;
+    productIds: string[];
+    /** Hydrated pieces. Shorter than productIds when a seller has delisted one. */
+    products: Product[];
+}
+
 interface MarketplaceState {
     // Dressing room items
     dressingRoomItems: Product[];
@@ -22,6 +41,10 @@ interface MarketplaceState {
     // Outfit generation
     generatedOutfitUrl: string | null;
     isGeneratingOutfit: boolean;
+
+    // Try-on history
+    tryOnHistory: TryOnHistoryEntry[];
+    isLoadingHistory: boolean;
 
     // Actions
     addToDressingRoom: (product: Product) => void;
@@ -44,6 +67,11 @@ interface MarketplaceState {
     // Outfit generation - takes optional uploaded image URIs
     generateDressingRoomOutfit: (userId: string, forceRegenerate?: boolean, uploadedImageUris?: string[]) => Promise<string | null>;
 
+    // Try-on history
+    fetchTryOnHistory: (userId: string) => Promise<void>;
+    reopenTryOn: (entry: TryOnHistoryEntry) => void;
+    deleteTryOn: (entryId: string) => Promise<boolean>;
+
     // Last used items for canvas
     lastUsedItems: Product[];
     sendToCanvas: (product: Product) => void;
@@ -65,6 +93,8 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
     generatedOutfitUrl: null,
     isGeneratingOutfit: false,
     lastUsedItems: [],
+    tryOnHistory: [],
+    isLoadingHistory: false,
 
     addToDressingRoom: (product: Product) => {
         const { dressingRoomItems, dressingRoomBadgeCount, selectedDressingRoomIds } = get();
@@ -395,6 +425,97 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
         } finally {
             set({ isGeneratingOutfit: false });
         }
+    },
+
+    fetchTryOnHistory: async (userId: string) => {
+        set({ isLoadingHistory: true });
+        try {
+            const { data, error } = await supabase
+                .from('dressing_room_outfits')
+                .select('id, created_at, product_ids, generated_image_url')
+                .eq('user_id', userId)
+                .order('created_at', { ascending: false })
+                .limit(60);
+            if (error) throw error;
+
+            const rows = data || [];
+
+            // Every piece across every entry, fetched once rather than per row --
+            // the same jacket turns up in a dozen try-ons.
+            const allIds = Array.from(new Set(rows.flatMap((r: any) => r.product_ids || [])));
+            let productsById: Record<string, Product> = {};
+            if (allIds.length > 0) {
+                const { data: products } = await supabase
+                    .from('products')
+                    .select(`
+                        *,
+                        seller:users(id, username, handle, avatar_url, is_verified_boutique)
+                    `)
+                    .in('id', allIds);
+                for (const product of products || []) productsById[product.id] = product as Product;
+            }
+
+            // Signing is a network call each, so they go together rather than in
+            // series behind a spinner.
+            const urls = await Promise.all(
+                rows.map((r: any) => getSignedUrl(r.generated_image_url).catch(() => null)),
+            );
+
+            set({
+                tryOnHistory: rows.map((r: any, i: number) => ({
+                    id: r.id,
+                    createdAt: r.created_at,
+                    imagePath: r.generated_image_url,
+                    imageUrl: urls[i],
+                    productIds: r.product_ids || [],
+                    products: (r.product_ids || [])
+                        .map((id: string) => productsById[id])
+                        .filter(Boolean),
+                })),
+            });
+        } catch (error) {
+            console.error('Error fetching try-on history:', error);
+        } finally {
+            set({ isLoadingHistory: false });
+        }
+    },
+
+    /**
+     * Put a past try-on back on the rack.
+     *
+     * The image comes along, which is the point -- without it the preview's
+     * effect would see an empty generatedOutfitUrl and spend a try-on
+     * regenerating something the user is already looking at. Delisted pieces are
+     * simply absent, so a fit whose jacket is gone reopens as the rest of it.
+     */
+    reopenTryOn: (entry: TryOnHistoryEntry) => {
+        set({
+            dressingRoomItems: entry.products,
+            selectedDressingRoomIds: entry.products.map(p => p.id),
+            generatedOutfitUrl: entry.imageUrl,
+            dressingRoomBadgeCount: 0,
+        });
+    },
+
+    deleteTryOn: async (entryId: string) => {
+        const previous = get().tryOnHistory;
+        set({ tryOnHistory: previous.filter(e => e.id !== entryId) });
+
+        const entry = previous.find(e => e.id === entryId);
+        const { error } = await supabase.from('dressing_room_outfits').delete().eq('id', entryId);
+        if (error) {
+            console.error('Error deleting try-on:', error);
+            set({ tryOnHistory: previous });
+            return false;
+        }
+
+        // The row is the only reference to the file, so it goes too -- a face
+        // the user asked to forget should not be left sitting in the bucket.
+        if (entry?.imagePath) {
+            supabase.storage.from(PRIVATE_BUCKET).remove([entry.imagePath])
+                .catch((e: unknown) => console.warn('Could not remove try-on image', e));
+        }
+        return true;
     },
 }));
 
