@@ -36,6 +36,7 @@ import {
     DraftItem,
 } from './SettingsPages';
 import BusinessSubscriptionModal from './BusinessSubscriptionModal';
+import ProTryOnsModal from './ProTryOnsModal';
 
 // View Types
 type SettingsView =
@@ -72,6 +73,21 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
     const updateProfile = useAuthStore((state) => state.updateProfile);
     const { dressingRoomBadgeCount, cartItems } = useMarketplaceStore();
     const [showBusinessModal, setShowBusinessModal] = useState(false);
+    const [showProModal, setShowProModal] = useState(false);
+
+    /**
+     * Open a paywall that lives outside this drawer.
+     *
+     * iOS will not present a second modal while the first is still up, and the
+     * drawer is itself a Modal. Setting the flag straight from a row in it did
+     * nothing at all -- no error, no sheet, the state simply changed behind a
+     * screen that was still covering it. Close the drawer, let the dismissal
+     * animation finish, then present.
+     */
+    const openPaywall = (show: (v: boolean) => void) => {
+        onClose();
+        setTimeout(() => show(true), 350);
+    };
 
     // Animation states
     const [internalVisible, setInternalVisible] = useState(false);
@@ -213,6 +229,21 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
                             colors={colors}
                             isDark={isDark}
                         />
+                        {/* The only way to this paywall used to be running out
+                            of try-ons -- fifteen in a day, then a sheet nobody
+                            had gone looking for. A subscription you cannot find
+                            is one nobody buys, and one a reviewer cannot test
+                            either. Hidden once bought, since there is nothing
+                            left to sell. */}
+                        {!user?.has_pro_tryons && (
+                            <MenuItem
+                                icon="zap"
+                                label="Pro Try-Ons"
+                                onPress={() => openPaywall(setShowProModal)}
+                                colors={colors}
+                                isDark={isDark}
+                            />
+                        )}
                         {(user?.is_business_account || user?.is_verified_stylist) && (
                             <MenuItem
                                 icon="trending-up"
@@ -285,7 +316,7 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
                                 );
                             } else {
                                 // Not business — show subscription modal
-                                setShowBusinessModal(true);
+                                openPaywall(setShowBusinessModal);
                             }
                         }}
                     >
@@ -419,6 +450,11 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu' 
         <BusinessSubscriptionModal
             visible={showBusinessModal}
             onClose={() => setShowBusinessModal(false)}
+        />
+
+        <ProTryOnsModal
+            visible={showProModal}
+            onClose={() => setShowProModal(false)}
         />
         </>
     );
