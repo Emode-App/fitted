@@ -20,6 +20,7 @@ import { BlurView } from 'expo-blur';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuthStore } from '@/stores/authStore';
 import { useMarketplaceStore } from '@/stores/marketplaceStore';
+import { supabase } from '@/services/supabase';
 import {
     PrivacyPage,
     NotificationsPage,
@@ -72,6 +73,7 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu',
     const deleteAccount = useAuthStore((state) => state.deleteAccount);
     const user = useAuthStore((state) => state.user);
     const updateProfile = useAuthStore((state) => state.updateProfile);
+    const setUser = useAuthStore((state) => state.setUser);
     const { dressingRoomBadgeCount, cartItems } = useMarketplaceStore();
     /**
      * Ask whoever owns this drawer to show a paywall.
@@ -305,7 +307,17 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu',
                                         {
                                             text: 'Confirm',
                                             onPress: async () => {
-                                                await updateProfile({ is_business_account: false });
+                                                // Through the server, because
+                                                // the column is no longer
+                                                // client-writable -- a grant
+                                                // that allowed this downgrade
+                                                // also allowed a free upgrade.
+                                                const { error } = await supabase.rpc('downgrade_business_account');
+                                                if (error) {
+                                                    Alert.alert('Could Not Switch', error.message);
+                                                    return;
+                                                }
+                                                setUser(user ? { ...user, is_business_account: false } : user);
                                             },
                                         },
                                     ]

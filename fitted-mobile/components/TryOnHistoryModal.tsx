@@ -28,6 +28,8 @@ interface TryOnHistoryModalProps {
     onClose: () => void;
     /** Called after a past fit is put back on the rack, so the caller can show it. */
     onReopened?: () => void;
+    /** Called when a free account asks to see past the last few. */
+    onRequestUpgrade?: () => void;
 }
 
 function formatWhen(iso: string): string {
@@ -39,12 +41,18 @@ function formatWhen(iso: string): string {
     return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-export default function TryOnHistoryModal({ visible, onClose, onReopened }: TryOnHistoryModalProps) {
+export default function TryOnHistoryModal({
+    visible,
+    onClose,
+    onReopened,
+    onRequestUpgrade,
+}: TryOnHistoryModalProps) {
     const { colors } = useTheme();
     const user = useAuthStore((state) => state.user);
     const {
         tryOnHistory,
         isLoadingHistory,
+        hiddenHistoryCount,
         fetchTryOnHistory,
         reopenTryOn,
         deleteTryOn,
@@ -58,9 +66,9 @@ export default function TryOnHistoryModal({ visible, onClose, onReopened }: TryO
     const open = tryOnHistory.find(e => e.id === openId) || null;
 
     useEffect(() => {
-        if (visible && user?.id) fetchTryOnHistory(user.id);
+        if (visible && user?.id) fetchTryOnHistory(user.id, !!user.has_pro_tryons);
         if (!visible) setOpenId(null);
-    }, [visible, user?.id, fetchTryOnHistory]);
+    }, [visible, user?.id, user?.has_pro_tryons, fetchTryOnHistory]);
 
     const isInCart = (productId: string) => cartItems.some(c => c.id === productId);
 
@@ -273,6 +281,26 @@ export default function TryOnHistoryModal({ visible, onClose, onReopened }: TryO
                         columnWrapperStyle={{ gap: GRID_GAP }}
                         contentContainerStyle={styles.grid}
                         showsVerticalScrollIndicator={false}
+                        ListFooterComponent={
+                            hiddenHistoryCount > 0 ? (
+                                <Pressable
+                                    style={[styles.lockedCard, { borderColor: colors.border }]}
+                                    onPress={() => {
+                                        onClose();
+                                        onRequestUpgrade?.();
+                                    }}
+                                >
+                                    <Feather name="lock" size={16} color={colors.textSecondary} />
+                                    <Text style={[styles.lockedText, { color: colors.text }]}>
+                                        {hiddenHistoryCount} older try-on
+                                        {hiddenHistoryCount !== 1 ? 's are' : ' is'} saved
+                                    </Text>
+                                    <Text style={[styles.lockedSub, { color: colors.textSecondary }]}>
+                                        Pro opens your whole history.
+                                    </Text>
+                                </Pressable>
+                            ) : null
+                        }
                     />
                 )}
             </View>
@@ -359,6 +387,19 @@ const styles = StyleSheet.create({
     pieceCartText: { fontSize: 12, fontWeight: '700' },
 
     missingNote: { fontSize: 12, marginTop: 4 },
+
+    lockedCard: {
+        alignItems: 'center',
+        gap: 4,
+        borderWidth: 1,
+        borderStyle: 'dashed',
+        borderRadius: 14,
+        paddingVertical: 20,
+        paddingHorizontal: 16,
+        marginTop: GRID_GAP,
+    },
+    lockedText: { fontSize: 14, fontWeight: '700' },
+    lockedSub: { fontSize: 12 },
 
     deleteButton: {
         flexDirection: 'row',

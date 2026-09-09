@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { isActiveNow } from '@/services/presence';
 import {
     View,
     Text,
@@ -117,6 +118,20 @@ export default function ProfileView({
     stats,
 }: ProfileViewProps) {
     const { colors, isDark } = useTheme();
+
+    // Presence goes stale while the screen sits open, so it is re-read on a
+    // timer rather than only at mount -- otherwise a profile opened at the
+    // right moment would claim someone was active for as long as it was left up.
+    const [presenceTick, setPresenceTick] = useState(0);
+    useEffect(() => {
+        const id = setInterval(() => setPresenceTick(n => n + 1), 60 * 1000);
+        return () => clearInterval(id);
+    }, []);
+    const activeNow = React.useMemo(
+        () => isActiveNow(user),
+        [user?.last_active_at, user?.show_activity_status, presenceTick],
+    );
+
     const [activeTab, setActiveTab] = useState<'posts' | 'saved' | 'shop'>('posts');
     // Saved splits in two: whole fits, and the individual pieces inside them.
     const [savedTab, setSavedTab] = useState<'posts' | 'items'>('posts');
@@ -369,8 +384,10 @@ export default function ProfileView({
                                 <Feather name="user" size={40} color={colors.textTertiary} />
                             </View>
                         )}
-                        {/* Status Dot */}
-                        {user.show_activity_status !== false && (
+                        {/* Status Dot. Shown only when there is something to
+                            show -- this and the label below both used to appear
+                            for everyone, always, on nothing but the setting. */}
+                        {activeNow && (
                             <View style={[styles.statusDot, { borderColor: colors.background }]} />
                         )}
                     </View>
@@ -441,9 +458,11 @@ export default function ProfileView({
                                     </Text>
                                 </>
                             )}
-                            {user.show_activity_status !== false && (
+                            {activeNow && (
                                 <>
-                                    <Text style={{ color: colors.textTertiary, marginHorizontal: 6 }}>•</Text>
+                                    {!!user.location && (
+                                        <Text style={{ color: colors.textTertiary, marginHorizontal: 6 }}>•</Text>
+                                    )}
                                     <Text style={[styles.activeText, { color: '#10b981' }]}>Active now</Text>
                                 </>
                             )}

@@ -3,6 +3,7 @@ import { Product, DressingRoomItem } from '@/types';
 import { supabase } from '@/services/supabase';
 import { PRIVATE_BUCKET, getSignedUrl } from '@/services/privateMedia';
 import { generateOutfit } from '@/services/aiService';
+import { FREE_HISTORY_LIMIT } from '@/services/revenueCatService';
 import * as FileSystem from 'expo-file-system/legacy';
 
 /**
@@ -45,6 +46,8 @@ interface MarketplaceState {
     // Try-on history
     tryOnHistory: TryOnHistoryEntry[];
     isLoadingHistory: boolean;
+    /** How many more are kept but not shown, because this account is not Pro. */
+    hiddenHistoryCount: number;
 
     // Actions
     addToDressingRoom: (product: Product) => void;
@@ -68,7 +71,7 @@ interface MarketplaceState {
     generateDressingRoomOutfit: (userId: string, forceRegenerate?: boolean, uploadedImageUris?: string[]) => Promise<string | null>;
 
     // Try-on history
-    fetchTryOnHistory: (userId: string) => Promise<void>;
+    fetchTryOnHistory: (userId: string, isPro?: boolean) => Promise<void>;
     reopenTryOn: (entry: TryOnHistoryEntry) => void;
     deleteTryOn: (entryId: string) => Promise<boolean>;
 
@@ -95,6 +98,7 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
     lastUsedItems: [],
     tryOnHistory: [],
     isLoadingHistory: false,
+    hiddenHistoryCount: 0,
 
     addToDressingRoom: (product: Product) => {
         const { dressingRoomItems, dressingRoomBadgeCount, selectedDressingRoomIds } = get();
@@ -427,7 +431,7 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
         }
     },
 
-    fetchTryOnHistory: async (userId: string) => {
+    fetchTryOnHistory: async (userId: string, isPro: boolean = false) => {
         set({ isLoadingHistory: true });
         try {
             const { data, error } = await supabase
@@ -438,7 +442,13 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
                 .limit(60);
             if (error) throw error;
 
-            const rows = data || [];
+            // Nothing is deleted for free accounts -- the older entries are
+            // still there, and appear the moment they upgrade. The count is
+            // what the sheet offers Pro on, so it is worked out before the
+            // list is cut rather than guessed at afterwards.
+            const all = data || [];
+            const rows = isPro ? all : all.slice(0, FREE_HISTORY_LIMIT);
+            set({ hiddenHistoryCount: Math.max(0, all.length - rows.length) });
 
             // Every piece across every entry, fetched once rather than per row --
             // the same jacket turns up in a dozen try-ons.

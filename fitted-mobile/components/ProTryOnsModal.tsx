@@ -24,6 +24,7 @@ import {
     PRO_DAILY_TRYON_LIMIT,
     FREE_CLOTHING_LIMIT,
     PRO_CLOTHING_LIMIT,
+    FREE_HISTORY_LIMIT,
     getSubscriptionPrice,
 } from '@/services/revenueCatService';
 import { LEGAL } from '@/constants/legal';
@@ -71,6 +72,7 @@ export default function ProTryOnsModal({ visible, onClose, remainingTryOns = 0 }
     const benefits = [
         `${PRO_DAILY_TRYON_LIMIT} try-ons a day, instead of ${FREE_DAILY_TRYON_LIMIT}`,
         `Up to ${PRO_CLOTHING_LIMIT} pieces in one fit, instead of ${FREE_CLOTHING_LIMIT}`,
+        `Your whole try-on history, not just the last ${FREE_HISTORY_LIMIT}`,
         'Cancel anytime',
     ];
 

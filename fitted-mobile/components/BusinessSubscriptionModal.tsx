@@ -41,6 +41,7 @@ export default function BusinessSubscriptionModal({ visible, onClose }: Business
     const benefits = [
         'Business account badge and profile shop',
         'Create and manage physical product listings',
+        'Shoppers can try your pieces on before they buy',
         'Accept eligible physical-goods orders',
         'View sales and fulfillment status',
     ];

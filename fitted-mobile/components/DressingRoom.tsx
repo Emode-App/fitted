@@ -357,6 +357,7 @@ export default function DressingRoom() {
                 // into a modal that is still going away is the failure mode
                 // that made the paywall rows look dead.
                 onReopened={() => setTimeout(() => setShowPreview(true), 400)}
+                onRequestUpgrade={() => setTimeout(() => setShowProModal(true), 400)}
             />
 
             {/* Preview Modal */}

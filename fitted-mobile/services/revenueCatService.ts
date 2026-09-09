@@ -13,6 +13,9 @@ export const PRO_DAILY_TRYON_LIMIT = 100;
 // a copywriter's memory of them. Change both together.
 export const FREE_CLOTHING_LIMIT = 6;
 export const PRO_CLOTHING_LIMIT = 20;
+// How far back the Dressing Room's history goes without Pro. Everything is
+// kept either way -- this is what a free account can see, not what it has.
+export const FREE_HISTORY_LIMIT = 3;
 export type SubscriptionType = 'stylist' | 'business' | 'proTryOns';
 
 const SUBSCRIPTIONS: Record<SubscriptionType, { productId: string; entitlementId: string }> = {

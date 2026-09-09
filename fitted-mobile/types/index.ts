@@ -32,6 +32,8 @@ export interface User {
     has_pro_tryons?: boolean;
     rate?: string;
     show_activity_status?: boolean;
+    /** Server-written heartbeat. Null when the account has activity status off. */
+    last_active_at?: string | null;
     favorite_brand?: string;
     favorite_song?: {
         title: string;

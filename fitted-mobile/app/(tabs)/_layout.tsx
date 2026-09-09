@@ -8,6 +8,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { useNotificationsStore } from '@/stores/notificationsStore';
 import { useMessagesStore } from '@/stores/messagesStore';
 import { setAppIconBadge } from '@/services/pushNotifications';
+import { startPresence, stopPresence } from '@/services/presence';
 import { useAuthStore } from '@/stores/authStore';
 import SettingsDrawer from '@/components/SettingsDrawer';
 import BusinessSubscriptionModal from '@/components/BusinessSubscriptionModal';
@@ -56,6 +57,16 @@ export default function TabLayout() {
         });
         return () => sub.remove();
     }, [refreshCounts]);
+
+    // "Active now" is only true while this is running: it reports on a timer
+    // in the foreground and goes quiet in the background, so presence lapses on
+    // its own rather than depending on a goodbye from a phone that may be
+    // asleep or already killed.
+    React.useEffect(() => {
+        if (!user?.id) return;
+        startPresence();
+        return () => stopPresence();
+    }, [user?.id]);
 
     // One number on the icon for both kinds of unread, because iOS only gives
     // us the one. Signed out it goes to zero rather than keeping a stale count

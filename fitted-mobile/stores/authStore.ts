@@ -41,6 +41,18 @@ interface AuthState {
     updateProfile: (updates: Partial<User>) => Promise<void>;
 }
 
+/**
+ * Whether the auth listener is already attached.
+ *
+ * onAuthStateChange returns a subscription that nothing ever unsubscribed, and
+ * initialize() is not structurally guaranteed to run once -- a remount of the
+ * root layout attaches a second listener on top of the first, permanently. Each
+ * one then answers the same SIGNED_IN, which is why Login Activity shows one
+ * sign-in as nine rows written in the same millisecond, and why the profile
+ * fetch and push-token rebind behind them ran nine times too.
+ */
+let authListenerAttached = false;
+
 async function recordLoginSession(userId: string): Promise<string | null> {
     try {
         const deviceName = Device.modelName ?? (Platform.OS === 'ios' ? 'iPhone' : 'Android Device');
@@ -135,6 +147,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             }
 
             // Listen for auth changes
+            if (authListenerAttached) return;
+            authListenerAttached = true;
             supabase.auth.onAuthStateChange(async (event, session) => {
                 if (session?.user) {
                     // Catches the in-process account switch, where sign-out ran but

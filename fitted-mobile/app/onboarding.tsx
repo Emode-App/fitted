@@ -35,6 +35,7 @@ import {
     PRO_DAILY_TRYON_LIMIT,
     FREE_CLOTHING_LIMIT,
     PRO_CLOTHING_LIMIT,
+    FREE_HISTORY_LIMIT,
     type SubscriptionType,
 } from '@/services/revenueCatService';
 import { useAuthStore } from '@/stores/authStore';
@@ -164,6 +165,7 @@ const PLANS = [
         perks: [
             `${PRO_DAILY_TRYON_LIMIT} try-ons a day, instead of ${FREE_DAILY_TRYON_LIMIT}`,
             `Up to ${PRO_CLOTHING_LIMIT} pieces in one fit, instead of ${FREE_CLOTHING_LIMIT}`,
+            `Your whole try-on history, not just the last ${FREE_HISTORY_LIMIT}`,
             'Cancel anytime',
         ],
     },
@@ -178,6 +180,7 @@ const PLANS = [
         perks: [
             'Business badge and profile shop',
             'Create physical product listings',
+            'Shoppers can try your pieces on before they buy',
             'Accept eligible physical-goods orders',
             'View sales and fulfillment status',
         ],
