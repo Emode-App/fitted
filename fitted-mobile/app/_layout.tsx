@@ -19,6 +19,7 @@ import { initMonitoring, withMonitoring, setMonitoringUser } from '@/services/mo
 import { addNotificationResponseListener } from '@/services/pushNotifications';
 import AppStripeProvider from '@/components/AppStripeProvider';
 import { applySupabaseAuthLink } from '@/services/authLinks';
+import { rememberMirrorLink, takePendingMirrorRoute } from '@/services/mirror';
 
 // Initialize crash/error reporting before anything else runs. No-op in Expo Go
 // or without EXPO_PUBLIC_SENTRY_DSN set.
@@ -97,7 +98,11 @@ function RootLayout() {
     const release = setTimeout(() => setAuthLinkPending(false), 2500);
 
     Linking.getInitialURL()
-      .then((url) => applySupabaseAuthLink(url))
+      .then((url) => {
+        // Kept in case the gate below has to send them through sign-in first.
+        rememberMirrorLink(url);
+        return applySupabaseAuthLink(url);
+      })
       .catch(() => {})
       .finally(() => {
         clearTimeout(release);
@@ -108,6 +113,7 @@ function RootLayout() {
       // A link arriving while the app is open holds the gate the same way, so a
       // confirmation tapped from the background lands on onboarding too.
       setAuthLinkPending(true);
+      rememberMirrorLink(url);
       applySupabaseAuthLink(url)
         .catch(() => {})
         .finally(() => setAuthLinkPending(false));
@@ -163,7 +169,9 @@ function RootLayout() {
       if (!hasOnboarded && !inOnboarding) {
         router.replace('/onboarding');
       } else if (hasOnboarded && (inAuthGroup || inOnboarding)) {
-        router.replace('/(tabs)');
+        // Someone who opened a mirror link while signed out came here to send
+        // their wardrobe to it -- finish the trip rather than drop them on the feed.
+        router.replace((takePendingMirrorRoute() ?? '/(tabs)') as any);
       }
     };
 

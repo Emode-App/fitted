@@ -23,6 +23,13 @@ export interface TryOnHistoryEntry {
     productIds: string[];
     /** Hydrated pieces. Shorter than productIds when a seller has delisted one. */
     products: Product[];
+    /**
+     * Where the look was made. Mirror looks have no marketplace products behind
+     * them -- their pieces came from screenshots, links or the wardrobe -- so
+     * they carry their own list, name and shop link only.
+     */
+    source: 'dressing_room' | 'mirror';
+    mirrorPieces: { title: string | null; productUrl: string | null }[];
 }
 
 interface MarketplaceState {
@@ -436,7 +443,7 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
         try {
             const { data, error } = await supabase
                 .from('dressing_room_outfits')
-                .select('id, created_at, product_ids, generated_image_url')
+                .select('id, created_at, product_ids, generated_image_url, source, mirror_pieces')
                 .eq('user_id', userId)
                 .order('created_at', { ascending: false })
                 .limit(60);
@@ -481,6 +488,8 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
                     products: (r.product_ids || [])
                         .map((id: string) => productsById[id])
                         .filter(Boolean),
+                    source: r.source === 'mirror' ? 'mirror' : 'dressing_room',
+                    mirrorPieces: Array.isArray(r.mirror_pieces) ? r.mirror_pieces : [],
                 })),
             });
         } catch (error) {

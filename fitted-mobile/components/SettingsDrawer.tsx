@@ -227,6 +227,21 @@ export default function SettingsDrawer({ visible, onClose, initialView = 'menu',
                             colors={colors}
                             isDark={isDark}
                         />
+                        {/* The way in from the app to the physical mirror. A pushed
+                            route rather than a sheet, so it is closed first: the
+                            drawer is itself a modal and returns null once hidden. */}
+                        <MenuItem
+                            icon="monitor"
+                            label="Emode Mirror"
+                            onPress={() => {
+                                onClose();
+                                // Cast until expo-router regenerates its typed routes
+                                // on the next `expo start`; the route exists.
+                                setTimeout(() => router.push('/mirror' as any), 250);
+                            }}
+                            colors={colors}
+                            isDark={isDark}
+                        />
                         {/* The only way to this paywall used to be running out
                             of try-ons -- fifteen in a day, then a sheet nobody
                             had gone looking for. A subscription you cannot find

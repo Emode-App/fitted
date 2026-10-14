@@ -10,6 +10,7 @@ import {
     Alert,
     Dimensions,
     ScrollView,
+    Linking,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
@@ -115,7 +116,9 @@ export default function TryOnHistoryModal({
     // ─────────────────────────────────────────────── one fit, opened up ────
 
     const renderDetail = (entry: TryOnHistoryEntry) => {
-        const missing = entry.productIds.length - entry.products.length;
+        const fromMirror = entry.source === 'mirror';
+        const pieceCount = fromMirror ? entry.mirrorPieces.length : entry.productIds.length;
+        const missing = fromMirror ? 0 : entry.productIds.length - entry.products.length;
 
         return (
             <ScrollView contentContainerStyle={styles.detailScroll}>
@@ -133,21 +136,44 @@ export default function TryOnHistoryModal({
                 </View>
 
                 <Text style={[styles.detailWhen, { color: colors.textSecondary }]}>
-                    {formatWhen(entry.createdAt)} · {entry.productIds.length} piece
-                    {entry.productIds.length !== 1 ? 's' : ''}
+                    {formatWhen(entry.createdAt)} · {pieceCount} piece{pieceCount !== 1 ? 's' : ''}
+                    {fromMirror ? ' · Made at Emode Mirror' : ''}
                 </Text>
 
-                <Pressable
-                    style={[styles.primaryButton, { backgroundColor: colors.primary }]}
-                    onPress={() => handleReopen(entry)}
-                >
-                    <Feather name="refresh-ccw" size={16} color={colors.primaryForeground} />
-                    <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>
-                        Open in Dressing Room
-                    </Text>
-                </Pressable>
+                {/* A mirror look has no marketplace products to put back on the
+                    rack, so it has nothing to reopen -- just pieces to shop. */}
+                {!fromMirror && (
+                    <Pressable
+                        style={[styles.primaryButton, { backgroundColor: colors.primary }]}
+                        onPress={() => handleReopen(entry)}
+                    >
+                        <Feather name="refresh-ccw" size={16} color={colors.primaryForeground} />
+                        <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>
+                            Open in Dressing Room
+                        </Text>
+                    </Pressable>
+                )}
 
                 <Text style={[styles.sectionTitle, { color: colors.text }]}>In this fit</Text>
+
+                {fromMirror && entry.mirrorPieces.map((piece, i) => (
+                    <View key={`${i}-${piece.title}`} style={[styles.pieceRow, { backgroundColor: colors.backgroundSecondary }]}>
+                        <View style={styles.pieceInfo}>
+                            <Text style={[styles.pieceName, { color: colors.text }]} numberOfLines={2}>
+                                {piece.title || 'A piece from the mirror'}
+                            </Text>
+                        </View>
+                        {!!piece.productUrl && (
+                            <Pressable
+                                style={[styles.pieceCart, { backgroundColor: colors.background, borderColor: colors.border }]}
+                                onPress={() => Linking.openURL(piece.productUrl!)}
+                            >
+                                <Feather name="external-link" size={14} color={colors.text} />
+                                <Text style={[styles.pieceCartText, { color: colors.text }]}>Shop</Text>
+                            </Pressable>
+                        )}
+                    </View>
+                ))}
 
                 {entry.products.map((product) => {
                     const inCart = isInCart(product.id);
@@ -229,7 +255,7 @@ export default function TryOnHistoryModal({
                     {formatWhen(item.createdAt)}
                 </Text>
                 <Text style={[styles.tileCount, { color: colors.textSecondary }]}>
-                    {item.productIds.length}
+                    {item.source === 'mirror' ? item.mirrorPieces.length : item.productIds.length}
                 </Text>
             </View>
         </Pressable>
